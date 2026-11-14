@@ -4,7 +4,6 @@
 #include "kamite/log.h"
 #include "runtime/ps2_game_menu.h"
 #include "runtime/ps2_hotkeys.h"
-#include "ps2x/iop/iop_pad.h"
 
 #if __has_include("pcsx2gs_api.h")
 #include "pcsx2gs_api.h"
@@ -35,6 +34,7 @@ namespace kamite::hotkeys
         if (g_iniPath.empty() || !ini.load(g_iniPath))
             return;
         int read = 0;
+        bool rewrite = false;
         for (int i = 0; i < kCount; ++i)
         {
             const rt::Info &info = rt::info(action(i));
@@ -42,19 +42,26 @@ namespace kamite::hotkeys
             if (value == "\x01")
                 continue;
             rt::Binding binding;
-            if (rt::parse(value, binding) && action(i) == rt::Action::RecordCase && binding.pad == ps2x::iop::PadButton::R3)
-                continue; // the old default, saved by the F2 menu: R3 is Modern's switch now (Nov 3), Select records
             if (rt::parse(value, binding))
             {
                 rt::setBinding(action(i), binding);
                 ++read;
             }
             else
-                KM_WARN(Game, "hotkeys: [Hotkeys] " << info.id << "=" << value << " is not a key this build knows; "
-                                                     << rt::text(info.def) << " kept");
+            {
+                // A controller button from an older build (hotkeys are keyboard-only since Nov 14) or a key this build
+                // does not know: the default, written back.
+                KM_WARN(Game, "hotkeys: [Hotkeys] " << info.id << "=" << value << " is not a key; " << rt::text(info.def) << " instead");
+                rewrite = true;
+            }
         }
         if (read)
             KM_INFO(Game, "hotkeys: " << read << " binding(s) from GHR.ini [Hotkeys]");
+        if (rewrite)
+        {
+            std::string status;
+            save(status);
+        }
     }
 
     bool save(std::string &status)
@@ -85,8 +92,8 @@ namespace kamite::hotkeys
         }
         if (!ui->collapsing_header("Hotkeys", 0))
             return;
-        ui->text_disabled("The port's own keys. Click one, then press the key (with Shift or Ctrl held if you want) or "
-                          "pick a controller button (it stays on that physical button whatever the mapping); Esc keeps the old one.");
+        ui->text_disabled("The port's own keys. Click one, then press the key (with Shift or Ctrl held if you want); "
+                          "Esc keeps the old one.");
         // A capture that finished: take the key. One the menu dropped (it was closed meanwhile): forget it.
         int key = 0;
         bool shift = false, ctrl = false;
@@ -153,38 +160,6 @@ namespace kamite::hotkeys
                 }
             }
             ui->pop_id();
-        }
-        if (g_capturing >= 0)
-        {
-            // Or a controller button, as the game sees it: the game layer watches the pad data for it.
-            ui->text_disabled("...or a controller button:");
-            int padCount = 0;
-            const rt::PadName *pads = rt::padNames(padCount);
-            for (int p = 0; p < padCount; ++p)
-            {
-                if (p % 8 != 0)
-                    ui->same_line();
-                ui->push_id(2000 + p);
-                char padLabel[32];
-                std::snprintf(padLabel, sizeof(padLabel), "%s##hkpad", pads[p].name);
-                if (ui->small_button(padLabel))
-                {
-                    const rt::Binding binding{0, false, false, pads[p].bit};
-                    const rt::Action target = action(g_capturing);
-                    const rt::Action other = rt::conflict(target, binding);
-                    if (other != rt::Action::Count)
-                        g_warning = rt::text(binding) + " is already " + rt::info(other).label + "; not changed.";
-                    else
-                    {
-                        rt::setBinding(target, binding);
-                        g_warning = rt::text(binding) + ": the game sees the button too.";
-                        save(g_status);
-                    }
-                    g_capturing = -1;
-                    ps2x::menu::cancelKeyCapture();
-                }
-                ui->pop_id();
-            }
         }
         if (g_capturing >= 0 && ui->small_button("No key for it (unbind)##hknone"))
         {

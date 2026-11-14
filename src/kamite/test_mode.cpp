@@ -2,7 +2,7 @@
 //
 // Three things live here, sharing one per-frame logger and one pad path:
 //
-// 1. The case recorder (always on; the RecordCase hotkey, Select by default): press once and the port
+// 1. The case recorder (always on; the RecordCase hotkey, F1 by default): press once and the port
 //    saves a state of its own (never the players' slots) and starts keeping the pad; press again and everything goes into one file,
 //    cases\<date-time>.case: the state, the pad (one 32-byte status per game frame), a live per-frame log of what the
 //    game did while the tester played, and a few lines of metadata. Nothing to type, nothing to edit.
@@ -29,7 +29,6 @@
 #include "kamite/game_layout.h"
 #include "kamite/git_commit.h" // KAMITE_GIT_COMMIT (generated at build time)
 #include "kamite/log.h"
-#include "kamite/menu_buttons.h"
 #include "runtime/ps2_game_menu.h"
 #include "runtime/ps2_hotkeys.h"
 #include "runtime/ps2_pad_tap.h"
@@ -1339,8 +1338,7 @@ namespace kamite::test_mode
         }
 
         // ============================================================================================================
-        // The case recorder: the RecordCase hotkey (a pad button read from the pad data here, or a key the window
-        // loop fires), in play, whenever no run is active.
+        // The case recorder: the RecordCase hotkey (a key the window loop fires), in play, whenever no run is active.
         // ============================================================================================================
         struct Recorder
         {
@@ -1367,8 +1365,6 @@ namespace kamite::test_mode
             uint32_t readFrame = ~0u, readN = 0;
             bool polling = false;     // the state has saved: every poll is kept
             uint32_t readsThisFrame = 0, readsLastFrame = 0;
-            uint16_t prevPressed = 0;   // the pad's pressed bits at the last read (for the hotkey's edge)
-            bool toggle = false;        // a press of the hotkey, taken at the next frame hook
             uint32_t casesWritten = 0;
             std::string cheats;         // the F2 switches that change play, when the state was saved
             std::string settings;       // the env.* lines, taken at the start (they can change in play: OPTIONS, F2)
@@ -1378,12 +1374,6 @@ namespace kamite::test_mode
         void recorderTap(const ps2x::iop::PadInputState &state)
         {
             Recorder &rec = g_rec;
-            const uint16_t pressed = state.buttons; // PadButton bits, as the hotkey binding names them
-            // The hotkey's button by its place on the pad (K, Nov 13: hotkeys stay on their physical button).
-            const uint16_t padBit = menu_buttons::padBitAtPlace(ps2x::hotkeys::binding(ps2x::hotkeys::Action::RecordCase).pad);
-            if (padBit != 0u && (pressed & padBit) != 0u && (rec.prevPressed & padBit) == 0u)
-                rec.toggle = true;
-            rec.prevPressed = pressed;
             // The first poll after the state: the replay's first poll after the load. The frame handler may already
             // have moved on to Recording when that poll comes (it also watches the save count), so either phase starts
             // it: a case recorded with no polls at all stalled its replay at "Replaying ..." (K, Nov 5).
@@ -1533,8 +1523,7 @@ namespace kamite::test_mode
         void recorderFrame(uint8_t *rdram)
         {
             Recorder &rec = g_rec;
-            const bool toggle = rec.toggle || ps2x::hotkeys::take(ps2x::hotkeys::Action::RecordCase);
-            rec.toggle = false;
+            const bool toggle = ps2x::hotkeys::take(ps2x::hotkeys::Action::RecordCase);
             switch (rec.phase)
             {
             case Recorder::Phase::Idle:
@@ -1580,15 +1569,6 @@ namespace kamite::test_mode
                 }
                 if (toggle || rec.rec.polls() >= kMaxCaseVblanks)
                 {
-                    // The stopping press is not part of the case: drop the polls at the end that hold it.
-                    const uint16_t padBit = menu_buttons::padBitAtPlace(ps2x::hotkeys::binding(ps2x::hotkeys::Action::RecordCase).pad);
-                    while (toggle && padBit != 0u && rec.rec.polls() > 1u)
-                    {
-                        const uint8_t *end = rec.rec.samples.data() + rec.rec.samples.size() - kSample;
-                        if (((~(end[2] | (end[3] << 8))) & padBit) == 0u)
-                            break;
-                        rec.rec.samples.resize(rec.rec.samples.size() - kSample);
-                    }
                     recorderStop();
                 }
                 return;

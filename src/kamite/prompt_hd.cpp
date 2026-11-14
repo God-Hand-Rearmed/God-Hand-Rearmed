@@ -433,7 +433,7 @@ namespace kamite::prompt_hd
         {
         case Set::PlayStation: return "PlayStation (the game's own art)";
         case Set::Xbox360: return "Xbox 360";
-        case Set::SteamDeck: return "Steam Deck";
+        case Set::SteamDeck: return "Steam"; // the Steam Controller's and the Deck's (K, Nov 14: "STEAM")
         case Set::Switch: return "Nintendo Switch";
         case Set::Keyboard: return "keyboard";
         }

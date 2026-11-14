@@ -275,7 +275,19 @@ namespace ps2_host_input
             float smallMotorScale = 1.0f;
             uint32_t invertL = 0u; // 1 = X, 2 = Y
             uint32_t invertR = 0u;
+            // The extra buttons' commands ([PadN] SelectCommand ...; extra:: in the header): Select's save / load
+            // unless the file says otherwise.
+            std::array<extra::Command, extra::Count> commands{extra::Command::SaveLoad};
         };
+
+        // The extra buttons: their controller button, their [PadN] command key; the commands' names in the file.
+        constexpr std::array<ps2_host_gamepads::Button, extra::Count> kExtraPad{
+            ps2_host_gamepads::Back, ps2_host_gamepads::LeftPaddle1, ps2_host_gamepads::RightPaddle1,
+            ps2_host_gamepads::LeftPaddle2, ps2_host_gamepads::RightPaddle2};
+        constexpr std::array<std::string_view, extra::Count> kExtraKeys{"SelectCommand", "L4Command", "R4Command",
+                                                                         "L5Command", "R5Command"};
+        constexpr std::array<std::string_view, static_cast<size_t>(extra::Command::Count)> kCommandNames{
+            "None", "QuickSave", "QuickLoad", "SaveLoad"};
 
         // Fills `config` from one [PadN] key (PCSX2's name, any case) and its bindings separated by ';'.
         void applyPadSetting(PadConfig &config, uint32_t pad, std::string_view key, std::string_view value)
@@ -343,6 +355,12 @@ namespace ps2_host_input
                 config.invertL = static_cast<uint32_t>(number(0.0f)) & 3u;
             else if (name == "invertr")
                 config.invertR = static_cast<uint32_t>(number(0.0f)) & 3u;
+            else
+                for (size_t b = 0; b < kExtraKeys.size(); ++b)
+                    if (name == lowerName(kExtraKeys[b]))
+                        for (size_t c = 0; c < kCommandNames.size(); ++c)
+                            if (lowerName(trimView(value)) == lowerName(kCommandNames[c]))
+                                config.commands[b] = static_cast<extra::Command>(c);
             // Other PCSX2 keys (Analog, PressureModifier, ...) are accepted and ignored.
         }
 
@@ -402,6 +420,24 @@ namespace ps2_host_input
                     return;
                 }
             section.settings.emplace_back(std::string(key), std::string(trimView(value)));
+        }
+
+        // A [PadN] setting set (any case of its key), or removed with an empty value.
+        void setSectionSetting(PadSection &section, std::string_view key, std::string_view value)
+        {
+            auto &list = section.settings;
+            const std::string name = lowerName(key);
+            for (auto it = list.begin(); it != list.end(); ++it)
+                if (lowerName(it->first) == name)
+                {
+                    if (value.empty())
+                        list.erase(it);
+                    else
+                        it->second = std::string(value);
+                    return;
+                }
+            if (!value.empty())
+                list.emplace_back(std::string(key), std::string(value));
         }
 
         PadSection sectionFromSettings(const std::vector<std::pair<std::string, std::string>> &lines)
@@ -478,6 +514,21 @@ namespace ps2_host_input
         std::atomic<bool> g_menuLayerUsed{true};   // the layer the last sample of player 1 was built with
         bool g_latchLayer = true;                  // window thread: readPort(0)'s last layer
         uint16_t g_latched = 0u;                   // window thread: buttons dropped since the layer flipped, until released
+        // The extra buttons (extra:: in the header). Player 1's controller (the first controller element of its
+        // bindings, as the menu layer's; -1: a keyboard-only layout), the state the page reads, what fired.
+        int g_extraDevice = -1;                    // window thread
+        std::mutex g_extraMutex;
+        extra::State g_extraState;                 // g_extraMutex
+        std::atomic<uint8_t> g_extraPaddles{0u};
+        struct ExtraHold
+        {
+            bool down = false;
+            bool startUsed = false; // SaveLoad: Start went down during the hold (that hold loaded)
+        };
+        std::array<ExtraHold, extra::Count> g_extraHold{}; // window thread
+        bool g_extraStartWas = false;              // window thread: the controller's Start at the last sample
+        bool g_hideStart = false;                  // window thread: the Start of a SaveLoad chord, hidden until released
+        std::vector<extra::Command> g_extraFired;  // window thread
         std::filesystem::file_time_type g_loadedTime{};
         uintmax_t g_loadedSize = 0u;
         bool g_haveLoadedStamp = false;
@@ -672,6 +723,59 @@ namespace ps2_host_input
                                { return e.source == Source::PadButton || e.source == Source::PadAxis; });
         }
 
+        // The extra button a chord is a copy on: one controller button that is Select or a paddle (Count: none).
+        extra::Button copyButton(const Chord &chord)
+        {
+            if (chord.size() != 1u || chord.front().source != Source::PadButton)
+                return extra::Count;
+            for (size_t b = 0; b < kExtraPad.size(); ++b)
+                if (chord.front().code == kExtraPad[b])
+                    return static_cast<extra::Button>(b);
+            return extra::Count;
+        }
+
+        int firstControllerDevice(const PadConfig &config)
+        {
+            for (const Bindings &list : config.buttons)
+                for (const Chord &chord : list)
+                    for (const Element &e : chord)
+                        if (e.source == Source::PadButton || e.source == Source::PadAxis)
+                            return e.device;
+            return -1;
+        }
+
+        // The ten remappable PS2 buttons' binding keys, in prompts::Input order.
+        constexpr std::array<std::string_view, 10> kRemappableKeys{"Cross", "Circle", "Square", "Triangle", "L1",
+                                                                   "R1", "L2", "R2", "L3", "R3"};
+
+        // Player 1's extra buttons from the live table (the end of rebuildConfigs).
+        void publishExtra(const PadConfig &config)
+        {
+            g_extraDevice = firstControllerDevice(config);
+            extra::State next;
+            next.command = config.commands;
+            next.copy.fill(extra::kNoCopy);
+            for (size_t input = 0; input < kRemappableKeys.size(); ++input)
+            {
+                const size_t index = bindingKeyIndex(kRemappableKeys[input]).value();
+                for (const Chord &chord : config.buttons[index])
+                {
+                    const extra::Button b = copyButton(chord);
+                    if (b == extra::Count)
+                        continue;
+                    ++next.copies[input];
+                    if (next.copy[b] == extra::kNoCopy)
+                        next.copy[b] = static_cast<uint8_t>(input);
+                }
+            }
+            std::lock_guard<std::mutex> lock(g_extraMutex);
+            if (g_extraState.generation != 0u && next.command == g_extraState.command && next.copy == g_extraState.copy &&
+                next.copies == g_extraState.copies)
+                return;
+            next.generation = g_extraState.generation + 1u == 0u ? 1u : g_extraState.generation + 1u;
+            g_extraState = next;
+        }
+
         // g_menuConfig from player 1's config. A config without any controller binding stays as it is (a keyboard-only
         // layout gets no controller in the menus either).
         PadConfig menuConfigOf(const PadConfig &config, uint32_t pad)
@@ -724,7 +828,8 @@ namespace ps2_host_input
             }
             g_menuConfig = menuConfigOf(g_configs[0], 0u);
             g_configsValid = true;
-            publishPrompts(g_configs[0]); // every rebuild: file load, the 1-s file poll, F1 edits, reset
+            publishPrompts(g_configs[0]); // every rebuild: file load, the 1-s file poll, the page's edits, reset
+            publishExtra(g_configs[0]);
         }
 
         const std::array<PadConfig, kMaxPlayers> &padConfigs()
@@ -732,6 +837,51 @@ namespace ps2_host_input
             if (!g_configsValid)
                 rebuildConfigs();
             return g_configs;
+        }
+
+        // Each sample, before the pads are read: the paddles there are, and the commands (a SaveLoad hold's Start is
+        // hidden from the game until it is released).
+        void updateExtra()
+        {
+            namespace gp = ps2_host_gamepads;
+            const int device = g_extraDevice;
+            const bool present = device >= 0 && gp::connected(device);
+            uint8_t paddles = 0u;
+            if (present)
+                for (size_t b = extra::L4; b < extra::Count; ++b)
+                    if (gp::hasButton(device, kExtraPad[b]))
+                        paddles = static_cast<uint8_t>(paddles | (1u << b));
+            g_extraPaddles.store(paddles, std::memory_order_relaxed);
+            const PadConfig &config = padConfigs()[0];
+            const bool start = present && gp::button(device, gp::Start);
+            const bool startPressed = start && !g_extraStartWas;
+            g_extraStartWas = start;
+            if (!start)
+                g_hideStart = false;
+            for (size_t b = 0; b < extra::Count; ++b)
+            {
+                const extra::Command command = config.commands[b];
+                ExtraHold &hold = g_extraHold[b];
+                const bool down = present && command != extra::Command::None && gp::button(device, kExtraPad[b]);
+                if (down && !hold.down)
+                {
+                    hold = ExtraHold{true, false};
+                    if (command == extra::Command::QuickSave || command == extra::Command::QuickLoad)
+                        g_extraFired.push_back(command);
+                }
+                if (down && command == extra::Command::SaveLoad && startPressed)
+                {
+                    g_extraFired.push_back(extra::Command::QuickLoad);
+                    hold.startUsed = true;
+                    g_hideStart = true;
+                }
+                if (!down && hold.down)
+                {
+                    if (command == extra::Command::SaveLoad && !hold.startUsed)
+                        g_extraFired.push_back(extra::Command::QuickSave);
+                    hold = ExtraHold{};
+                }
+            }
         }
 
         ControlsModel defaultModel()
@@ -841,11 +991,12 @@ namespace ps2_host_input
                 out << "# God Hand: Rearmed controls (GHR.exe). The launcher's Controls tab edits and saves this file.\n"
                    "# PCSX2 syntax, one binding per line: <Key> = Keyboard/<key> | Pointer-0/LeftButton, RightButton, MiddleButton |\n"
                    "#   SDL-<n>/<button> (controller n: FaceSouth FaceEast FaceWest FaceNorth Back Start LeftStick RightStick\n"
-                   "#   LeftShoulder RightShoulder DPadUp DPadDown DPadLeft DPadRight) | SDL-<n>/+<axis> or -<axis> (LeftX LeftY\n"
+                   "#   LeftShoulder RightShoulder DPadUp DPadDown DPadLeft DPadRight Paddle1-4) | SDL-<n>/+<axis> or -<axis> (LeftX LeftY\n"
                    "#   RightX RightY LeftTrigger RightTrigger). Repeat a key for more bindings; \"<Key> =\" = unbound; \"a & b\" = both.\n"
                    "# Keys: Up Right Down Left Triangle Circle Cross Square Select Start L1 L2 R1 R2 L3 R3, LUp LRight LDown LLeft\n"
                    "#   (left stick), RUp RRight RDown RLeft (right stick); settings Type Deadzone AxisScale ButtonDeadzone InvertL InvertR\n"
-                   "#   LargeMotor SmallMotor LargeMotorScale SmallMotorScale.\n"
+                   "#   LargeMotor SmallMotor LargeMotorScale SmallMotorScale; Select's and the back paddles' commands SelectCommand\n"
+                   "#   L4Command R4Command L5Command R5Command = None QuickSave QuickLoad SaveLoad (Select: SaveLoad by default).\n"
                    "# Changes saved here are picked up while the game runs. Delete this file to get the default layout back.\n";
             for (uint32_t pad = 0; pad < kMaxPlayers; ++pad)
             {
@@ -1664,6 +1815,8 @@ namespace ps2_host_input
                 }
                 g_latched = static_cast<uint16_t>(g_latched & state.buttons);
                 state.buttons = static_cast<uint16_t>(state.buttons & ~g_latched);
+                if (g_hideStart)
+                    state.buttons = static_cast<uint16_t>(state.buttons & ~PadButton::Start); // a SaveLoad chord's
             }
             for (const auto &[pressure, button] : kPressureButtons)
             {
@@ -1905,6 +2058,7 @@ namespace ps2_host_input
         // Only the players that have a (port, slot): 2 without a multitap, 5 with one, 8 with two.
         const uint32_t taps = multitapPorts();
         const uint32_t players = 2u + ((taps & 1u) ? 3u : 0u) + ((taps & 2u) ? 3u : 0u);
+        updateExtra();
         std::array<PadInputState, kMaxPlayers> state{};
         const bool blocked = g_blocked.load(std::memory_order_relaxed);
         for (uint32_t player = 0; player < players; ++player)
@@ -1989,7 +2143,6 @@ namespace ps2_host_input
     {
         restoreAccessKeysFinal(); // sample() never clears them again
     }
-
 
     void setControlsFile(const std::string &path, const std::vector<std::pair<std::string, std::string>> &legacy)
     {
@@ -2261,6 +2414,8 @@ namespace ps2_host_input
             {
                 fresh.settings = g_model.pads[pad].settings;
                 fresh.comments = g_model.pads[pad].comments;
+                for (const std::string_view key : kExtraKeys)
+                    setSectionSetting(fresh, key, {}); // the extra buttons' commands are bindings: back to theirs
             }
             g_model.pads[pad] = std::move(fresh);
             g_controlsDirty = true;
@@ -2440,9 +2595,16 @@ namespace ps2_host_input
         {
             struct Request
             {
-                bool reset = false;
+                enum class Kind : uint8_t
+                {
+                    Swap,
+                    Reset,
+                    Assign // an extra button: b = the button, a = the copied input (extra::kNoCopy: command)
+                };
+                Kind kind = Kind::Swap;
                 uint32_t pad = 0;
                 uint8_t a = 0, b = 0;
+                extra::Command command = extra::Command::None;
             };
             std::mutex g_requestMutex;
             std::vector<Request> g_requests;
@@ -2457,14 +2619,25 @@ namespace ps2_host_input
                 return input < kNames.size() ? bindingKeyIndex(kNames[input]) : std::nullopt;
             }
 
-            // A list's controller bindings taken out; returns where the first one was (the end when none).
-            size_t takeController(std::vector<std::string> &list, std::vector<std::string> &taken)
+            // A binding that is a copy on an extra button (Select or a paddle on its own).
+            bool copyBinding(std::string_view binding, extra::Button *which = nullptr)
+            {
+                const auto chord = parseChord(binding);
+                const extra::Button b = chord ? copyButton(*chord) : extra::Count;
+                if (which)
+                    *which = b;
+                return b != extra::Count;
+            }
+
+            // A list's controller bindings taken out; returns where the first one was (the end when none). keepCopies:
+            // the extra buttons' copies stay (a swap moves the action's buttons, the copies stay with the action).
+            size_t takeController(std::vector<std::string> &list, std::vector<std::string> &taken, bool keepCopies = false)
             {
                 size_t at = std::string::npos;
                 std::vector<std::string> rest;
                 for (std::string &binding : list)
                 {
-                    if (kindOf(binding) == Kind::Controller)
+                    if (kindOf(binding) == Kind::Controller && !(keepCopies && copyBinding(binding)))
                     {
                         if (at == std::string::npos)
                             at = rest.size();
@@ -2481,14 +2654,21 @@ namespace ps2_host_input
         void requestControllerSwap(uint32_t pad, uint8_t inputA, uint8_t inputB)
         {
             std::lock_guard<std::mutex> lock(g_requestMutex);
-            g_requests.push_back(Request{false, pad, inputA, inputB});
+            g_requests.push_back(Request{Request::Kind::Swap, pad, inputA, inputB});
             g_requested.store(true, std::memory_order_release);
         }
 
         void requestControllerReset(uint32_t pad)
         {
             std::lock_guard<std::mutex> lock(g_requestMutex);
-            g_requests.push_back(Request{true, pad});
+            g_requests.push_back(Request{Request::Kind::Reset, pad});
+            g_requested.store(true, std::memory_order_release);
+        }
+
+        void requestExtraAssign(uint32_t pad, extra::Button button, extra::Command command, uint8_t copyOf)
+        {
+            std::lock_guard<std::mutex> lock(g_requestMutex);
+            g_requests.push_back(Request{Request::Kind::Assign, pad, copyOf, static_cast<uint8_t>(button), command});
             g_requested.store(true, std::memory_order_release);
         }
 
@@ -2510,8 +2690,37 @@ namespace ps2_host_input
                 PadSection &section = g_model.pads[r.pad];
                 if (!section.present)
                     section = defaultSection(r.pad);
-                if (r.reset)
+                if (r.kind == Request::Kind::Assign)
                 {
+                    // The button's copies go (wherever they were), then the new copy or the command.
+                    const auto button = static_cast<extra::Button>(r.b);
+                    if (button >= extra::Count)
+                        continue;
+                    for (const std::string_view key : kRemappableKeys)
+                    {
+                        std::vector<std::string> &list = section.bindings[bindingKeyIndex(key).value()];
+                        list.erase(std::remove_if(list.begin(), list.end(), [&](const std::string &binding) {
+                                       extra::Button which = extra::Count;
+                                       return copyBinding(binding, &which) && which == button; }),
+                                   list.end());
+                    }
+                    if (r.a < kRemappableKeys.size())
+                    {
+                        section.bindings[bindingKeyIndex(kRemappableKeys[r.a]).value()].push_back(
+                            padButtonBinding(std::max(g_extraDevice, 0), kExtraPad[button]));
+                        setSectionSetting(section, kExtraKeys[button], kCommandNames[0]);
+                    }
+                    else
+                        setSectionSetting(section, kExtraKeys[button], kCommandNames[static_cast<size_t>(r.command)]);
+                    std::cerr << "[controls] player " << r.pad + 1u << ": " << kExtraKeys[button] << " = "
+                              << (r.a < kRemappableKeys.size() ? "a copy of " + std::string(kRemappableKeys[r.a])
+                                                               : std::string(kCommandNames[static_cast<size_t>(r.command)]))
+                              << std::endl;
+                }
+                else if (r.kind == Request::Kind::Reset)
+                {
+                    for (const std::string_view key : kExtraKeys)
+                        setSectionSetting(section, key, {}); // the extra buttons back to theirs (Select: save / load)
                     const PadSection defaults = defaultSection(r.pad);
                     for (size_t i = 0; i < kBindingKeyCount; ++i)
                     {
@@ -2529,8 +2738,8 @@ namespace ps2_host_input
                     if (!ka || !kb || *ka == *kb)
                         continue;
                     std::vector<std::string> fromA, fromB;
-                    const size_t atA = takeController(section.bindings[*ka], fromA);
-                    const size_t atB = takeController(section.bindings[*kb], fromB);
+                    const size_t atA = takeController(section.bindings[*ka], fromA, true);
+                    const size_t atB = takeController(section.bindings[*kb], fromB, true);
                     section.bindings[*ka].insert(section.bindings[*ka].begin() + static_cast<std::ptrdiff_t>(atA), fromB.begin(), fromB.end());
                     section.bindings[*kb].insert(section.bindings[*kb].begin() + static_cast<std::ptrdiff_t>(atB), fromA.begin(), fromA.end());
                     std::cerr << "[controls] player " << r.pad + 1u << ": " << bindingKeyName(*ka) << " and " << bindingKeyName(*kb)
@@ -2545,6 +2754,34 @@ namespace ps2_host_input
             std::string message;
             if (!save(message))
                 std::cerr << "[controls] " << message << std::endl;
+        }
+    }
+
+    namespace extra
+    {
+        State state()
+        {
+            std::lock_guard<std::mutex> lock(g_extraMutex);
+            return g_extraState;
+        }
+
+        uint8_t paddles()
+        {
+            return g_extraPaddles.load(std::memory_order_relaxed);
+        }
+
+        void requestAssign(uint32_t pad, Button button, Command command, uint8_t copyOf)
+        {
+            controls::requestExtraAssign(pad, button, command, copyOf);
+        }
+
+        Command takeFired()
+        {
+            if (g_extraFired.empty())
+                return Command::None;
+            const Command command = g_extraFired.front();
+            g_extraFired.erase(g_extraFired.begin());
+            return command;
         }
     }
 

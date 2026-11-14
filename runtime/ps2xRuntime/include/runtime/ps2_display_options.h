@@ -25,6 +25,12 @@ namespace ps2_host_display
     void openHostWindow(const char *title);
     // Real vsync for the window (PS2X_VSYNC, default on); off = the software 60 FPS limiter.
     bool vsyncEnabled();
+    // The FPS Counter (the frame rate / game speed line at the bottom left; Options > INTERFACE > Overlays). Any
+    // thread. F3 toggles it on the main thread and then calls the listener with the new value (the game layer saves it).
+    void setFpsCounter(bool on);
+    bool fpsCounter();
+    void toggleFpsCounter();
+    void setFpsCounterListener(void (*listener)(bool on));
     // Game frames for the FPS overlay (F3): the port calls this once per iteration of the game's main loop.
     void noteGameFrame();
     // A line shown on screen (top left) until replaced or cleared with an empty string, e.g. "capturing profile".

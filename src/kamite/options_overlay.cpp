@@ -162,6 +162,14 @@ namespace kamite::options_overlay
         // face row, L3 by R3, the left stick by the right), below the title (kMapTitleClear).
         constexpr float kMapTitleX = 20.0f, kMapTitleScale = 0.8f, kMapTitleClear = 62.0f;
         constexpr float kMapPadY = 230.0f, kMapPadHeight = 190.0f, kMapPadShare = 0.46f;
+        // The back-button block (stage 4, K Nov 14): its rows start at kMapBlockTop (under the stick presses' rows, so
+        // the sticks' leaders pass outside it; the pad keeps its place), kMapBlockGap under the pad at least; each label
+        // kMapBlockWidth wide, kMapBlockInner from the middle. A note under the pad (no block) has its baseline at
+        // kMapNoteY (under the leaders' ends, like the block). SAVE / LOAD's Start button is kMapInlineIcon x the cap tall,
+        // kMapInlineIconGap x the cap from the letters.
+        constexpr float kMapBlockGap = 6.0f, kMapBlockTop = 336.0f, kMapBlockWidth = 88.0f, kMapBlockInner = 6.0f;
+        constexpr float kMapBlockRow = 25.0f, kMapBlockRowGap = 3.0f; // a paddle row's least height, the rows' gap
+        constexpr float kMapNoteY = 382.0f, kMapInlineIcon = 1.55f, kMapInlineIconGap = 0.05f;
         constexpr float kMapKnee = 4.0f, kMapPanel = 160.0f, kMapEdge = 10.0f;
         // The left column is narrower (K, Nov 14: its labels start at its outer end, so a wide one leaves them far from
         // the pad on a wide screen): just room for its labels and the drum's.
@@ -171,11 +179,11 @@ namespace kamite::options_overlay
         // Text, measured from the original's cross row (ATTACK / THROW ITEM / CONFIRM): every line's underline touches
         // its letters' stroke (baseline to the line's centre: kMapAbove for a thin divider, kMapAboveLast for the
         // thicker underscore, so both look the same), the next function's letters kMapBelow under it (letter tops); a
-        // wrapped line follows kMapWrap below the letters above it; kMapRowTop over the top letters. One line at kMapCap, more at kMapCapN (a HOT line at
-        // kMapHotCap). All left-aligned in a column after the button's icon (kMapIcon lines square, at the panel's left;
+        // wrapped line follows kMapWrap below the letters above it; kMapRowTop over the top letters. One line at kMapCap,
+        // more at kMapCapN. All left-aligned in a column after the button's icon (kMapIcon lines square, at the panel's left;
         // the pack's buttons fill about 84 % of theirs), kMapTextGap after it, kMapTextMargin short of the panel's end.
         // The letters: the list's shape, tracked out kMapTracking of the cap (the original spreads its words).
-        constexpr float kMapCap = 15.5f, kMapCapN = 11.5f, kMapHotCap = 9.5f;
+        constexpr float kMapCap = 15.5f, kMapCapN = 11.5f;
         constexpr float kMapAbove = 2.2f, kMapAboveLast = 2.7f, kMapBelow = 3.8f, kMapWrap = 3.5f, kMapRowTop = 2.5f;
         constexpr float kMapIcon = 25.0f, kMapTextGap = 4.0f, kMapTextMargin = 6.0f, kMapTracking = 0.13f;
         // The lines: grungy brush strokes laid along them (leader.png tapers to a point at the button; underscore.png
@@ -251,6 +259,7 @@ namespace kamite::options_overlay
             float fade;
             uint32_t labelFont = 0, helpFont = 0;
             float dim = 1.0f; // a page shown before it is opened: half strength
+            float helpClear = 0.0f; // BUTTON MAPPING's paddle block reaches down to here (lines): the help keeps below it
 
             uint32_t add(const char *text, size_t length)
             {
@@ -440,6 +449,8 @@ namespace kamite::options_overlay
                     lines += *c == '\n' && c[1] ? 1 : 0;
                 const float block = kHelpCap + kHelpLine * static_cast<float>(std::max(lines - 1, 0));
                 float baseline = 0.5f * (kHelpBandTop + kHelpBandBottom - block) + kHelpCap;
+                if (helpClear > 0.0f && baseline - kHelpCap < helpClear + 2.0f) // under the paddles: its last line on the hints'
+                    baseline = kHintY - kHelpLine * static_cast<float>(std::max(lines - 1, 0));
                 for (const char *line = body; line && *line;)
                 {
                     const char *end = std::strchr(line, '\n');
@@ -803,37 +814,42 @@ namespace kamite::options_overlay
                 const float padH = std::min(kMapPadHeight, kMapPadShare * space.area / (aspect * kLinesToUnits));
                 const float padW = padH * aspect * kLinesToUnits; // units
                 const float cx = 0.5f * space.area, padL = cx - 0.5f * padW, padR = cx + 0.5f * padW;
-                const float padT = kMapPadY - 0.5f * padH;
+                const float padT = kMapPadY - 0.5f * padH, padB = padT + padH;
                 // The columns turn at the same place for every pad (K: the labels never move with the pad), just past
                 // the widest pad's outline at this size; a narrower pad's lines are a little longer.
                 const float widest = std::min(kMapPadWidest, kMapPadShare * space.area);
                 const float kneeL = cx - 0.5f * widest - kMapKnee, kneeR = cx + 0.5f * widest + kMapKnee;
                 const float outerL = std::max(kMapEdge, kneeL - kMapPanelLeft), outerR = std::min(space.area - kMapEdge, kneeR + kMapPanel);
 
+                // A label's place: its line, rows, and its two ends: `knee` the end by the pad (where a column's leader
+                // turns; a paddle's inner end), `outer` the other (a panel is opaque there).
                 struct Row
                 {
                     int line = -1;
                     float top = 0.0f, bottom = 0.0f;
+                    float knee = 0.0f, outer = 0.0f;
+                    bool side = false; // the right-hand side
+                    float left() const { return std::min(knee, outer); }
+                    float right() const { return std::max(knee, outer); }
                 };
                 // A label's shape at full size, from the row's bottom (its underscore) up: each line's baseline and cap,
                 // the underline under each line that ends a function (the last one's is the underscore), the height.
                 struct Shape
                 {
                     int n = 0;
-                    float base[5] = {}, cap[5] = {}, under[5] = {};
-                    bool divider[5] = {};
+                    float base[4] = {}, cap[4] = {}, under[4] = {};
+                    bool divider[4] = {};
                     float height = 0.0f;
                 };
                 const auto shapeOf = [&](const MappingLine &l) {
                     Shape t;
-                    t.n = std::min(std::max(l.count + (*l.hot ? 1 : 0), 1), 5); // a hotkey alone: its HOT line only
+                    t.n = std::clamp(l.count, 1, 4);
                     const bool single = t.n == 1;
                     float top = 0.0f, base = 0.0f;
                     for (int i = t.n - 1; i >= 0; --i)
                     {
-                        const bool hot = *l.hot && i == t.n - 1 && !single; // a hotkey alone is the line's label
-                        const float cap = hot ? kMapHotCap : single ? (*l.hot ? kMapCapN : kMapCap) : kMapCapN;
-                        const bool ends = hot || i == t.n - 1 || ((l.ends >> i) & 1u) != 0u || (*l.hot && i == t.n - 2);
+                        const float cap = single && !l.block ? kMapCap : kMapCapN; // a paddle's: the smaller (room)
+                        const bool ends = i == t.n - 1 || ((l.ends >> i) & 1u) != 0u;
                         if (i == t.n - 1)
                             base = -kMapAboveLast;
                         else if (ends)
@@ -848,10 +864,10 @@ namespace kamite::options_overlay
                         t.cap[i] = cap;
                         top = base - cap;
                     }
-                    t.height = std::max(kMapRow, -top + kMapRowTop);
-                    // One function (no divider, no HOT: COMBO, UNLEASH / THE GODHAND): centred in its row instead (K);
-                    // only labels with several functions sit on their lines from the bottom.
-                    bool several = *l.hot;
+                    t.height = std::max(l.block ? kMapBlockRow : kMapRow, -top + kMapRowTop);
+                    // One function (no divider: COMBO, UNLEASH / THE GODHAND): centred in its row instead (K); only
+                    // labels with several functions sit on their lines from the bottom.
+                    bool several = false;
                     for (int i = 0; i + 1 < t.n; ++i)
                         several = several || t.divider[i];
                     if (!several)
@@ -863,9 +879,21 @@ namespace kamite::options_overlay
                     return t;
                 };
                 const auto height = [&](const MappingLine &l) { return shapeOf(l).height; };
-                std::vector<Row> right, left;
+                std::vector<Row> right, left, block;
                 for (int i = 0; i < m.lineCount; ++i)
-                    (m.lines[i].right ? right : left).push_back(Row{i});
+                {
+                    const MappingLine &l = m.lines[i];
+                    Row r{i};
+                    r.side = l.right;
+                    if (l.block)
+                        block.push_back(r);
+                    else
+                    {
+                        r.knee = l.right ? kneeR : kneeL;
+                        r.outer = l.right ? outerR : outerL;
+                        (l.right ? right : left).push_back(r);
+                    }
+                }
                 // The right column: stacked evenly over the band (squeezed when they do not fit).
                 float total = 0.0f;
                 for (const Row &r : right)
@@ -897,113 +925,149 @@ namespace kamite::options_overlay
                         below = r.bottom + kMapRowGap * squeeze;
                     }
                 }
+                // The block: centred under the pad, its rows as tall as their tallest label, the left paddles' labels
+                // ending kMapBlockInner short of the middle, the right ones starting there (no leaders, K Nov 14).
+                {
+                    float rowTop[2] = {}, rowHeight[2] = {};
+                    for (const Row &r : block)
+                    {
+                        const int y = std::clamp(m.lines[r.line].blockY, 0, 1);
+                        rowHeight[y] = std::max(rowHeight[y], height(m.lines[r.line]));
+                    }
+                    rowTop[0] = std::max(padB + kMapBlockGap, kMapBlockTop);
+                    rowTop[1] = rowTop[0] + rowHeight[0] + kMapBlockRowGap;
+                    helpClear = rowHeight[1] > 0.0f ? rowTop[1] + rowHeight[1] : rowHeight[0] > 0.0f ? rowTop[0] + rowHeight[0] : 0.0f;
+                    for (Row &r : block)
+                    {
+                        const MappingLine &l = m.lines[r.line];
+                        const int y = std::clamp(l.blockY, 0, 1);
+                        r.bottom = rowTop[y] + rowHeight[y]; // on the row's line, at its own size
+                        r.top = r.bottom - height(l);
+                        const float inner = l.blockX ? cx + kMapBlockInner : cx - kMapBlockInner;
+                        const float outer = l.blockX ? inner + kMapBlockWidth : inner - kMapBlockWidth;
+                        r.knee = inner;
+                        r.outer = outer;
+                    }
+                }
 
                 const auto each = [&](auto &&fn) {
                     for (const Row &r : left)
-                        fn(r, false);
+                        fn(r);
                     for (const Row &r : right)
-                        fn(r, true);
+                        fn(r);
+                    for (const Row &r : block)
+                        fn(r);
                 };
-                // The panels: the wash opaque at the outer end, nothing at the pad (mirrored on the right).
-                each([&](const Row &r, bool side) {
-                    if (!m.lines[r.line].fixed) // a fixed line has none (K: it reads as inactive)
-                        picture(m.panel, side ? outerR : outerL, r.top, side ? kneeR : kneeL, r.bottom,
-                                r.line == m.cursor ? kMapPanelOn : kMapPanelTint);
+                // The panels: the wash opaque at the outer end, nothing at the pad (mirrored on the right). A paddle has
+                // its underline only (K), its panel lit while selected.
+                each([&](const Row &r) {
+                    const MappingLine &l = m.lines[r.line];
+                    const bool on = r.line == m.cursor;
+                    if (!l.fixed && (!l.block || on)) // a fixed line has none (K: it reads as inactive)
+                        picture(m.panel, r.outer, r.top, r.knee, r.bottom, on ? kMapPanelOn : kMapPanelTint);
                 });
                 // The pad in its flames.
                 const float margin = m.flamesMargin * padH, marginU = margin * kLinesToUnits;
-                picture(m.flames, padL - marginU, padT - margin, padR + marginU, padT + padH + margin, rgba(255, 255, 255));
-                picture(m.pad, padL, padT, padR, padT + padH, rgba(255, 255, 255));
+                picture(m.flames, padL - marginU, padT - margin, padR + marginU, padB + margin, rgba(255, 255, 255));
+                picture(m.pad, padL, padT, padR, padB, rgba(255, 255, 255));
+                // A note under the pad (a Steam pad's paddles: Steam Input), in the help's look.
+                if (m.padNote && *m.padNote)
+                {
+                    text(m.padNote, std::strlen(m.padNote), helpFont, cx, kMapNoteY, kHelpCap, kHelpScaleX, 0.0f, kHelp, 0u, 0.0f,
+                         PCSX2GS_ALIGN_CENTRE);
+                    helpClear = std::max(helpClear, kMapNoteY);
+                    Pcsx2GsScreenItem &item = items.back();
+                    item.shadow = faded(kHelpShadow);
+                    item.shadow_x = Space::y(kHelpShadowX);
+                    item.shadow_y = Space::y(kHelpShadowY);
+                }
                 // The lines: from the button (tapering to it) up or down to the panel's corner by the pad, then along the
-                // panel's bottom; each upper text line its own thin, faint underscore.
-                each([&](const Row &r, bool side) {
+                // panel's bottom; each upper text line its own thin, faint underscore. A paddle: its underscore only.
+                each([&](const Row &r) {
                     const MappingLine &l = m.lines[r.line];
                     const bool on = r.line == m.cursor;
                     const float alpha = l.fixed ? kMapFixedAlpha : 1.0f;
                     const uint32_t tint = rgba(255, 255, 255, static_cast<uint32_t>(255.0f * alpha));
                     const char *leader = on && *m.leaderLit ? m.leaderLit : m.leader;
                     const char *under = on && *m.underscoreLit ? m.underscoreLit : m.underscore;
-                    const float knee = side ? kneeR : kneeL, outer = side ? outerR : outerL;
-                    const float bx = padL + l.px * padW, by = padT + l.py * padH;
-                    // A bend on the way (via): the leader to it, then on to the corner (drawn from the corner, the
-                    // underscore's slight thinning at the bend, under the leader's full end).
-                    const float tx = l.via ? padL + l.vx * padW : knee, ty = l.via ? padT + l.vy * padH : r.bottom;
-                    const float vx = (tx - bx) * 7.0f / 6.0f, vy = ty - by, len = std::sqrt(vx * vx + vy * vy);
-                    const float reach = l.reach * padH;
-                    if (len > reach + 1.0f)
-                        stroke(leader, bx + vx / len * reach * kLinesToUnits, by + vy / len * reach, tx, ty, kMapLine, tint);
-                    if (l.via)
-                        stroke(under, knee, r.bottom, tx, ty, kMapLine, tint);
-                    const float back = side ? -1.5f : 1.5f; // the underscore starts under the leader's end
-                    stroke(under, knee + back, r.bottom, outer, r.bottom, kMapLine, tint);
+                    float back = 0.0f;
+                    if (!l.block)
+                    {
+                        const float bx = padL + l.px * padW, by = padT + l.py * padH;
+                        // A bend on the way (via): the leader to it, then on to the corner (drawn from the corner, the
+                        // underscore's slight thinning at the bend, under the leader's full end).
+                        const float tx = l.via ? padL + l.vx * padW : r.knee, ty = l.via ? padT + l.vy * padH : r.bottom;
+                        const float vx = (tx - bx) * 7.0f / 6.0f, vy = ty - by, len = std::sqrt(vx * vx + vy * vy);
+                        const float reach = l.reach * padH;
+                        if (len > reach + 1.0f)
+                            stroke(leader, bx + vx / len * reach * kLinesToUnits, by + vy / len * reach, tx, ty, kMapLine, tint);
+                        if (l.via)
+                            stroke(under, r.knee, r.bottom, tx, ty, kMapLine, tint);
+                        back = r.side ? -1.5f : 1.5f; // the underscore starts under the leader's end
+                    }
+                    stroke(under, r.knee + back, r.bottom, r.outer, r.bottom, kMapLine, tint);
                     const Shape t = shapeOf(l);
                     const float s = (r.bottom - r.top) / t.height;
-                    const float textX = (side ? knee : outer) + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap;
+                    const float textX = r.left() + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap;
                     const uint32_t faint = rgba(255, 255, 255, static_cast<uint32_t>(255.0f * alpha * kMapSubAlpha));
                     for (int i = 0; i + 1 < t.n; ++i)
                         if (t.divider[i])
                         {
                             const float uy = r.bottom + t.under[i] * s;
-                            if (side)
-                                stroke(under, textX - 2.0f, uy, outer, uy, kMapSubLine, faint);
+                            if (r.side || l.block)
+                                stroke(under, textX - 2.0f, uy, r.right(), uy, kMapSubLine, faint);
                             else
-                                stroke(under, knee, uy, outer, uy, kMapSubLine, faint);
+                                stroke(under, r.knee, uy, r.outer, uy, kMapSubLine, faint);
                         }
                 });
-                // The drum's span (it covers the cursor's label): rows it passes over are drawn fainter.
+                // The drum's span (it covers the cursor's label): labels it passes over are drawn fainter.
                 const bool drum = m.drum && m.drumCount > 0 && m.cursor >= 0;
                 Row drumRow;
-                bool drumSide = false;
-                each([&](const Row &r, bool side) {
+                each([&](const Row &r) {
                     if (r.line == m.cursor)
-                        drumRow = r, drumSide = side;
+                        drumRow = r;
                 });
-                const float drumMid = 0.5f * (drumRow.top + drumRow.bottom);
+                const bool drumBlock = drum && drumRow.line >= 0 && m.lines[drumRow.line].block;
                 const float drumHalf = kMapDrumPitch * std::min(kMapDrumReach, 0.5f * static_cast<float>(m.drumCount)) + 0.5f * kMapDrumPitch;
+                const float drumMid = 0.5f * (drumRow.top + drumRow.bottom); // a paddle's too: its far items fade off the bottom
+                const float colL = drumRow.left(), colR = drumRow.right();
                 // The icons (at each label's left, centred on its letters) and the labels, left-aligned in a column.
-                each([&](const Row &r, bool side) {
+                each([&](const Row &r) {
                     const MappingLine &l = m.lines[r.line];
                     const bool on = r.line == m.cursor;
                     if (drum && on)
                         return; // the drum is drawn in its place
                     const float keep = dim;
                     if (drum)
-                        dim = keep * (side == drumSide && r.bottom > drumMid - drumHalf && r.top < drumMid + drumHalf ? kMapDrumUnder : kMapDrumDim);
-                    const float knee = side ? kneeR : kneeL, outer = side ? outerR : outerL;
-                    const float left = side ? knee : outer, right = side ? outer : knee;
+                    {
+                        const bool under = r.right() > colL && r.left() < colR && r.bottom > drumMid - drumHalf && r.top < drumMid + drumHalf;
+                        dim = keep * (under ? kMapDrumUnder : kMapDrumDim);
+                    }
                     const Shape t = shapeOf(l);
                     const float s = (r.bottom - r.top) / t.height;
                     const float lettersTop = r.bottom + (t.base[0] - t.cap[0]) * s, lettersBottom = r.bottom + t.base[t.n - 1] * s;
                     const float icon = std::min(kMapIcon * s, r.bottom - r.top - 2.0f), mid = 0.5f * (lettersTop + lettersBottom);
-                    picture(l.icon, left + 1.0f, mid - 0.5f * icon, left + 1.0f + icon * kLinesToUnits, mid + 0.5f * icon,
+                    picture(l.icon, r.left() + 1.0f, mid - 0.5f * icon, r.left() + 1.0f + icon * kLinesToUnits, mid + 0.5f * icon,
                             rgba(255, 255, 255, l.fixed ? static_cast<uint32_t>(255.0f * 0.85f) : 255u));
-                    const float x0 = left + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap, room = std::max(right - kMapTextMargin - x0, 8.0f);
+                    const float x0 = r.left() + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap, room = std::max(r.right() - kMapTextMargin - x0, 8.0f);
                     const uint32_t fill = on ? kLabelOn : l.fixed ? kMapFixedText : kMapText, edge = on ? kLabelOnStroke : kMapStroke;
                     for (int i = 0; i < t.n; ++i)
-                    {
-                        const bool alone = *l.hot && l.count == 0; // a hotkey alone: its HOT line in the label's look
-                        const bool hot = *l.hot && i == t.n - 1 && !alone;
-                        const char *line = alone ? l.hot : hot ? l.hot : l.text[i];
-                        const float cap = t.cap[i] * s;
-                        text(line, std::strlen(line), labelFont, x0, r.bottom + t.base[i] * s, cap, kNewLabel.scaleX, kMapTracking * cap,
-                             hot ? kLabel : fill, hot ? kMapStroke : edge, room);
-                    }
+                        labelLine(l.text[i], l.inlineIcon, x0, r.bottom + t.base[i] * s, t.cap[i] * s, fill, edge, room);
                     dim = keep;
                 });
                 if (!drum)
                     return;
                 // The drum: each item where the turn puts it, the nearest ones last (on top).
-                const float knee = drumSide ? kneeR : kneeL, outer = drumSide ? outerR : outerL;
-                const float colL = drumSide ? knee : outer, colR = drumSide ? outer : knee;
-                const float inward = drumSide ? -1.0f : 1.0f; // toward the pad
+                const float inward = drumRow.side ? -1.0f : 1.0f; // toward the pad
                 const int n = m.drumCount;
-                // The column's rows, top to bottom, and the drum's reach past them.
-                float colTop = drumMid - drumHalf, colBottom = drumMid + drumHalf;
-                for (const Row &r : drumSide ? right : left)
-                {
-                    colTop = std::min(colTop, r.top - kMapDrumShadeSoft);
-                    colBottom = std::max(colBottom, r.bottom + kMapDrumShadeSoft);
-                }
+                // The column's rows, top to bottom, and the drum's reach past them (a paddle's: the drum alone).
+                float colTop = drumMid - drumHalf - kMapDrumShadeSoft, colBottom = drumMid + drumHalf + kMapDrumShadeSoft;
+                if (!drumBlock)
+                    for (const Row &r : drumRow.side ? right : left)
+                    {
+                        colTop = std::min(colTop, r.top - kMapDrumShadeSoft);
+                        colBottom = std::max(colBottom, r.bottom + kMapDrumShadeSoft);
+                    }
                 // Above and below the selected line: each edge's feather (centred on it) ends at the line's panel.
                 for (const auto &[y0, y1] : {std::pair{colTop, drumRow.top - 0.5f * kMapDrumShadeSoft},
                                              std::pair{drumRow.bottom + 0.5f * kMapDrumShadeSoft, colBottom}})
@@ -1038,7 +1102,7 @@ namespace kamite::options_overlay
                     const float scale = 1.0f - kMapDrumShrink * a;
                     const float y = drumMid + kMapDrumPitch * d * (1.0f - 0.06f * a);
                     // Items turning up into the CONTROLS title (the left column's top row) fade under it.
-                    const float underTitle = drumSide ? 1.0f : std::clamp((y - kMapTitleClear + 8.0f) / 18.0f, 0.0f, 1.0f);
+                    const float underTitle = drumRow.side || drumBlock ? 1.0f : std::clamp((y - kMapTitleClear + 8.0f) / 18.0f, 0.0f, 1.0f);
                     const float alpha = std::clamp(1.0f - kMapDrumFade * a, 0.0f, 1.0f) * std::clamp((kMapDrumReach - a) / 0.6f, 0.0f, 1.0f) *
                                         underTitle;
                     const float lean = inward * kMapDrumLean * d * d;
@@ -1073,6 +1137,34 @@ namespace kamite::options_overlay
                     }
                     dim = keep;
                 }
+            }
+
+            // One line of a BUTTON MAPPING label at x (units) on its baseline: a \x03 in it is the line's picture
+            // (SAVE / LOAD's Start button), laid after the text before it, the rest of the text after it.
+            void labelLine(const char *line, const char *icon, float x, float baseline, float cap, uint32_t fill, uint32_t edge, float room)
+            {
+                const char *mark = icon && *icon ? std::strchr(line, '\x03') : nullptr;
+                if (!mark)
+                {
+                    text(line, std::strlen(line), labelFont, x, baseline, cap, kNewLabel.scaleX, kMapTracking * cap, fill, edge, room);
+                    return;
+                }
+                text(line, static_cast<size_t>(mark - line), labelFont, x, baseline, cap, kNewLabel.scaleX, kMapTracking * cap, fill, edge);
+                const float size = kMapInlineIcon * cap;
+                Pcsx2GsScreenItem item{};
+                item.kind = PCSX2GS_SCREEN_IMAGE;
+                item.align = PCSX2GS_ALIGN_AFTER_TEXT;
+                item.text = add(icon, std::strlen(icon));
+                item.fill = faded(rgba(255, 255, 255));
+                item.x = Space::y(kMapInlineIconGap * cap);
+                item.x1 = Space::y(size);
+                item.y = Space::y(baseline - 0.5f * cap - 0.5f * size);
+                item.y1 = Space::y(baseline - 0.5f * cap + 0.5f * size);
+                items.push_back(item);
+                const char *rest = mark + 1;
+                text(rest, std::strlen(rest), labelFont, 0.0f, baseline, cap, kNewLabel.scaleX, kMapTracking * cap, fill, edge, 0.0f,
+                     PCSX2GS_ALIGN_AFTER_TEXT);
+                items.back().x = Space::y(kMapInlineIconGap * cap);
             }
         };
     }

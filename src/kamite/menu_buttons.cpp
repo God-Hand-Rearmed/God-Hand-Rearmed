@@ -57,13 +57,11 @@ namespace kamite::menu_buttons
         using bindings::Input;
         constexpr uint8_t kButtons = 16u; // Input values 0..15: the buttons (the stick directions follow)
         // Per Input 0..15 (Cross Circle Square Triangle L1 R1 L2 R2 L3 R3 Start Select Up Down Left Right): its bit in the
-        // raw word, its text icon (0xFFFF: none), its ps2x::iop::PadButton bit, and its controller binding on the default
+        // raw word, its text icon (0xFFFF: none), and its controller binding on the default
         // layout (ps2_host_input.cpp defaultBindings: type, ps2_host_gamepads code, axis sign).
         constexpr uint32_t kRawBit[kButtons] = {0x40u, 0x20u, 0x80u, 0x10u, 0x04u, 0x08u, 0x01u, 0x02u,
                                                 0x200u, 0x400u, 0x800u, 0x100u, 0x1000u, 0x4000u, 0x8000u, 0x2000u};
         constexpr uint16_t kIcon[kButtons] = {3u, 0u, 2u, 1u, 4u, 5u, 6u, 7u, 8u, 9u, 12u, 13u, 0xFFFFu, 0xFFFFu, 0xFFFFu, 0xFFFFu};
-        constexpr uint16_t kPadBit[kButtons] = {1u << 14, 1u << 13, 1u << 15, 1u << 12, 1u << 10, 1u << 11, 1u << 8, 1u << 9,
-                                                1u << 1,  1u << 2,  1u << 3,  1u << 0,  1u << 4,  1u << 6,  1u << 7,  1u << 5};
         struct Place
         {
             bindings::Type type;
@@ -715,16 +713,6 @@ namespace kamite::menu_buttons
         return out == 0xFFFFu ? icon : out;
     }
 
-    uint16_t padBitAtPlace(uint16_t padBit)
-    {
-        if (ps2_host_input::menuLayer())
-            return padBit; // the default layout: every button is its own place
-        for (uint8_t i = 0; i < kButtons; ++i)
-            if (kPadBit[i] == padBit)
-                return kPadBit[placeOf(bindings::snapshot(), i)];
-        return padBit;
-    }
-
     uint8_t inputOnPlace(const bindings::Snapshot &snapshot, uint8_t place, uint8_t from)
     {
         if (place >= kButtons || snapshot.generation == 0u)
@@ -736,14 +724,6 @@ namespace kamite::menu_buttons
             if (b.type == want.type && b.code == want.code && (want.type != bindings::Type::PadAxis || b.sign == want.sign))
                 return i;
         }
-        return 0xFFu;
-    }
-
-    uint8_t placeOfPadBit(uint16_t padBit)
-    {
-        for (uint8_t i = 0; i < kButtons; ++i)
-            if (kPadBit[i] == padBit)
-                return i;
         return 0xFFu;
     }
 

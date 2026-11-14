@@ -24,6 +24,16 @@ Newest first, one line per change; the code comments say how.
 - Button Mapping: the two ATTACKs in the drum get the game's own arrows.
 - Prompts: new Nintendo L / R shoulder buttons.
 - Menus: backing out of the map to the pause menu plays the back sound.
+- Hotkeys: keyboard only; HOT lines and Clear Hotkey removed from Button Mapping.
+- Hotkeys: Record a test case defaults to F1.
+- Launcher: assigning a hotkey to a key the game's controls use (or the other way round) asks first.
+- Options: new FPS Counter option (Interface > Overlays); F3 switches it and saves it.
+- Button Mapping: Select and the back paddles can hold nothing, a copy of an action (in play) or QUICK SAVE / QUICK LOAD / SAVE / LOAD.
+- Controls: Select is SAVE / LOAD by default: tap to quick save, hold and press Start to quick load.
+- Button Mapping: controllers with back paddles (Elite, DualSense Edge, Steam) show them under the pad.
+- Button Mapping: a Steam pad without visible paddles says to use Steam Input for them.
+- Prompts: the Steam Deck set is now STEAM, with a Steam Controller picture on Button Mapping.
+- F2: ten save-state slots with dates; a quick save keeps the previous one, loadable from F2.
 
 ## November 13, 2026
 

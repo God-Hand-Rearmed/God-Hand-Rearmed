@@ -53,7 +53,6 @@
 #include "kamite/sprint_traversal.h"
 #include "kamite/style_presets.h"
 #include "runtime/ps2_display_options.h"
-#include "runtime/ps2_hotkeys.h"
 #include "kamite/widescreen.h"
 #include "ps2_runtime_macros.h"
 #include "ps2x/iop/iop_pad.h"
@@ -708,6 +707,8 @@ namespace kamite::options_screen
             };
             g_lifeGauge = onOf("EnemyLifeGauge");
             g_vibration = onOf("Vibration");
+            if (const settings::Setting *s = settings::find("FpsCounter"))
+                ps2_host_display::setFpsCounter(settings::on(g_ini, *s));
             const settings::Setting *mode = settings::find("Mode");
             g_soundModeWanted = soundModeIndex(mode ? settings::value(g_ini, *mode) : "stereo");
             applyVolumes();
@@ -741,6 +742,8 @@ namespace kamite::options_screen
 
         // F11 (main thread) switched the window: saved as the Display Mode at the next game frame (onFrame).
         std::atomic<int> g_windowMode{-1};
+        // F3 switched the FPS Counter (1 on, 0 off): saved the same way.
+        std::atomic<int> g_fpsCounterKey{-1};
         void onWindowMode(int mode)
         {
             g_windowMode.store(mode, std::memory_order_relaxed);
@@ -797,6 +800,8 @@ namespace kamite::options_screen
                 hud::requestMenuMode(value == "stretch" ? 1 : 0);
             else if (id == "SwayBar")
                 setSwayBar(on);
+            else if (id == "FpsCounter")
+                ps2_host_display::setFpsCounter(on);
             else if (id == "ButtonPrompts")
             {
                 prompt_hd::setChoice(static_cast<prompt_hd::Choice>(std::max(settings::choiceIndex(s, value), 0)));
@@ -1217,35 +1222,41 @@ namespace kamite::options_screen
         }
 
         // What is on each button now: player 1's controller bindings as the prompts read them (the first controller
-        // binding of each PS2 button). The page edits only clean layouts (each of the ten remappable buttons carrying
-        // exactly one of their ten PS2 buttons, each of those with exactly one controller binding); anything else was
-        // set in the launcher: read-only.
+        // binding of each PS2 button), and the extra buttons (Select, the paddles: ps2_host_input::extra). The page edits
+        // only clean layouts (each of the ten remappable buttons carrying exactly one of their ten PS2 buttons, each of
+        // those with exactly one controller binding besides the extra buttons' copies); anything else was set in the
+        // launcher: read-only.
         mapping_page::State mappingState()
         {
             namespace bindings = ps2_host_input::prompts;
+            namespace extra = ps2_host_input::extra;
             const bindings::Snapshot snapshot = bindings::snapshot();
+            const extra::State extras = extra::state();
             mapping_page::State state;
             for (uint8_t place = 0; place < mapping_page::kRemappable; ++place)
             {
                 const uint8_t first = menu_buttons::inputOnPlace(snapshot, place);
                 state.onPlace[place] = first < mapping_page::kRemappable ? first : mapping_page::kNone;
                 const uint8_t second = first == 0xFFu ? 0xFFu : menu_buttons::inputOnPlace(snapshot, place, static_cast<uint8_t>(first + 1u));
-                if (first >= mapping_page::kRemappable || second != 0xFFu || snapshot.controllerCount[place] != 1u)
+                if (first >= mapping_page::kRemappable || second != 0xFFu || snapshot.controllerCount[place] != 1u + extras.copies[place])
                     state.readOnly = true; // a button with two PS2 buttons, none, or one with a second controller binding
             }
-            for (int a = 0; a < static_cast<int>(ps2x::hotkeys::Action::Count); ++a)
+            for (int i = 0; i < mapping_page::kExtraCount; ++i)
             {
-                const auto action = static_cast<ps2x::hotkeys::Action>(a);
-                const uint8_t place = menu_buttons::placeOfPadBit(ps2x::hotkeys::binding(action).pad);
-                if (place <= mapping_page::Select) // the remappable buttons, Start and Select
-                {
-                    std::string name = ps2x::hotkeys::info(action).label;
-                    if (const size_t paren = name.find(" ("); paren != std::string::npos)
-                        name.resize(paren); // "Record a test case (again: stop)": the page has no room for the how
-                    state.hot[place] = name;
-                }
+                state.extras[static_cast<size_t>(i)].command = static_cast<mapping_page::Command>(extras.command[static_cast<size_t>(i)]);
+                state.extras[static_cast<size_t>(i)].copy = extras.copy[static_cast<size_t>(i)] < mapping_page::kRemappable
+                                                                ? extras.copy[static_cast<size_t>(i)]
+                                                                : mapping_page::kNone;
             }
+            state.paddles = extra::paddles();
             return state;
+        }
+
+        mapping_page::Options mappingOptions()
+        {
+            mapping_page::Options options = mapping_page::optionsFrom(g_ini);
+            options.menuStyle = static_cast<int>(menu_buttons::style());
+            return options;
         }
 
         void buildMapping(const Screen &s)
@@ -1261,45 +1272,27 @@ namespace kamite::options_screen
                 if (!mapping_page::loadArt(std::string(path.begin(), path.end()), found->second, error))
                     KM_WARN(Game, "options screen: button mapping art not loaded: " << error);
             }
-            mapping_page::Options options = mapping_page::optionsFrom(g_ini);
-            options.menuStyle = static_cast<int>(menu_buttons::style());
+            const mapping_page::Options options = mappingOptions();
             const std::u8string dir = artDir.u8string(), root = g_exeDir.u8string();
             g_mappingState = mappingState();
             mapping_page::build(g_mapping, found->second, std::string(dir.begin(), dir.end()), std::string(root.begin(), root.end()),
                                 folder, g_mappingState, options, s.mapCursor, s.mapEdit);
         }
 
-        // A HOT line's Clear (K, Nov 13): the hotkeys on that physical button lose their controller binding (they are left
-        // unbound, as the launcher's "none"), in the live table and in GHR.ini [Hotkeys].
-        void clearHotkeys(uint8_t place)
-        {
-            namespace hk = ps2x::hotkeys;
-            for (int a = 0; a < static_cast<int>(hk::Action::Count); ++a)
-            {
-                const auto action = static_cast<hk::Action>(a);
-                if (menu_buttons::placeOfPadBit(hk::binding(action).pad) != place)
-                    continue;
-                hk::setBinding(action, hk::Binding{});
-                g_ini.set("Hotkeys", hk::info(action).id, "none");
-                KM_INFO(Game, "options screen: hotkey " << hk::info(action).id << " cleared from its controller button");
-            }
-            if (!g_ini.save())
-                KM_WARN(Game, "options screen: could not write GHR.ini");
-        }
-
-        // The pad on the page (K, Nov 13-14): d-pad / stick between the ten lines; A opens the drum (up / down turn it,
-        // A swaps, B closes) or, on a HOT line, Clear (twice); the left face button Reset (twice); B back to the
-        // BUTTON MAPPING row. Any other press disarms a waiting second press.
+        // The pad on the page (K, Nov 13-14): d-pad / stick between the lines (the columns' and the paddles'); A opens
+        // the drum (up / down turn it, A swaps or, on an extra button, assigns; B closes); the left face button Reset
+        // (twice); B back to the BUTTON MAPPING row. Any other press disarms a waiting second press.
         void mappingInput(Screen &s, uint64_t pressed, uint64_t repeat, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             mapping_page::Edit &e = s.mapEdit;
             buildMapping(s);
             const mapping_page::State &state = g_mappingState;
+            const mapping_page::Options options = mappingOptions();
             if (e.drum)
             {
                 int start = 0;
-                const std::vector<uint8_t> inputs = mapping_page::drumInputs(state, s.mapCursor, start);
-                const int n = static_cast<int>(inputs.size());
+                const std::vector<mapping_page::DrumEntry> entries = mapping_page::drumEntries(state, options, s.mapCursor, start);
+                const int n = static_cast<int>(entries.size());
                 if (n == 0 || state.readOnly)
                     e.drum = false;
                 else if ((pressed & kCancel) != 0u && (pressed & kOk) == 0u)
@@ -1309,10 +1302,18 @@ namespace kamite::options_screen
                 }
                 else if (pressed & kOk)
                 {
-                    const uint8_t picked = inputs[static_cast<size_t>(((e.target % n) + n) % n)];
-                    const uint8_t own = s.mapCursor < mapping_page::kRemappable ? state.onPlace[s.mapCursor] : mapping_page::kNone;
-                    if (own < mapping_page::kRemappable && picked != own)
-                        ps2_host_input::controls::requestControllerSwap(0, own, picked);
+                    const mapping_page::DrumEntry picked = entries[static_cast<size_t>(((e.target % n) + n) % n)];
+                    if (const int extra = mapping_page::extraIndex(s.mapCursor); extra >= 0)
+                        ps2_host_input::extra::requestAssign(0, static_cast<ps2_host_input::extra::Button>(extra),
+                                                             static_cast<ps2_host_input::extra::Command>(picked.command),
+                                                             picked.input < mapping_page::kRemappable ? picked.input
+                                                                                                      : ps2_host_input::extra::kNoCopy);
+                    else
+                    {
+                        const uint8_t own = s.mapCursor < mapping_page::kRemappable ? state.onPlace[s.mapCursor] : mapping_page::kNone;
+                        if (own < mapping_page::kRemappable && picked.input < mapping_page::kRemappable && picked.input != own)
+                            ps2_host_input::controls::requestControllerSwap(0, own, picked.input);
+                    }
                     e.drum = false;
                     sound(rdram, ctx, runtime, kSeOk);
                 }
@@ -1361,23 +1362,9 @@ namespace kamite::options_screen
                 s.mapCursor = mapping_page::firstLine(g_mapping);
             if (pressed & kOk)
             {
-                if (s.mapCursor <= mapping_page::Select && !state.hot[s.mapCursor].empty())
-                {
-                    if (armed == mapping_page::Armed::Clear)
-                    {
-                        clearHotkeys(s.mapCursor);
-                        sound(rdram, ctx, runtime, kSeOk);
-                    }
-                    else
-                    {
-                        e.armed = mapping_page::Armed::Clear;
-                        sound(rdram, ctx, runtime, kSeMove);
-                    }
-                    return;
-                }
                 int start = 0;
-                if (s.mapCursor >= mapping_page::kRemappable || mapping_page::drumInputs(state, s.mapCursor, start).empty())
-                    return; // Start / Select: only their hotkey to clear
+                if (mapping_page::drumEntries(state, options, s.mapCursor, start).empty())
+                    return; // a fixed line
                 e.drum = true;
                 e.target = start;
                 e.pos = static_cast<float>(start);
@@ -1895,6 +1882,7 @@ namespace kamite::options_screen
         }
         g_exeDir = exeDir;
         ps2_host_display::setModeListener(&onWindowMode);
+        ps2_host_display::setFpsCounterListener([](bool on) { g_fpsCounterKey.store(on ? 1 : 0, std::memory_order_relaxed); });
         std::thread(prepare, exeDir, g_aspect, g_wallGeneration.load(), 0).detach();
         KM_INFO(Game, "options screen: the title and pause Options open the God Hand: Rearmed screen (aspect " << g_aspect << ")");
     }
@@ -1906,6 +1894,15 @@ namespace kamite::options_screen
         // A graphics API switch that ended outside the screen's fade (the screen closed with it waiting).
         if (g_apiWatch && !GSPcsx2Backend::GraphicsApiBusy())
             graphicsApiSwitched();
+        if (const int counter = g_fpsCounterKey.exchange(-1, std::memory_order_relaxed); counter >= 0)
+        {
+            // F3: kept as the FPS Counter option, as if its row had changed.
+            if (!g_iniPath.empty())
+                g_ini.load(g_iniPath);
+            g_ini.setBool("Video", "FpsCounter", counter != 0);
+            if (!g_ini.save())
+                KM_WARN(Game, "options screen: could not write GHR.ini");
+        }
         if (const int mode = g_windowMode.exchange(-1, std::memory_order_relaxed); mode >= 0)
         {
             // F11: kept as the Display Mode (K, Nov 13), as if the row had changed.

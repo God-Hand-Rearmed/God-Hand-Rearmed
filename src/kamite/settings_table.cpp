@@ -20,7 +20,7 @@ namespace kamite::settings
                                              {"xbox", "Xbox", "XBOX"},
                                              {"playstation", "PlayStation (the game's own)", "PLAYSTATION"},
                                              {"nintendo", "Nintendo Switch", "NINTENDO"},
-                                             {"steam", "Steam Deck / Steam Controller", "STEAM DECK"}};
+                                             {"steam", "Steam", "STEAM"}};
         constexpr Choice kDisplayModes[] = {{"fullscreen", "Fullscreen (Borderless)", "FULLSCREEN"},
                                             {"maximized", "Maximized Window", "MAXIMIZED"},
                                             {"window", "Window", "WINDOW"}};
@@ -216,6 +216,9 @@ namespace kamite::settings
         live(choice(Tab::Interface, "Menus & Prompts", "Button Prompts",
                     "Controller button hint style.\nThis choice reflects your value as a person.",
                     "Game", "ButtonPrompts", "auto", kButtonPrompts)),
+        // F3 switches it too (and saves it).
+        live(toggle(Tab::Interface, "Overlays", "FPS Counter", "Framerate and game speed statistics.", "Video",
+                    "FpsCounter", false)),
 
         // ---- Gameplay -------------------------------------------------------------------------------------------
         live(toggle(Tab::Gameplay, "Speed & Feed", "60 FPS",

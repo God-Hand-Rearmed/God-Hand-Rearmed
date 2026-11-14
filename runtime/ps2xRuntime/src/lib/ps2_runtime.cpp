@@ -215,14 +215,41 @@ namespace ps2_host_display
         last = now;
     }
 
-    // FPS overlay, toggled with F3 (PS2X_SHOW_FPS=1 starts with it on). Once per second:
+    // The FPS Counter (Options > INTERFACE > Overlays; F3 toggles it and tells the listener). PS2X_SHOW_FPS=1 starts
+    // with it on; the game layer sets it from GHR.ini.
+    std::atomic<bool> fpsCounterOn{[] { const char *v = std::getenv("PS2X_SHOW_FPS"); return v && *v == '1'; }()};
+    std::atomic<void (*)(bool)> fpsCounterListener{nullptr};
+
+    void setFpsCounter(bool on)
+    {
+        fpsCounterOn.store(on, std::memory_order_relaxed);
+    }
+
+    bool fpsCounter()
+    {
+        return fpsCounterOn.load(std::memory_order_relaxed);
+    }
+
+    void setFpsCounterListener(void (*listener)(bool on))
+    {
+        fpsCounterListener.store(listener, std::memory_order_relaxed);
+    }
+
+    void toggleFpsCounter()
+    {
+        const bool on = !fpsCounterOn.load(std::memory_order_relaxed);
+        fpsCounterOn.store(on, std::memory_order_relaxed);
+        if (void (*listener)(bool) = fpsCounterListener.load(std::memory_order_relaxed))
+            listener(on);
+    }
+
+    // The FPS Counter's line (fpsCounter() above). Once per second:
     // - Game: game frames (main-loop iterations reported by the port);
     // - Screen: host presents (PCSX2's GS: its presents on the GS thread);
     // - Speed: emulated vsync fields per second vs 59.94 (NTSC);
     // - worst frame: the longest game-frame interval of the last second (hitches the averages hide).
     struct FpsOverlay
     {
-        bool visible = [] { const char *v = std::getenv("PS2X_SHOW_FPS"); return v && *v == '1'; }();
         std::chrono::steady_clock::time_point windowStart = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point lastPresent = windowStart;
         uint64_t startFrames = 0u;
@@ -281,7 +308,7 @@ namespace ps2_host_display
                 DrawRectangle(8, 8, noteWidth + 16, fontSize + 12, Fade(MAROON, 0.8f));
                 DrawText(note.c_str(), 16, 14, fontSize, RAYWHITE);
             }
-            if (!visible)
+            if (!fpsCounter())
                 return;
             const int width = MeasureText(text.c_str(), fontSize);
             const int y = GetScreenHeight() - fontSize - 20;
@@ -3298,7 +3325,7 @@ void PS2Runtime::run()
                 topAlpha = top.empty() ? 0.0f : 1.0f;
                 topRgba = 0xCC3721BEu; // raylib MAROON (190, 33, 55), 80%
             }
-            GSPcsx2Backend::SetOsd(top.c_str(), topRgba, topAlpha, fpsOverlay.visible ? fpsOverlay.text.c_str() : "");
+            GSPcsx2Backend::SetOsd(top.c_str(), topRgba, topAlpha, ps2_host_display::fpsCounter() ? fpsOverlay.text.c_str() : "");
         }
         else
             UploadFrame(frameTex, this, presentWidth, presentHeight, hashImages, sharedFrame);
@@ -3478,8 +3505,18 @@ void PS2Runtime::run()
             ps2x::savestate::requestQuickSave();
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::LoadState))
             ps2x::savestate::requestQuickLoad();
+        // The controller's save states: the extra buttons' commands (Select / back paddles, ps2_host_input::extra).
+        for (auto command = ps2_host_input::extra::takeFired(); command != ps2_host_input::extra::Command::None;
+             command = ps2_host_input::extra::takeFired())
+            if (!shortcutsOff)
+            {
+                if (command == ps2_host_input::extra::Command::QuickSave)
+                    ps2x::savestate::requestQuickSave();
+                else
+                    ps2x::savestate::requestQuickLoad();
+            }
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::FpsOverlay))
-            fpsOverlay.visible = !fpsOverlay.visible;
+            ps2_host_display::toggleFpsCounter();
         // Slow motion, pause, frame step (ps2_time_control.h; the F2 menu's Debug tab has the same).
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::SlowMotion))
         {
@@ -3495,7 +3532,7 @@ void PS2Runtime::run()
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::Dump2D))
             ps2x::hotkeys::fire(Action::Dump2D);
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::RecordCase))
-            ps2x::hotkeys::fire(Action::RecordCase); // the game layer's test mode takes it (a pad button is read there)
+            ps2x::hotkeys::fire(Action::RecordCase); // the game layer's test mode takes it
         if (!shortcutsOff && ps2x::hotkeys::pressed(Action::RamDump))
         {
             // Debug capture: VU1 trace of the next 2 fields (vu1trace_<tick>.bin) plus the EE RAM (ram_<tick>.bin).

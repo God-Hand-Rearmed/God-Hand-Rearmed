@@ -1,5 +1,5 @@
-// Dev tools in the F2 menu's Debug tab: cheats for testing, a room jump and the game's display switches (dev-only:
-// strip-list).
+// Dev tools in the F2 menu's Debug tab: the save-state slots (K, Nov 14: they stay), cheats for testing, a room jump
+// and the game's display switches (dev-only: strip-list).
 //
 // Cheats (the preview disc's DBG_PL_NO_DEATH / DBG_EM_NO_DEATH / DBG_EM_DIRECT_DEATH clamped HP inside the damage
 // step; retail dropped those checks, so the same clamps are hooks in the retail damage steps, plus per-frame refills):
@@ -52,6 +52,7 @@
 #include "runtime/ee_scheduler.h"
 #include "runtime/ps2_game_menu.h"
 #include "runtime/ps2_hotkeys.h"
+#include "runtime/ps2_save_state.h"
 #include "runtime/ps2_time_control.h"
 #if __has_include("pcsx2gs_api.h")
 #include "pcsx2gs_api.h"
@@ -59,6 +60,10 @@
 #endif
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <ctime>
+#include <filesystem>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -663,6 +668,86 @@ namespace kamite::debug_tools
         }
 
 #if defined(KAMITE_HAS_GS_MENU)
+        // Save states (K, Nov 14): ten slots, slot 1 the quick slot (F5 / F9 and the controller's QUICK SAVE / QUICK
+        // LOAD), slots 2..10 files beside it, and the quick save the last one replaced (ps2_save_state's backup). No
+        // thumbnails. Test cases keep their own states.
+        std::filesystem::path slotPath(int slot) // 1..10; 0: the previous quick save
+        {
+            namespace ss = ps2x::savestate;
+            if (slot == 0)
+                return ss::quickBackupPath();
+            if (slot == 1)
+                return ss::quickSlotPath();
+            char name[32];
+            std::snprintf(name, sizeof(name), "slot%02d.state", slot);
+            return ss::quickSlotPath().parent_path() / name;
+        }
+
+        // The file's time in the player's clock ("" when there is none).
+        std::string slotTime(const std::filesystem::path &path)
+        {
+            std::error_code ec;
+            const auto written = std::filesystem::last_write_time(path, ec);
+            if (ec)
+                return {};
+            const auto system = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                written - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+            const std::time_t t = std::chrono::system_clock::to_time_t(system);
+            std::tm local{};
+#if defined(_WIN32)
+            localtime_s(&local, &t);
+#else
+            localtime_r(&t, &local);
+#endif
+            char text[32];
+            std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M:%S", &local);
+            return text;
+        }
+
+        void drawSaveStates(const Pcsx2GsUi *ui)
+        {
+            // The files' times, read twice a second while the menu is open.
+            static std::array<std::string, 11> times;
+            static std::chrono::steady_clock::time_point read{};
+            const auto now = std::chrono::steady_clock::now();
+            if (now - read > std::chrono::milliseconds(500))
+            {
+                read = now;
+                for (int slot = 0; slot <= 10; ++slot)
+                    times[static_cast<size_t>(slot)] = slotTime(slotPath(slot));
+            }
+            ui->separator_text("Save states");
+            ui->text_disabled("Slot 1 is the quick slot (F5 / F9, and the controller's QUICK SAVE / QUICK LOAD). A quick save "
+                              "keeps the one it replaced as the previous quick save.");
+            for (int slot = 1; slot <= 10; ++slot)
+            {
+                const std::string &time = times[static_cast<size_t>(slot)];
+                ui->push_id(9000 + slot);
+                if (ui->small_button("Save"))
+                    ps2x::savestate::requestSave(slotPath(slot));
+                ui->same_line();
+                ui->begin_disabled(time.empty());
+                if (ui->small_button("Load"))
+                    ps2x::savestate::requestLoad(slotPath(slot));
+                ui->end_disabled();
+                ui->same_line();
+                char line[96];
+                std::snprintf(line, sizeof(line), "Slot %d%s: %s", slot, slot == 1 ? " (quick)" : "", time.empty() ? "empty" : time.c_str());
+                (time.empty() ? ui->text_disabled : ui->text)(line);
+                ui->pop_id();
+            }
+            const std::string &previous = times[0];
+            ui->push_id(9000);
+            ui->begin_disabled(previous.empty());
+            if (ui->small_button("Load"))
+                ps2x::savestate::requestLoad(slotPath(0));
+            ui->end_disabled();
+            ui->same_line();
+            const std::string line = "Previous quick save: " + (previous.empty() ? std::string("none") : previous);
+            (previous.empty() ? ui->text_disabled : ui->text)(line.c_str());
+            ui->pop_id();
+        }
+
         void drawPanel(const Pcsx2GsUi *ui)
         {
             if (ui->version < 2u)
@@ -670,6 +755,8 @@ namespace kamite::debug_tools
                 ui->text_wrapped("This pcsx2gs.dll is older than the game: build again.");
                 return;
             }
+            drawSaveStates(ui);
+
             ui->separator_text("Cheats");
             auto toggle = [&](const char *label, std::atomic<bool> &setting) {
                 int on = setting.load() ? 1 : 0;

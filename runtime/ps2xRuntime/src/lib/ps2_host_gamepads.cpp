@@ -291,6 +291,20 @@ namespace ps2_host_gamepads
         return glfw >= 0 && glfwGetGamepadState(device, &state) && state.buttons[glfw] != 0u;
     }
 
+    bool hasButton(int device, Button button)
+    {
+        if (device < 0 || device >= kMaxDevices || button < 0 || button >= ButtonCount)
+            return false;
+#if defined(PS2X_HAS_SDL3)
+        if (g_sdl)
+        {
+            SDL_Gamepad *gamepad = g_devices[static_cast<size_t>(device)].gamepad;
+            return gamepad && SDL_GamepadHasButton(gamepad, static_cast<SDL_GamepadButton>(button));
+        }
+#endif
+        return kGlfwButtons[static_cast<size_t>(button)] >= 0 && glfwJoystickIsGamepad(device) != 0;
+    }
+
     float axis(int device, Axis axis)
     {
         if (device < 0 || device >= kMaxDevices || axis < 0 || axis >= AxisCount)

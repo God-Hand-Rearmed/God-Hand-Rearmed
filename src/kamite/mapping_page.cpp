@@ -15,8 +15,9 @@ namespace kamite::mapping_page
 {
     namespace
     {
-        constexpr const char *kPlaceNames[PlaceCount] = {"south", "east", "west", "north", "l1", "r1", "l2", "r2",
-                                                         "l3", "r3", "start", "select", "dpad", "lstick", "rstick"};
+        constexpr const char *kPlaceNames[PlaceCount] = {"south", "east", "west", "north", "l1", "r1", "l2", "r2", "l3",
+                                                         "r3", "start", "select", "dpad", "lstick", "rstick", "l4", "r4",
+                                                         "l5", "r5"};
 
         // The original page's wording (claude/button-mapping.md), per PS2 button (prompts::Input 0..9).
         struct Words
@@ -43,6 +44,10 @@ namespace kamite::mapping_page
         constexpr const char *kDrumNames[kRemappable] = {"ATTACK", "ACTION", "COMBO", "ATTACK", "180\xC2\xB0 TURN",
                                                          "ROULETTE", "TAUNT", "UNLEASH", "DASH", "FREECAM"};
         constexpr const char *kDrumArrows[kRemappable] = {"arrow_down", nullptr, nullptr, "arrow_up"};
+        // The commands' words (K, Nov 14): on the page and on the drum (SAVE / LOAD's page label is two lines, its
+        // second with the Start button in it: \x03, MappingLine::inlineIcon).
+        constexpr const char *kQuickSave = "QUICK SAVE", *kQuickLoad = "QUICK LOAD", *kSaveLoadDrum = "SAVE / LOAD",
+                             *kSaveLoadSecond = "+ \x03 LOAD";
 
         // Xelu's pack per set (resources/prompts/xelu/<folder>), by place; the sticks are ours (no click arrow).
         struct SetFiles
@@ -87,12 +92,22 @@ namespace kamite::mapping_page
 
     const char *placeName(Place place) { return place < PlaceCount ? kPlaceNames[place] : ""; }
 
+    int extraIndex(uint8_t place)
+    {
+        for (int i = 0; i < kExtraCount; ++i)
+            if (kExtraPlaces[i] == place)
+                return i;
+        return -1;
+    }
+
     const char *padFor(const std::string &setFolder)
     {
         if (setFolder == "ps3")
             return "playstation";
         if (setFolder == "switch")
             return "nintendo";
+        if (setFolder == "steamdeck")
+            return "steam";
         return "xbox";
     }
 
@@ -194,6 +209,7 @@ namespace kamite::mapping_page
         State s;
         for (int i = 0; i < kRemappable; ++i)
             s.onPlace[static_cast<size_t>(i)] = static_cast<uint8_t>(i);
+        s.extras[0].command = Command::SaveLoad; // Select (K, Nov 14)
         return s;
     }
 
@@ -205,20 +221,35 @@ namespace kamite::mapping_page
         return kNone;
     }
 
-    std::vector<uint8_t> drumInputs(const State &state, uint8_t place, int &start)
+    std::vector<DrumEntry> drumEntries(const State &state, const Options &options, uint8_t place, int &start)
     {
-        std::vector<uint8_t> out;
+        std::vector<DrumEntry> out;
         start = 0;
-        const uint8_t own = place < kRemappable ? state.onPlace[place] : kNone;
+        const int extra = extraIndex(place);
+        if (place >= kRemappable && extra < 0)
+            return out;
+        const Extra held = extra >= 0 ? state.extras[static_cast<size_t>(extra)] : Extra{};
+        if (extra >= 0)
+            out.push_back(DrumEntry{kNone, Command::None}); // nothing (an em dash)
+        const uint8_t own = place < kRemappable ? state.onPlace[place] : held.command == Command::None ? held.copy : kNone;
         for (uint8_t input = 0; input < kRemappable; ++input)
         {
-            const uint8_t at = placeOfInput(state, input);
-            if (at == kNone || (at != place && !state.hot[at].empty()))
-                continue; // not on a button the page edits, or locked under a hotkey
+            if (placeOfInput(state, input) == kNone)
+                continue; // not on a button the page edits
+            // An extra button copies only what does something (the stick presses' actions come with their options).
+            if (extra >= 0 && ((input == L3 && !options.clickStickDash) || (input == R3 && !options.modern)))
+                continue;
             if (input == own)
                 start = static_cast<int>(out.size());
-            out.push_back(input);
+            out.push_back(DrumEntry{input, Command::None});
         }
+        if (extra >= 0)
+            for (const Command command : {Command::QuickSave, Command::QuickLoad, Command::SaveLoad})
+            {
+                if (held.command == command)
+                    start = static_cast<int>(out.size());
+                out.push_back(DrumEntry{kNone, command});
+            }
         return out;
     }
 
@@ -258,6 +289,43 @@ namespace kamite::mapping_page
             }
         };
 
+        // A line's label line; `end`: it ends a function (an underline under it).
+        const auto addTo = [](options_overlay::MappingLine &line, const char *text, bool end) {
+            if (!text || line.count >= 4)
+                return;
+            if (end)
+                line.ends = static_cast<uint8_t>(line.ends | (1u << line.count));
+            line.text[line.count++] = text;
+        };
+        const auto shown = [&](uint8_t input) {
+            return input < kRemappable && !(input == L3 && !options.clickStickDash) && !(input == R3 && !options.modern);
+        };
+        // An extra button's label (K, Nov 14): a copy reads as its action, a command by name; SAVE / LOAD two lines,
+        // the second with the Start button in it; nothing an em dash.
+        const std::string startIcon = icons + set.file[Start] + ".png";
+        const auto extraWords = [&](options_overlay::MappingLine &line, const Extra &e) {
+            switch (e.command)
+            {
+            case Command::QuickSave: addTo(line, kQuickSave, true); break;
+            case Command::QuickLoad: addTo(line, kQuickLoad, true); break;
+            case Command::SaveLoad:
+                addTo(line, kQuickSave, true);
+                addTo(line, kSaveLoadSecond, true);
+                line.inlineIcon = d.keep(startIcon);
+                break;
+            default:
+                if (shown(e.copy))
+                {
+                    const Words &w = kActions[e.copy];
+                    addTo(line, w.line[0], !w.wrapped || !w.line[1]);
+                    addTo(line, w.line[1], true);
+                }
+                else
+                    addTo(line, kEmpty, true);
+                break;
+            }
+        };
+
         for (int side = 0; side < 2; ++side)
             for (const uint8_t place : side == 0 ? std::vector<uint8_t>(std::begin(kLeft), std::end(kLeft))
                                                  : std::vector<uint8_t>(std::begin(kRight), std::end(kRight)))
@@ -276,33 +344,25 @@ namespace kamite::mapping_page
                     line.vy = p.viaY / art.height;
                 }
                 line.right = side == 1;
-                // A line; `end`: it ends a function (an underline under it).
-                const auto add = [&](const char *text, bool end) {
-                    if (!text || line.count >= 4)
-                        return;
-                    if (end)
-                        line.ends = static_cast<uint8_t>(line.ends | (1u << line.count));
-                    line.text[line.count++] = text;
-                };
+                const auto add = [&](const char *text, bool end) { addTo(line, text, end); };
                 if (place < kRemappable)
                 {
                     const uint8_t input = state.onPlace[place];
-                    const bool shown = input < kRemappable && !(input == L3 && !options.clickStickDash) && !(input == R3 && !options.modern);
-                    if (shown)
+                    if (shown(input))
                     {
                         const Words &w = kActions[input];
                         add(w.line[0], !w.wrapped || !w.line[1]);
                         add(w.line[1], true);
                     }
-                    else if (state.hot[place].empty())
-                        add(kEmpty, true); // nothing on it (a hotkey alone: just its HOT line, K Nov 14)
+                    else
+                        add(kEmpty, true); // nothing on it
                     if (const char *word = menuWord(place))
                         add(word, true);
                 }
                 else if (place == Start)
                     add("MENU", true);
-                else if (place == Select && state.hot[place].empty())
-                    add(kEmpty, true); // nothing in play (K, Nov 14: shown all the same); a hotkey alone: its HOT line
+                else if (place == Select)
+                    extraWords(line, state.extras[0]);
                 else if (place == LStick)
                     add("MOVE", true);
                 else if (place == RStick)
@@ -320,11 +380,8 @@ namespace kamite::mapping_page
                     add("STYLE", false); // one phrase on two lines: the left column is narrow (K, Nov 14)
                     add("SWITCH", true);
                 }
-                if (place <= Select && !state.hot[place].empty())
-                    line.hot = d.keep("HOT: " + state.hot[place]);
-                // Start / Select are fixed, but one carrying a hotkey can be selected to clear it (K, Nov 14).
-                line.fixed = place >= kRemappable && !*line.hot;
-                if (line.count == 0 && !*line.hot)
+                line.fixed = place >= kRemappable && place != Select; // Select is an extra button (stage 4)
+                if (line.count == 0)
                     continue; // nothing in play (the d-pad without Moveset Presets): no line, as the original
                 if (place == LStick || place == RStick)
                     line.icon = d.keep(artDir + "/stick_" + set.folder + (place == LStick ? "_left.png" : "_right.png"));
@@ -333,17 +390,38 @@ namespace kamite::mapping_page
                 d.lines.push_back(line);
                 d.places.push_back(place);
             }
+        // The back paddles the controller has (K, Nov 14): a block centred under the pad, the left ones on the left and
+        // the right ones on the right, two in a row, four 2x2 (L4 over L5, R4 over R5); K's own icons on every pad.
+        int blockRows[2] = {0, 0};
+        for (const uint8_t place : {L4, L5, R4, R5})
+        {
+            const int extra = extraIndex(place);
+            if ((state.paddles & (1u << extra)) == 0u)
+                continue;
+            options_overlay::MappingLine line;
+            line.block = true;
+            line.right = place == R4 || place == R5;
+            line.blockX = line.right ? 1 : 0;
+            line.blockY = blockRows[line.blockX]++;
+            extraWords(line, state.extras[static_cast<size_t>(extra)]);
+            line.icon = d.keep(artDir + "/paddle_" + kPlaceNames[place] + ".png");
+            d.lines.push_back(line);
+            d.places.push_back(place);
+        }
+        // A Steam pad with no paddles reported: Steam Input has them (K's wording).
+        d.view.padNote = setFolder == "steamdeck" && state.paddles == 0u ? kSteamPaddleNote : "";
+
         // The left column's rows sit level with the right's (the original's L2 / R2, L1 / R1 and stick rows share
         // their heights; the d-pad sits by the middle face row).
         for (size_t i = 0; i < d.lines.size(); ++i)
         {
-            if (d.lines[i].right)
+            if (d.lines[i].right || d.lines[i].block)
                 continue;
             const uint8_t p = d.places[i];
             const uint8_t want = p == Select ? uint8_t{R2} : p == L2 ? uint8_t{R1} : p == L1 ? uint8_t{North} : p == L3 ? uint8_t{R3}
                                  : p == LStick ? uint8_t{RStick} : p == DPad ? uint8_t{East} : kNone;
             for (size_t j = 0; j < d.lines.size(); ++j)
-                if (d.lines[j].right && d.places[j] == want)
+                if (d.lines[j].right && !d.lines[j].block && d.places[j] == want)
                     d.lines[i].mirror = static_cast<int>(j);
         }
         d.view.lines = d.lines.data();
@@ -364,28 +442,33 @@ namespace kamite::mapping_page
                                    (edit.armed == Armed::Reset ? again : std::string("Change it there or press \x01 to reset.")));
         else if (edit.armed == Armed::Reset)
             d.view.notice = d.keep(again);
-        else if (edit.armed == Armed::Clear)
-            d.view.notice = "Press \x02 again to clear the hotkey.";
         else
             d.view.notice = "";
 
         // The drum over the cursor's line.
-        const bool onHot = cursor <= Select && !state.hot[cursor].empty();
-        if (edit.drum && !state.readOnly && d.view.cursor >= 0 && !onHot)
+        const bool extra = extraIndex(cursor) >= 0;
+        if (edit.drum && !state.readOnly && d.view.cursor >= 0)
         {
             int start = 0;
-            for (const uint8_t input : drumInputs(state, cursor, start))
+            for (const DrumEntry &entry : drumEntries(state, options, cursor, start))
             {
-                const uint8_t at = placeOfInput(state, input);
-                const bool shown = !(input == L3 && !options.clickStickDash) && !(input == R3 && !options.modern);
                 options_overlay::MappingDrumItem item;
-                item.icon = d.keep(icons + set.file[at] + ".png");
-                item.text = shown ? kDrumNames[input] : kEmpty;
-                if (shown && kDrumArrows[input])
+                if (entry.input < kRemappable)
                 {
-                    item.arrow = d.keep(artDir + "/" + kDrumArrows[input] + ".png");
-                    item.arrowLit = d.keep(artDir + "/" + kDrumArrows[input] + "_lit.png");
+                    const uint8_t input = entry.input, at = placeOfInput(state, input);
+                    item.icon = at < kRemappable ? d.keep(icons + set.file[at] + ".png") : "";
+                    item.text = shown(input) ? kDrumNames[input] : kEmpty;
+                    if (shown(input) && kDrumArrows[input])
+                    {
+                        item.arrow = d.keep(artDir + "/" + kDrumArrows[input] + ".png");
+                        item.arrowLit = d.keep(artDir + "/" + kDrumArrows[input] + "_lit.png");
+                    }
                 }
+                else
+                    item.text = entry.command == Command::QuickSave ? kQuickSave
+                                : entry.command == Command::QuickLoad ? kQuickLoad
+                                : entry.command == Command::SaveLoad  ? kSaveLoadDrum
+                                                                      : kEmpty;
                 d.drum.push_back(item);
             }
             d.view.drum = d.drum.data();
@@ -398,13 +481,13 @@ namespace kamite::mapping_page
         if (d.view.drum)
         {
             d.view.resetWord = "";
-            d.view.confirmWord = kHintSwap;
+            d.view.confirmWord = extra ? kHintAssign : kHintSwap;
             d.view.cancelWord = kHintCancel;
         }
         else
         {
             d.view.resetWord = kHintReset;
-            d.view.confirmWord = state.readOnly ? "" : onHot ? kHintClear : kHintSelect;
+            d.view.confirmWord = state.readOnly ? "" : kHintSelect;
             d.view.cancelWord = kHintBack;
         }
     }
@@ -428,6 +511,8 @@ namespace kamite::mapping_page
         const options_overlay::MappingLine &from = d.lines[static_cast<size_t>(at)];
         if (dy != 0)
         {
+            // Up / down its side: the column, then that side's paddles under the pad (the lines are listed left column,
+            // right column, then the block's left and right paddles).
             for (int i = at + dy; i >= 0 && i < static_cast<int>(d.places.size()); i += dy)
                 if (d.lines[static_cast<size_t>(i)].right == from.right && !d.lines[static_cast<size_t>(i)].fixed)
                     return d.places[static_cast<size_t>(i)];
@@ -435,14 +520,16 @@ namespace kamite::mapping_page
         }
         if (dx != 0 && (dx > 0) != from.right)
         {
-            // Across: the remappable line on the other side whose button is nearest in height.
+            // Across: a column line to the other column's line whose button is nearest in height; a paddle to the
+            // other side's paddle in the nearest row.
             int best = -1;
             float bestDistance = 0.0f;
             for (size_t i = 0; i < d.places.size(); ++i)
             {
-                if (d.lines[i].right == from.right || d.lines[i].fixed)
+                const options_overlay::MappingLine &l = d.lines[i];
+                if (l.right == from.right || l.fixed || l.block != from.block)
                     continue;
-                const float distance = std::fabs(d.lines[i].py - from.py);
+                const float distance = from.block ? std::fabs(static_cast<float>(l.blockY - from.blockY)) : std::fabs(l.py - from.py);
                 if (best < 0 || distance < bestDistance)
                 {
                     best = static_cast<int>(i);

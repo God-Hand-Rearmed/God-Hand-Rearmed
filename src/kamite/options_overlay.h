@@ -58,6 +58,10 @@ namespace kamite::options_overlay
         bool via = false;           // the line bends at (vx, vy) on its way (fractions of the picture)
         float vx = 0.0f, vy = 0.0f;
         bool right = false;         // the right-hand column (lines are listed left column first, each top to bottom)
+        // The back-button block under the pad (stage 4: a paddle; no leader, px / py unused): its column (0 left,
+        // 1 right) and row (0 top). Listed after the columns' lines.
+        bool block = false;
+        int blockX = 0, blockY = 0;
         bool fixed = false;         // not remappable (Start, the sticks, the d-pad): drawn muted
         int mirror = -1;            // left column: the right-hand line it lines up with (L2 with R2 ...), -1 none
         const char *icon = "";      // the button's prompt image
@@ -67,7 +71,7 @@ namespace kamite::options_overlay
         const char *text[4] = {"", "", "", ""};
         int count = 0;
         uint8_t ends = 0;
-        const char *hot = "";       // "HOT: Save state": a hotkey on this button (locked), a function of its own
+        const char *inlineIcon = ""; // a \x03 in a text line is drawn as this picture (SAVE / LOAD's "+ [Start] LOAD")
     };
     // An item of the BUTTON MAPPING page's drum: the icon of the button that has the action now, the action's short name.
     struct MappingDrumItem
@@ -88,6 +92,7 @@ namespace kamite::options_overlay
         int bands = 0;                      // width; negative: an empty band)
         const MappingLine *lines = nullptr;
         int lineCount = 0;
+        const char *padNote = ""; // one help line under the pad ("Back Buttons: Use Steam Input")
         int cursor = -1;         // the selected line (-1: none, the read-only layout)
         const char *notice = ""; // the help band's text; \x01 / \x02 in it are drawn as noticeIcons[0] / [1]
         const char *noticeIcons[2] = {"", ""};

@@ -2,10 +2,10 @@
 (claude/button-mapping.md "The original controller page"). Our own drawings from measured colours and K's pad renders:
 nothing of the game's art ships.
 
-    python tools/options/make_pad_art.py RENDERS_DIR [--seed N] [--out DIR]
+    python tools/options/make_pad_art.py RENDERS_DIR [--seed N] [--out DIR] [--only NAME]
 
-RENDERS_DIR holds K's renders (pad_xbox.png, pad_playstation.png, pad_nintendo.png: front views on transparent
-backgrounds). Writes into resources/options/mapping (or --out):
+RENDERS_DIR holds K's renders (pad_xbox.png, pad_playstation.png, pad_nintendo.png, pad_steam.png (his
+steam_controller.png): front views on transparent backgrounds). --only NAME makes that pad's files alone. Writes into resources/options/mapping (or --out):
 - pad_<name>.png: the render (the Xbox one lightly blurred: K, it read over-sharpened); flames_<name>.png: the flame
   outline round its silhouette (half the render's resolution, MARGIN of its height round it);
 - pad_<name>.txt: the page's data for it (mapping_page.cpp loadArt): the images, each button's point, the columns'
@@ -49,6 +49,15 @@ PADS = {
                     l3=(530, 615, 16), r3=(995, 615, 16), start=(865, 415, 25), select=(670, 415, 25),
                     dpad=(338, 418, 85), lstick=(530, 672, 55), rstick=(995, 672, 55)),
         via=dict(west=(1150, 592), select=(430, 0))),
+    # K's render of the new Steam Controller (Nov 14), for the STEAM set (Steam Controller and Steam Deck): d-pad left,
+    # View (Select) / Menu (Start) above the sticks, the trackpads under them (the sticks' own lines end on the rings'
+    # visible bottoms). Start bends over the right shoulders (its line would cross R1 / R2), like Select on the left.
+    'steam': dict(
+        points=dict(south=(1172, 435, 42), east=(1260, 362, 42), west=(1093, 365, 42), north=(1178, 290, 42),
+                    l1=(215, 145, 0), r1=(1203, 145, 0), l2=(265, 40, 0), r2=(1153, 40, 0),
+                    l3=(480, 470, 18), r3=(928, 470, 18), start=(978, 272, 26), select=(428, 272, 26),
+                    dpad=(231, 352, 95), lstick=(478, 540, 60), rstick=(928, 540, 60)),
+        via=dict(west=(1135, 510), select=(410, -10), start=(1000, -20))),
 }
 
 # The flames (K, Nov 14, from his upscale of the original): a fire behind the pad, seen past its outline: a thin band
@@ -267,9 +276,12 @@ def main():
     ap.add_argument('renders')
     ap.add_argument('--seed', type=int, default=5)
     ap.add_argument('--out', default=os.path.join(ROOT, 'resources/options/mapping'))
+    ap.add_argument('--only', choices=sorted(PADS), help='that pad\'s files alone (the shared art left as it is)')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     for name, pad in PADS.items():
+        if a.only and name != a.only:
+            continue
         src = os.path.join(a.renders, 'pad_%s.png' % name)
         render = Image.open(src).convert('RGBA')
         if name == 'xbox':
@@ -290,6 +302,8 @@ def main():
         lines.append('silhouette %d %s' % (BANDS, ' '.join('%.4f %.4f' % p for p in silhouette(render))))
         open(os.path.join(a.out, 'pad_%s.txt' % name), 'w', newline='\n').write('\n'.join(lines) + '\n')
         print(name, 'flames margin', margin)
+    if a.only:
+        return
     for lit in (False, True):
         suffix = '_lit' if lit else ''
         brush(lit, 'start', 3).save(os.path.join(a.out, 'leader%s.png' % suffix))

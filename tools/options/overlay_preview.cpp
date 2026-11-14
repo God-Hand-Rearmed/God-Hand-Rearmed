@@ -178,10 +178,11 @@ int main(int argc, char **argv)
         v.titleDir = atoi(all.substr(a + 1, b - a - 1).c_str());
         v.titleT = static_cast<float>(atof(all.substr(b + 1).c_str()));
     }
-    // BUTTON MAPPING: KAMITE_PREVIEW_MAPPING="root|art|setFolder|cursor|readOnly|swaps|hots|drum|armed"
-    // (overlay_preview.py): swaps "south:west,..." exchange two places' PS2 buttons, hots "r3=Save state;...", drum the
+    // BUTTON MAPPING: KAMITE_PREVIEW_MAPPING="root|art|setFolder|cursor|readOnly|swaps|extras|drum|armed|paddles"
+    // (overlay_preview.py): swaps "south:west,..." exchange two places' PS2 buttons, extras "select=saveload;l4=west;..."
+    // (none / quicksave / quickload / saveload, or a place: a copy of the action whose default place that is), drum the
     // open drum's turn ("" closed; items from the one it opens on: 1.5 = half-way from the next to the one after),
-    // armed "reset" / "clear".
+    // armed "reset", paddles 0 / 2 (L4, R4) / 4.
     static kamite::mapping_page::PageData mapping;
     if (const char *spec = getenv("KAMITE_PREVIEW_MAPPING"))
     {
@@ -195,7 +196,7 @@ int main(int argc, char **argv)
                 break;
             at = bar + 1;
         }
-        f.resize(9);
+        f.resize(10);
         using namespace kamite::mapping_page;
         static PadArt art;
         std::string error;
@@ -224,23 +225,37 @@ int main(int argc, char **argv)
             size_t semi = f[6].find(';', at);
             const std::string one = f[6].substr(at, semi == std::string::npos ? std::string::npos : semi - at);
             const size_t eq = one.find('=');
-            const uint8_t a = place(one.substr(0, eq));
-            if (a <= Select && eq != std::string::npos)
-                state.hot[a] = one.substr(eq + 1);
+            const int extra = eq == std::string::npos ? -1 : extraIndex(place(one.substr(0, eq)));
+            if (extra >= 0)
+            {
+                const std::string value = one.substr(eq + 1);
+                Extra &e = state.extras[static_cast<size_t>(extra)];
+                e = Extra{};
+                if (value == "quicksave")
+                    e.command = Command::QuickSave;
+                else if (value == "quickload")
+                    e.command = Command::QuickLoad;
+                else if (value == "saveload")
+                    e.command = Command::SaveLoad;
+                else if (const uint8_t from = place(value); from < kRemappable)
+                    e.copy = from; // the action that sits there by default (its PS2 button)
+            }
             at = semi == std::string::npos ? f[6].size() : semi + 1;
         }
+        const int paddles = atoi(f[9].c_str());
+        state.paddles = paddles >= 4 ? 0x1E : paddles >= 2 ? 0x06 : 0x00; // bits 1 L4, 2 R4, 3 L5, 4 R5
         const std::string artDir = f[1].substr(0, f[1].find_last_of('/'));
         const uint8_t cursor = f[3].empty() ? kNone : place(f[3]);
         Edit edit;
         if (!f[7].empty() && cursor != kNone)
         {
             int start = 0;
-            drumInputs(state, cursor, start);
+            drumEntries(state, optionsFrom(ini), cursor, start);
             edit.drum = true;
             edit.pos = static_cast<float>(start) + static_cast<float>(atof(f[7].c_str()));
             edit.target = static_cast<int>(std::lround(edit.pos));
         }
-        edit.armed = f[8] == "reset" ? Armed::Reset : f[8] == "clear" ? Armed::Clear : Armed::None;
+        edit.armed = f[8] == "reset" ? Armed::Reset : Armed::None;
         build(mapping, art, artDir, f[0], f[2], state, optionsFrom(ini), cursor, edit);
         v.mapping = &mapping.view;
         v.prevHint = v.nextHint = Hint{};
@@ -274,11 +289,41 @@ int main(int argc, char **argv)
                 if (cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0)
                     fprintf(stderr, "CROSS: leader %zu (from %.0f,%.0f) x leader %zu (from %.0f,%.0f)\n", i, a.first, a.second, j, c.first, c.second);
             }
+        // Leaders through the paddle block (its labels' underscores mark each one's bottom and width; a label's top is
+        // taken 30 lines over it).
+        for (const Pcsx2GsScreenItem &it : items)
+        {
+            const char *path = strings.c_str() + it.text;
+            if (it.kind != PCSX2GS_SCREEN_LINE || !strstr(path, "/underscore") || std::fabs(it.y1 - it.y) > 1e-4f)
+                continue;
+            const float x0 = std::min(it.x, it.x1) * W, x1 = std::max(it.x, it.x1) * W, y1 = it.y * H, y0 = y1 - 30.0f / 448.0f * H;
+            bool block = false;
+            for (int k = 0; k < mapping.view.lineCount; ++k)
+                block = block || mapping.view.lines[k].block;
+            if (!block || x0 < 0.25f * W || x1 > 0.75f * W || y1 < 0.55f * H)
+                continue; // the columns' underscores (the block sits in the middle, under the pad)
+            for (size_t i = 0; i < leaders.size(); ++i)
+            {
+                const auto a = P(leaders[i]->x, leaders[i]->y), b = P(leaders[i]->x1, leaders[i]->y1);
+                for (int step = 0; step <= 64; ++step)
+                {
+                    const float t = step / 64.0f, x = a.first + t * (b.first - a.first), y = a.second + t * (b.second - a.second);
+                    if (x > x0 && x < x1 && y > y0 && y < y1)
+                    {
+                        fprintf(stderr, "BLOCK: leader %zu (from %.0f,%.0f) runs through a paddle label (%.0f..%.0f, %.0f..%.0f)\n", i,
+                                a.first, a.second, x0, x1, y0, y1);
+                        break;
+                    }
+                }
+            }
+        }
         if (pad)
             for (size_t i = 0; i < leaders.size(); ++i)
                 for (int k = 0; k < mapping.view.lineCount; ++k)
                 {
                     const auto &l = mapping.view.lines[k];
+                    if (l.block)
+                        continue; // a paddle has no point on the pad
                     const float bx = (pad->x + l.px * (pad->x1 - pad->x)) * W, by = (pad->y + l.py * (pad->y1 - pad->y)) * H;
                     const auto a = P(leaders[i]->x, leaders[i]->y), b = P(leaders[i]->x1, leaders[i]->y1);
                     const float dx = b.first - a.first, dy = b.second - a.second, len2 = dx * dx + dy * dy;

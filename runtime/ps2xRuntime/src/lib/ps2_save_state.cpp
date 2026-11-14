@@ -182,6 +182,12 @@ namespace ps2x::savestate
         return r.quickSlot.empty() ? std::filesystem::path("states/quick.state") : r.quickSlot;
     }
 
+    std::filesystem::path quickBackupPath()
+    {
+        std::filesystem::path quick = quickSlotPath();
+        return quick.replace_filename(quick.stem().string() + ".previous" + quick.extension().string());
+    }
+
     void requestSave(std::filesystem::path path)
     {
         post(Request{false, std::move(path)});
@@ -728,6 +734,13 @@ bool EeScheduler::serviceStateRequests()
                 file.write(reinterpret_cast<const char *>(out.data().data()), static_cast<std::streamsize>(out.data().size()));
                 if (!file)
                     throw ps2x::state::Error("could not write " + temp.string());
+            }
+            // A quick save keeps the one it replaces as the backup (K, Nov 14: the F2 menu's "Previous quick save").
+            if (path == ps2x::savestate::quickSlotPath() && std::filesystem::exists(path, ec))
+            {
+                const std::filesystem::path backup = ps2x::savestate::quickBackupPath();
+                std::filesystem::remove(backup, ec);
+                std::filesystem::rename(path, backup, ec);
             }
             std::filesystem::rename(temp, path, ec);
             if (ec)

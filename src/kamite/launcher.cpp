@@ -1715,6 +1715,47 @@ void main()
             return false;
         }
 
+        // A key both a game input and a hotkey would hold (K, Nov 14): a modal asks before assigning, whichever side
+        // is being set. Plain keys only (a Shift / Ctrl hotkey does not fire on the bare key).
+        struct KeyClash
+        {
+            bool game = false;     // true: a game input (row / column / binding); false: a hotkey (action / key)
+            int row = 0, column = 0;
+            std::string binding;
+            ps2x::hotkeys::Action action = ps2x::hotkeys::Action::Count;
+            ps2x::hotkeys::Binding key;
+            std::string message;
+        };
+        KeyClash g_clash;
+        bool g_openClash = false;
+
+        void askKeyClash(KeyClash clash)
+        {
+            g_clash = std::move(clash);
+            g_openClash = true;
+        }
+
+        std::string lowerFirst(std::string text)
+        {
+            if (!text.empty())
+                text[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(text[0])));
+            return text;
+        }
+
+        // The game action a controls.ini key ("Cross", "LUp") stands for, as the table names it.
+        std::string gameInputName(const std::string &key)
+        {
+            const auto same = [](std::string_view a, std::string_view b)
+            {
+                return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y)
+                                                          { return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)); });
+            };
+            for (int row = 0; row < kControlRowCount; ++row)
+                if (same(key, kControlRows[row].key))
+                    return rowName(row);
+            return key;
+        }
+
         // The capture in progress (every frame while its popup is open): true when it ended.
         bool captureTick()
         {
@@ -1740,7 +1781,14 @@ void main()
                         const std::string binding = pc::keyBinding(key);
                         if (!binding.empty())
                         {
-                            bindCell(g_capture.row, false, g_capture.column, binding);
+                            if (const ps2x::hotkeys::Action holder = ps2x::hotkeys::plainKeyHolder(key);
+                                holder != ps2x::hotkeys::Action::Count)
+                                askKeyClash(KeyClash{true, g_capture.row, g_capture.column, binding, {}, {},
+                                                     pc::displayName(binding) + " is the hotkey for " +
+                                                         lowerFirst(ps2x::hotkeys::info(holder).label) +
+                                                         ". Pressing it will do both. Assign it anyway?"});
+                            else
+                                bindCell(g_capture.row, false, g_capture.column, binding);
                             return true;
                         }
                     }
@@ -1805,23 +1853,26 @@ void main()
         bool g_openHotkeyCapture = false;
         std::string g_hotkeyStatus;
 
-        void loadHotkeys(const State &state)
+        void storeHotkey(State &state, hk::Action action, hk::Binding binding)
+        {
+            hk::setBinding(action, binding);
+            state.ini.set("Hotkeys", hk::info(action).id, binding.bound() ? hk::text(binding) : "none");
+        }
+
+        void loadHotkeys(State &state)
         {
             for (int i = 0; i < static_cast<int>(hk::Action::Count); ++i)
             {
                 const hk::Action action = static_cast<hk::Action>(i);
                 const std::string value = state.ini.get("Hotkeys", hk::info(action).id, "\x01");
                 hk::Binding binding;
-                if (value != "\x01" && hk::parse(value, binding) &&
-                    !(action == hk::Action::RecordCase && binding.pad == ps2x::iop::PadButton::R3)) // old default (Nov 3)
+                if (value == "\x01")
+                    continue;
+                if (hk::parse(value, binding))
                     hk::setBinding(action, binding);
+                else // a controller button from an older build (keyboard-only since Nov 14): the default, written back
+                    storeHotkey(state, action, hk::info(action).def);
             }
-        }
-
-        void storeHotkey(State &state, hk::Action action, hk::Binding binding)
-        {
-            hk::setBinding(action, binding);
-            state.ini.set("Hotkeys", hk::info(action).id, binding.bound() ? hk::text(binding) : "none");
         }
 
         void drawHotkeys(State &state)
@@ -1835,8 +1886,7 @@ void main()
             if (collapsibleHeading("Hotkeys", g_hotkeysOpen))
             {
                 ImGui::PushStyleColor(ImGuiCol_Text, kTextDim);
-                ImGui::TextWrapped("The port's own keys. Click one, then press the key (with Shift or Ctrl held if you want), "
-                                   "or pick a controller button (it stays on that physical button whatever the mapping). "
+                ImGui::TextWrapped("The port's own keys. Click one, then press the key (with Shift or Ctrl held if you want). "
                                    "Right-click clears it. The F2 menu's Controls tab edits the same list.");
                 ImGui::PopStyleColor();
                 if (ImGui::BeginTable("hotkeys", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_RowBg))
@@ -1916,43 +1966,21 @@ void main()
                     const hk::Action other = hk::conflict(action, binding);
                     if (other != hk::Action::Count)
                         g_hotkeyStatus = hk::text(binding) + " is already " + hk::info(other).label + "; not changed.";
+                    else if (const std::string use = pc::keyboardKeyUse(kPlayer, key); !use.empty() && !binding.shift && !binding.ctrl)
+                    {
+                        KeyClash clash;
+                        clash.action = action;
+                        clash.key = binding;
+                        clash.message = hk::text(binding) + " is assigned to " + gameInputName(use) +
+                                        " in the game's controls. Pressing it will do both. Assign it anyway?";
+                        askKeyClash(std::move(clash));
+                    }
                     else
                     {
                         storeHotkey(state, action, binding);
                         g_hotkeyStatus = std::string(hk::info(action).label) + ": " + hk::text(binding);
-                        const std::string use = pc::keyboardKeyUse(kPlayer, key);
-                        if (!use.empty() && !binding.shift && !binding.ctrl)
-                            g_hotkeyStatus += "   (also " + use + " in the game's controls: it will do both)";
                     }
                     done = true;
-                }
-                // Or a controller button, as the game sees it (Right Stick Press, Select...): the game layer watches the pad data for it.
-                if (!done)
-                {
-                    ImGui::TextColored(kTextDim, "...or a controller button:");
-                    int padCount = 0;
-                    const hk::PadName *pads = hk::padNames(padCount);
-                    for (int p = 0; p < padCount; ++p)
-                    {
-                        if (p % 8 != 0)
-                            ImGui::SameLine();
-                        ImGui::PushID(2000 + p);
-                        if (ImGui::SmallButton(pads[p].name))
-                        {
-                            const hk::Binding binding{0, false, false, pads[p].bit};
-                            const hk::Action other = hk::conflict(action, binding);
-                            if (other != hk::Action::Count)
-                                g_hotkeyStatus = hk::text(binding) + " is already " + hk::info(other).label + "; not changed.";
-                            else
-                            {
-                                storeHotkey(state, action, binding);
-                                g_hotkeyStatus = std::string(hk::info(action).label) + ": " + hk::text(binding) +
-                                                 "   (the game sees the button too)";
-                            }
-                            done = true;
-                        }
-                        ImGui::PopID();
-                    }
                 }
                 if (done)
                 {
@@ -1961,6 +1989,49 @@ void main()
                 }
                 ImGui::EndPopup();
             }
+        }
+
+        // The key-clash question (askKeyClash), opened the frame after the capture that found it closed.
+        void drawKeyClash(State &state)
+        {
+            if (g_openClash)
+            {
+                g_openClash = false;
+                ImGui::OpenPopup("##keyclash");
+            }
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            if (!ImGui::BeginPopupModal("##keyclash", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+                return;
+            g_captureFrame = true; // its Esc / B must not also leave Options
+            const float width = ImGui::GetFontSize() * 22.0f;
+            ImGui::Dummy(ImVec2(width, ImGui::GetFontSize() * 0.25f));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+            ImGui::TextUnformatted(g_clash.message.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.5f));
+            bool close = false;
+            if (ImGui::Button("Assign"))
+            {
+                if (g_clash.game)
+                    bindCell(g_clash.row, false, g_clash.column, g_clash.binding);
+                else
+                {
+                    storeHotkey(state, g_clash.action, g_clash.key);
+                    g_hotkeyStatus = std::string(hk::info(g_clash.action).label) + ": " + hk::text(g_clash.key);
+                }
+                close = true;
+            }
+            tickItem();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+            {
+                (g_clash.game ? g_controlsStatus : g_hotkeyStatus) = "Not changed.";
+                close = true;
+            }
+            tickItem();
+            if (close)
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         // The Controls tab after its table settings: the bindings and hotkeys (launcher only).
@@ -2070,6 +2141,7 @@ void main()
                 }
                 ImGui::EndPopup();
             }
+            drawKeyClash(state);
         }
 
         void saveControls()

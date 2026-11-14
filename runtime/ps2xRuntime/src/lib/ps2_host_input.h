@@ -87,6 +87,52 @@ namespace ps2_host_input
         void requestControllerReset(uint32_t pad);
     }
 
+    // Player 1's extra buttons (K, Nov 14): Select and the back paddles. Each holds nothing, a copy of a game action
+    // (the ten remappable PS2 buttons: the button added to that PS2 button's controller bindings, so it works in play
+    // only: the menu layer has the default layout) or a command (save states; commands work everywhere). Commands are
+    // [PadN] keys of controls.ini (SelectCommand, L4Command, R4Command, L5Command, R5Command = None / QuickSave /
+    // QuickLoad / SaveLoad; Select defaults to SaveLoad, the paddles to None), so the launcher, the page and a reset
+    // keep them with the bindings. Swaps leave copies where they are (a copy follows its action); a reset removes them.
+    namespace extra
+    {
+        enum Button : uint8_t
+        {
+            Select,
+            L4, // SDL's LeftPaddle1 (an Elite's P3, a DualSense Edge's left back button, a Steam pad's L4)
+            R4, // RightPaddle1 (Elite P1)
+            L5, // LeftPaddle2 (Elite P4)
+            R5, // RightPaddle2 (Elite P2)
+            Count
+        };
+        enum class Command : uint8_t
+        {
+            None,
+            QuickSave,
+            QuickLoad,
+            SaveLoad, // tap (released without Start) saves; held + Start loads, that Start hidden from the game
+            Count
+        };
+        constexpr uint8_t kNoCopy = 0xFFu;
+
+        struct State
+        {
+            uint32_t generation = 0u; // bumped by every bindings rebuild that changed something here
+            std::array<Command, Count> command{};
+            std::array<uint8_t, Count> copy{};       // the prompts::Input (0..9) a copy of, kNoCopy: none
+            std::array<uint8_t, 10> copies{};        // per remappable input: its controller bindings that are copies
+        };
+        [[nodiscard]] State state(); // any thread
+        // The paddles player 1's controller reports (bit per Button; Select never counted): from the hardware, any
+        // thread. 0 for a plain pad, Steam Input's virtual pad, GLFW, or no controller.
+        [[nodiscard]] uint8_t paddles();
+        // Any thread: queued for the window thread's next sample(), applied and saved at once. copyOf: a
+        // prompts::Input 0..9 (command ignored), or kNoCopy for the command (None clears the button).
+        void requestAssign(uint32_t pad, Button button, Command command, uint8_t copyOf = kNoCopy);
+        // Window thread, after sample(): a save-state command an extra button fired (QuickSave / QuickLoad; None:
+        // nothing), once.
+        [[nodiscard]] Command takeFired();
+    }
+
     // Button prompts (any thread). What player 1's bindings show where the game draws a PS2 button: for each input the
     // first keyboard/mouse binding and the first controller binding, i.e. the Controls screen's Key 1 and Controller
     // columns, taken from the live table (so PS2X_PAD1 in the environment counts too). Republished by every bindings

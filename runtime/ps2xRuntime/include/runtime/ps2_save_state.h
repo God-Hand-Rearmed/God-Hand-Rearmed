@@ -17,6 +17,8 @@ namespace ps2x::savestate
 
     void setQuickSlotPath(std::filesystem::path path);
     [[nodiscard]] std::filesystem::path quickSlotPath();
+    // Where a quick save moves the quick slot's previous state ("quick.previous.state" beside it).
+    [[nodiscard]] std::filesystem::path quickBackupPath();
     void requestSave(std::filesystem::path path);
     void requestLoad(std::filesystem::path path);
     void requestQuickSave();

@@ -53,6 +53,9 @@ namespace ps2_host_gamepads
     void update();
     [[nodiscard]] bool connected(int device);
     [[nodiscard]] bool button(int device, Button button);
+    // Whether the controller reports that button at all (SDL3: SDL_GamepadHasButton; the back paddles of an Elite, a
+    // DualSense Edge, a Steam pad). GLFW: only the standard buttons.
+    [[nodiscard]] bool hasButton(int device, Button button);
     // Sticks -1..1 (down and right positive), triggers 0..1.
     [[nodiscard]] float axis(int device, Axis axis);
     // 0..1 each (large = low frequency motor); sent when it changes and refreshed while it runs.

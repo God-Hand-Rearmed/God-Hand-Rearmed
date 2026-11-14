@@ -413,7 +413,7 @@ namespace kamite::modern
             }
             ui->separator_text("Button prompts");
             static const char *const kPrompts[] = {"Automatic: from the controller in use", "Xbox", "PlayStation",
-                                                   "Nintendo", "Steam Deck"};
+                                                   "Nintendo", "Steam"};
             int prompts = static_cast<int>(prompt_hd::choice());
             ui->set_next_width(340.0f);
             if (ui->combo("##prompts", &prompts, kPrompts, 5))
