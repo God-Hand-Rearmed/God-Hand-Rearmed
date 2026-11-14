@@ -8,6 +8,7 @@
 #include "Config.h"
 #include "GS/GS.h"
 #include "GS/Renderers/Common/GSRenderer.h"
+#include "VKDxgiPresent.h" // before DX11, as GS.cpp: g_vkDxgiPresent, the DXGI swap chain under Vulkan
 #include "GS/Renderers/DX11/GSDevice11.h"
 #include "GS/Renderers/HW/GSTextureReplacements.h"
 #include "GS/Renderers/HW/GSTextureCache.h" // g_texture_cache (DllMain)
@@ -194,6 +195,12 @@ namespace
             if (key == "api")
             {
                 g_graphicsApi = (text == "vulkan" || text == "vk") ? GSRendererType::VK : GSRendererType::DX11;
+                continue;
+            }
+            if (key == "dxgi_present")
+            {
+                // Vulkan's frames shown through a DXGI swap chain (compat/VKDxgiPresent.h); 0 = Vulkan's own.
+                pcsx2gs::g_vkDxgiPresent = value != 0;
                 continue;
             }
             if (key == "texture_dir")
@@ -422,10 +429,11 @@ namespace
                 std::fputs("qpc,last_present,shown_present,shown_refresh,sync_refresh,sync_qpc\n", f);
             return f;
         }();
-        // Direct3D 11 only (the swap chain's frame statistics); nothing under Vulkan.
+        // A DXGI swap chain's frame statistics: Direct3D 11's, or Vulkan's when it presents through DXGI.
         const bool d3d11 = g_gs_device && g_gs_device->GetRenderAPI() == RenderAPI::D3D11;
         GSDevice11 *device = (file && d3d11) ? GSDevice11::GetInstance() : nullptr;
-        IDXGISwapChain1 *swapChain = device ? device->GetSwapChain() : nullptr;
+        IDXGISwapChain1 *swapChain = device ? device->GetSwapChain()
+                                            : (file && g_gs_device ? pcsx2gs::VKDxgiPresenter::CurrentSwapChain() : nullptr);
         if (!swapChain)
             return;
         LARGE_INTEGER now{};

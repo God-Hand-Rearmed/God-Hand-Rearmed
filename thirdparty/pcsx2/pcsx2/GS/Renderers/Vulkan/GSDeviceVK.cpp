@@ -467,6 +467,15 @@ bool GSDeviceVK::SelectDeviceExtensions(ExtensionList* extension_list, bool enab
 #ifdef _WIN32
 	m_optional_extensions.vk_ext_full_screen_exclusive =
 		enable_surface && SupportsExtension(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME, false);
+	// pcsx2gs (Kamite): presenting through DXGI (compat/VKDxgiPresent.h).
+	if (enable_surface && pcsx2gs::g_vkDxgiPresent)
+	{
+		m_optional_extensions.vk_khr_external_memory_win32 =
+			SupportsExtension(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME, false);
+		m_optional_extensions.vk_khr_external_semaphore_win32 =
+			SupportsExtension(VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME, false);
+		m_optional_extensions.vk_khr_timeline_semaphore = SupportsExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, false);
+	}
 #endif
 
 	m_optional_extensions.vk_ext_provoking_vertex = SupportsExtension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, false);
@@ -700,6 +709,17 @@ bool GSDeviceVK::CreateDevice(VkSurfaceKHR surface, bool enable_validation_layer
 	{
 		fragment_shader_interlock_ext_feature.fragmentShaderPixelInterlock = VK_TRUE;
 		Vulkan::AddPointerToChain(&device_info, &fragment_shader_interlock_ext_feature);
+	}
+	// pcsx2gs (Kamite): timeline semaphores for presenting through DXGI (compat/VKDxgiPresent.h).
+	VkPhysicalDeviceTimelineSemaphoreFeatures timeline_semaphore_feature = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES};
+	if (m_optional_extensions.vk_khr_timeline_semaphore)
+	{
+		VkPhysicalDeviceFeatures2 query = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timeline_semaphore_feature};
+		vkGetPhysicalDeviceFeatures2(m_physical_device, &query);
+		timeline_semaphore_feature.pNext = nullptr;
+		m_optional_extensions.vk_khr_timeline_semaphore = timeline_semaphore_feature.timelineSemaphore == VK_TRUE;
+		if (m_optional_extensions.vk_khr_timeline_semaphore)
+			Vulkan::AddPointerToChain(&device_info, &timeline_semaphore_feature);
 	}
 
 	VkResult res = vkCreateDevice(m_physical_device, &device_info, nullptr, &m_device);
@@ -1429,6 +1449,23 @@ void GSDeviceVK::SubmitCommandBuffer(VKSwapChain* present_swap_chain)
 		submit_info.pSignalSemaphores = &m_spin_resources[m_current_frame].semaphore;
 	}
 
+	// pcsx2gs (Kamite): presenting through DXGI the two semaphores are timelines (compat/VKDxgiPresent.h): wait until
+	// the D3D11 device has copied this image out the last time, signal this frame's number. The clear of a blank frame
+	// writes in the transfer stage.
+	VkTimelineSemaphoreSubmitInfo timeline_info = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+	u64 timeline_values[3] = {}; // the wait, then the signals (a spin semaphore's value is ignored)
+	if (present_swap_chain && present_swap_chain->IsDxgi())
+	{
+		wait_bits = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+		timeline_values[0] = present_swap_chain->GetDxgiWaitValue();
+		timeline_values[1] = present_swap_chain->GetDxgiSignalValue();
+		timeline_info.waitSemaphoreValueCount = 1;
+		timeline_info.pWaitSemaphoreValues = &timeline_values[0];
+		timeline_info.signalSemaphoreValueCount = submit_info.signalSemaphoreCount;
+		timeline_info.pSignalSemaphoreValues = &timeline_values[1];
+		submit_info.pNext = &timeline_info;
+	}
+
 	res = vkQueueSubmit(m_graphics_queue, 1, &submit_info, resources.fence);
 	if (res != VK_SUCCESS)
 	{
@@ -1439,6 +1476,14 @@ void GSDeviceVK::SubmitCommandBuffer(VKSwapChain* present_swap_chain)
 
 	if (spin_cycles != 0)
 		SubmitSpinCommand(m_current_frame, spin_cycles);
+
+	if (present_swap_chain && present_swap_chain->IsDxgi()) // pcsx2gs (Kamite)
+	{
+		present_swap_chain->ResetImageAcquireResult();
+		present_swap_chain->PresentDxgi(); // a failure: the next acquire reports the surface lost
+		present_swap_chain->AcquireNextImage();
+		return;
+	}
 
 	if (present_swap_chain)
 	{
@@ -2521,8 +2566,7 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 
 	// Swap chain images start in undefined
 	GSTextureVK* swap_chain_texture = m_swap_chain->GetCurrentTexture();
-	swap_chain_texture->OverrideImageLayout(GSTextureVK::Layout::Undefined);
-	swap_chain_texture->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::ColorAttachment);
+	m_swap_chain->BeginImage(cmdbuffer, GSTextureVK::Layout::ColorAttachment); // pcsx2gs (Kamite): DXGI-aware
 
 	// Present render pass gets started out here, so we can't transition source textures in DoStretchRect
 	// Make sure they're ready now
@@ -2550,7 +2594,7 @@ void GSDeviceVK::EndPresent()
 	RenderImGui();
 
 	EndPresentRenderPass();
-	m_swap_chain->GetCurrentTexture()->TransitionToLayout(GetCurrentCommandBuffer(), GSTextureVK::Layout::PresentSrc);
+	m_swap_chain->EndImage(GetCurrentCommandBuffer()); // pcsx2gs (Kamite): DXGI-aware PresentSrc
 	g_perfmon.Put(GSPerfMon::RenderPasses, 1);
 
 	SubmitCommandBuffer(m_swap_chain.get());
@@ -4803,7 +4847,7 @@ void GSDeviceVK::RenderBlankFrame()
 
 	VkCommandBuffer cmdbuffer = GetCurrentCommandBuffer();
 	GSTextureVK* sctex = m_swap_chain->GetCurrentTexture();
-	sctex->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::ClearDst);
+	m_swap_chain->BeginImage(cmdbuffer, GSTextureVK::Layout::ClearDst); // pcsx2gs (Kamite): DXGI-aware
 
 	VkImageSubresourceRange srr = {};
 	srr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -4812,7 +4856,7 @@ void GSDeviceVK::RenderBlankFrame()
 	vkCmdClearColorImage(
 		cmdbuffer, sctex->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &s_present_clear_color.color, 1, &srr);
 
-	m_swap_chain->GetCurrentTexture()->TransitionToLayout(cmdbuffer, GSTextureVK::Layout::PresentSrc);
+	m_swap_chain->EndImage(cmdbuffer); // pcsx2gs (Kamite): DXGI-aware PresentSrc
 	SubmitCommandBuffer(m_swap_chain.get());
 	ActivateCommandBuffer((m_current_frame + 1) % NUM_COMMAND_BUFFERS);
 }

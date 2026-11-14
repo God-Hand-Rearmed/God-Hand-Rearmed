@@ -83,6 +83,8 @@ list(TRANSFORM GS_SOURCES PREPEND "${P}/pcsx2/")
 # Texture replacement loaders: PCSX2's file with PNG through WIC instead of libpng (tools/make_loaders.py); .zip
 # texture packs are left out (compat/zip.h).
 list(APPEND GS_SOURCES compat/GSTextureReplacementLoaders.cpp)
+# Vulkan's frames shown through a DXGI swap chain (claude/dxgi-present.md).
+list(APPEND GS_SOURCES compat/VKDxgiPresent.cpp)
 add_library(pcsx2_gs STATIC ${GS_SOURCES})
 target_link_libraries(pcsx2_gs PRIVATE pcsx2_flags)
 # The Vulkan device compiles its shaders with shaderc_shared.dll at run time (shaderc.cmake builds it from source).

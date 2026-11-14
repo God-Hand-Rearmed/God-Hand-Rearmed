@@ -13,12 +13,103 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
 #include <X11/Xlib.h>
 #endif
 
 static_assert(VKSwapChain::NUM_SEMAPHORES == (GSDeviceVK::NUM_COMMAND_BUFFERS + 1));
+
+#ifdef _WIN32
+// pcsx2gs (Kamite): presenting through DXGI (compat/VKDxgiPresent.h). Once it could not start or broke, the native
+// Vulkan swap chain for the rest of the run.
+static bool s_dxgi_failed = false;
+
+static int DxgiVSync(VkPresentModeKHR mode)
+{
+	return mode == VK_PRESENT_MODE_IMMEDIATE_KHR ? 0 : mode == VK_PRESENT_MODE_MAILBOX_KHR ? 2 : 1;
+}
+
+bool VKSwapChain::CreateDxgiSwapChain()
+{
+	if (!pcsx2gs::g_vkDxgiPresent || s_dxgi_failed || m_window_info.type != WindowInfo::Type::Win32)
+		return false;
+	// The native swap chain's format, so the present pipelines (compiled for the first one) fit either.
+	const std::optional<VkSurfaceFormatKHR> native_format = SelectSurfaceFormat(m_surface);
+	const VkFormat format = native_format.has_value() ? native_format->format : VK_FORMAT_R8G8B8A8_UNORM;
+	std::string why;
+	m_dxgi = pcsx2gs::VKDxgiPresenter::Create(m_window_info.window_handle, format, 0, 0, DxgiVSync(m_present_mode), &why);
+	if (m_dxgi && !AdoptDxgiImages())
+	{
+		m_dxgi.reset();
+		why = "the shared images could not be wrapped";
+	}
+	if (!m_dxgi)
+	{
+		s_dxgi_failed = true;
+		std::fprintf(stderr, "[pcsx2-gs] Vulkan presents natively: %s\n", why.c_str());
+		return false;
+	}
+	std::fprintf(stderr, "[pcsx2-gs] Vulkan presents through DXGI (%s)\n", m_dxgi->Describe().c_str());
+	return true;
+}
+
+bool VKSwapChain::AdoptDxgiImages()
+{
+	m_window_info.surface_width = m_dxgi->Width();
+	m_window_info.surface_height = m_dxgi->Height();
+	m_current_image = 0;
+	m_images.reserve(pcsx2gs::VKDxgiPresenter::kImages);
+	for (u32 i = 0; i < pcsx2gs::VKDxgiPresenter::kImages; i++)
+	{
+		std::unique_ptr<GSTextureVK> texture = GSTextureVK::Adopt(m_dxgi->Image(i), GSTexture::RenderTarget,
+			GSTexture::Format::Color, m_dxgi->Width(), m_dxgi->Height(), 1, m_dxgi->Format());
+		if (!texture)
+		{
+			DestroySwapChainImages();
+			return false;
+		}
+		m_images.push_back(std::move(texture));
+	}
+	return true;
+}
+
+void VKSwapChain::PresentDxgi()
+{
+	if (!m_dxgi->Present(m_current_image))
+		s_dxgi_failed = true; // the next acquire reports the surface lost, and it comes back native
+}
+#endif
+
+void VKSwapChain::BeginImage(VkCommandBuffer cmd, GSTextureVK::Layout layout)
+{
+	GSTextureVK* const texture = GetCurrentTexture();
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite): taken back from the D3D11 device
+	{
+		m_dxgi->RecordAcquire(cmd, m_current_image, GSTextureVK::GetVkImageLayout(layout));
+		texture->OverrideImageLayout(layout);
+		return;
+	}
+#endif
+	texture->OverrideImageLayout(GSTextureVK::Layout::Undefined);
+	texture->TransitionToLayout(cmd, layout);
+}
+
+void VKSwapChain::EndImage(VkCommandBuffer cmd)
+{
+	GSTextureVK* const texture = GetCurrentTexture();
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite): handed over to the D3D11 device
+	{
+		m_dxgi->RecordRelease(cmd, m_current_image, texture->GetVkLayout());
+		texture->OverrideImageLayout(GSTextureVK::Layout::General);
+		return;
+	}
+#endif
+	texture->TransitionToLayout(cmd, GSTextureVK::Layout::PresentSrc);
+}
 
 VKSwapChain::VKSwapChain(const WindowInfo& wi, VkSurfaceKHR surface, VkPresentModeKHR present_mode,
 	std::optional<bool> exclusive_fullscreen_control)
@@ -308,6 +399,11 @@ bool VKSwapChain::SelectPresentMode(VkSurfaceKHR surface, GSVSyncMode* vsync_mod
 
 bool VKSwapChain::CreateSwapChain()
 {
+#ifdef _WIN32
+	if (CreateDxgiSwapChain()) // pcsx2gs (Kamite)
+		return true;
+#endif
+
 	// Select swap chain format
 	std::optional<VkSurfaceFormatKHR> surface_format = SelectSurfaceFormat(m_surface);
 	if (!surface_format.has_value())
@@ -521,7 +617,23 @@ void VKSwapChain::DestroySwapChainImages()
 
 void VKSwapChain::DestroySwapChain()
 {
+#ifdef _WIN32
+	// pcsx2gs (Kamite): the shared images are destroyed with the presenter; frames still drawing into them (the
+	// surface-lost path comes here without a wait) must finish first.
+	if (m_dxgi)
+		GSDeviceVK::GetInstance()->WaitForGPUIdle();
+#endif
 	DestroySwapChainImages();
+
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite)
+	{
+		m_dxgi.reset();
+		m_window_info.surface_width = 0;
+		m_window_info.surface_height = 0;
+		return;
+	}
+#endif
 
 	if (m_swap_chain == VK_NULL_HANDLE)
 		return;
@@ -545,6 +657,21 @@ VkResult VKSwapChain::AcquireNextImage()
 	if (m_image_acquire_result.has_value())
 		return m_image_acquire_result.value();
 
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite): the next shared image in turn; a broken DXGI path reports the surface lost
+	{
+		if (m_dxgi->Failed())
+		{
+			s_dxgi_failed = true;
+			m_image_acquire_result = VK_ERROR_SURFACE_LOST_KHR;
+			return VK_ERROR_SURFACE_LOST_KHR;
+		}
+		m_current_image = (m_current_image + 1) % GetImageCount();
+		m_image_acquire_result = VK_SUCCESS;
+		return VK_SUCCESS;
+	}
+#endif
+
 	if (!m_swap_chain)
 		return VK_ERROR_SURFACE_LOST_KHR;
 
@@ -563,7 +690,7 @@ void VKSwapChain::ReleaseCurrentImage()
 		return;
 
 	if ((m_image_acquire_result.value() == VK_SUCCESS || m_image_acquire_result.value() == VK_SUBOPTIMAL_KHR) &&
-		GSDeviceVK::GetInstance()->GetOptionalExtensions().vk_swapchain_maintenance1)
+		GSDeviceVK::GetInstance()->GetOptionalExtensions().vk_swapchain_maintenance1 && !IsDxgi())
 	{
 		GSDeviceVK::GetInstance()->WaitForGPUIdle();
 
@@ -603,6 +730,18 @@ bool VKSwapChain::ResizeSwapChain(u32 new_width, u32 new_height, float new_scale
 
 	m_window_info.surface_scale = new_scale;
 
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite): new shared images and buffers; a failure goes native at once
+	{
+		std::string why;
+		if (m_dxgi->Resize(new_width, new_height, DxgiVSync(m_present_mode), &why) && AdoptDxgiImages())
+			return true;
+		std::fprintf(stderr, "[pcsx2-gs] DXGI resize failed (%s): presenting the native Vulkan way from now on\n", why.c_str());
+		s_dxgi_failed = true;
+		DestroySwapChain();
+	}
+#endif
+
 	if (!CreateSwapChain())
 	{
 		DestroySwapChain();
@@ -618,6 +757,32 @@ bool VKSwapChain::SetPresentMode(VkPresentModeKHR present_mode)
 		return true;
 
 	m_present_mode = present_mode;
+
+#ifdef _WIN32
+	if (m_dxgi) // pcsx2gs (Kamite): only a new buffer count makes buffers again; a failure goes native at once
+	{
+		const int vsync = DxgiVSync(present_mode);
+		if (!m_dxgi->NeedsNewBuffers(vsync))
+		{
+			m_dxgi->SetVSync(vsync);
+			return true;
+		}
+		ReleaseCurrentImage();
+		DestroySwapChainImages();
+		std::string why;
+		if (m_dxgi->Resize(m_window_info.surface_width, m_window_info.surface_height, vsync, &why) && AdoptDxgiImages())
+			return true;
+		std::fprintf(stderr, "[pcsx2-gs] DXGI vsync change failed (%s): presenting the native Vulkan way from now on\n", why.c_str());
+		s_dxgi_failed = true;
+		DestroySwapChain();
+		if (!CreateSwapChain())
+		{
+			DestroySwapChain();
+			return false;
+		}
+		return true;
+	}
+#endif
 
 	// Recreate the swap chain with the new present mode.
 	INFO_LOG("Recreating swap chain to change present mode.");

@@ -83,6 +83,9 @@ VULKAN_INSTANCE_ENTRY_POINT(vkCreateDisplayPlaneSurfaceKHR, false)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceFeatures2, true)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceProperties2, true)
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceMemoryProperties2, true)
+// pcsx2gs (Kamite): presenting through DXGI (compat/VKDxgiPresent.h).
+VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceImageFormatProperties2, false)
+VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceExternalSemaphoreProperties, false)
 
 // VK_EXT_calibrated_timestamps
 VULKAN_INSTANCE_ENTRY_POINT(vkGetPhysicalDeviceCalibrateableTimeDomainsEXT, false)
@@ -231,6 +234,9 @@ VULKAN_DEVICE_ENTRY_POINT(vkGetDeviceImageMemoryRequirements, false)
 #ifdef _WIN32
 VULKAN_DEVICE_ENTRY_POINT(vkAcquireFullScreenExclusiveModeEXT, false)
 VULKAN_DEVICE_ENTRY_POINT(vkReleaseFullScreenExclusiveModeEXT, false)
+// pcsx2gs (Kamite): presenting through DXGI (compat/VKDxgiPresent.h).
+VULKAN_DEVICE_ENTRY_POINT(vkGetMemoryWin32HandlePropertiesKHR, false)
+VULKAN_DEVICE_ENTRY_POINT(vkImportSemaphoreWin32HandleKHR, false)
 #endif
 
 // VK_EXT_calibrated_timestamps

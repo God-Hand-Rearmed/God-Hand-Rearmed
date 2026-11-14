@@ -497,6 +497,7 @@ bool GSPcsx2Backend::EnsureOpen()
         const char *fallback;
     } kOptions[] = {
         {"PS2X_PCSX2_API", "api", nullptr},                           // vulkan (default) / dx11
+        {"PS2X_PCSX2_DXGI_PRESENT", "dxgi_present", nullptr},         // 0: Vulkan presents its own way (not through DXGI)
         {"PS2X_PCSX2_FXAA", "fxaa", "1"},
         {"PS2X_PCSX2_TEXTURE_FILTERING", "texture_filtering", nullptr},
         {"PS2X_PCSX2_TRILINEAR", "trilinear", nullptr},

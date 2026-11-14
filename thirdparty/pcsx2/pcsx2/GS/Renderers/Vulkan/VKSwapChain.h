@@ -8,6 +8,8 @@
 
 #include "common/WindowInfo.h"
 
+#include "VKDxgiPresent.h" // pcsx2gs (Kamite)
+
 #include <array>
 #include <memory>
 #include <optional>
@@ -50,20 +52,45 @@ public:
 	__fi GSTextureVK* GetCurrentTexture() { return m_images[m_current_image].get(); }
 	__fi VkSemaphore GetImageAvailableSemaphore() const
 	{
-		return m_semaphores[m_current_semaphore].available_semaphore;
+		return *GetImageAvailableSemaphorePtr();
 	}
+	// pcsx2gs (Kamite): presenting through DXGI, these are timeline semaphores (GetDxgiWaitValue / SignalValue).
 	__fi const VkSemaphore* GetImageAvailableSemaphorePtr() const
 	{
+#ifdef _WIN32
+		if (m_dxgi)
+			return m_dxgi->CopyDonePtr();
+#endif
 		return &m_semaphores[m_current_semaphore].available_semaphore;
 	}
 	__fi VkSemaphore GetRenderingFinishedSemaphore() const
 	{
-		return m_semaphores[m_current_semaphore].rendering_finished_semaphore;
+		return *GetRenderingFinishedSemaphorePtr();
 	}
 	__fi const VkSemaphore* GetRenderingFinishedSemaphorePtr() const
 	{
+#ifdef _WIN32
+		if (m_dxgi)
+			return m_dxgi->RenderDonePtr();
+#endif
 		return &m_semaphores[m_current_semaphore].rendering_finished_semaphore;
 	}
+
+	// pcsx2gs (Kamite): the frames shown through a DXGI swap chain instead of a VkSwapchainKHR (VKDxgiPresent.h).
+#ifdef _WIN32
+	__fi bool IsDxgi() const { return m_dxgi != nullptr; }
+	__fi u64 GetDxgiWaitValue() const { return m_dxgi->SlotFree(m_current_image); }
+	__fi u64 GetDxgiSignalValue() const { return m_dxgi->NextFrame(); }
+	void PresentDxgi();
+#else
+	__fi bool IsDxgi() const { return false; }
+	__fi u64 GetDxgiWaitValue() const { return 0; }
+	__fi u64 GetDxgiSignalValue() const { return 0; }
+	void PresentDxgi() {}
+#endif
+	// The acquired image made ready to draw into (contents discarded) / handed over to be shown at the end.
+	void BeginImage(VkCommandBuffer cmd, GSTextureVK::Layout layout);
+	void EndImage(VkCommandBuffer cmd);
 
 	VkFormat GetTextureFormat() const;
 	VkResult AcquireNextImage();
@@ -83,6 +110,8 @@ private:
 	static std::optional<VkSurfaceFormatKHR> SelectSurfaceFormat(VkSurfaceKHR surface);
 
 	bool CreateSwapChain();
+	bool CreateDxgiSwapChain(); // pcsx2gs (Kamite)
+	bool AdoptDxgiImages(); // pcsx2gs (Kamite)
 	void DestroySwapChain();
 	void DestroySwapChainImages();
 
@@ -109,4 +138,8 @@ private:
 
 	std::optional<VkResult> m_image_acquire_result;
 	std::optional<bool> m_exclusive_fullscreen_control;
+
+#ifdef _WIN32
+	std::unique_ptr<pcsx2gs::VKDxgiPresenter> m_dxgi; // pcsx2gs (Kamite)
+#endif
 };

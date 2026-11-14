@@ -36,6 +36,7 @@ Newest first, one line per change; the code comments say how.
 - F2: ten save-state slots with dates; a quick save keeps the previous one, loadable from F2.
 - Button Mapping: CONTROLS title smaller and centred; the page moves up; Select pairs with MENU, L2 / L1 with R2 / R1, each pair's lines mirrored.
 - Button Mapping: the reset and launcher-layout notes sit at the bottom left, beside the button hints.
+- Vulkan: frames are shown through a DXGI swap chain on Windows, so the NVIDIA overlay, Game Bar and OBS game capture record the game.
 
 ## November 13, 2026
 

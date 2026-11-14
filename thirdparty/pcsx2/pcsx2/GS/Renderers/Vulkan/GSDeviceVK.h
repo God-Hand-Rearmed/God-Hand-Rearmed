@@ -48,6 +48,10 @@ public:
 		bool vk_khr_synchronization2 : 1;
 		bool vk_ext_attachment_feedback_loop_layout : 1;
 		bool vk_ext_fragment_shader_interlock : 1;
+		// pcsx2gs (Kamite): presenting through DXGI (compat/VKDxgiPresent.h).
+		bool vk_khr_external_memory_win32 : 1;
+		bool vk_khr_external_semaphore_win32 : 1;
+		bool vk_khr_timeline_semaphore : 1;
 	};
 
 	// Global state accessors
