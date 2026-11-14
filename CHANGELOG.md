@@ -34,6 +34,8 @@ Newest first, one line per change; the code comments say how.
 - Button Mapping: a Steam pad without visible paddles says to use Steam Input for them.
 - Prompts: the Steam Deck set is now STEAM, with a Steam Controller picture on Button Mapping.
 - F2: ten save-state slots with dates; a quick save keeps the previous one, loadable from F2.
+- Button Mapping: CONTROLS title smaller and centred; the page moves up; Select pairs with MENU, L2 / L1 with R2 / R1, each pair's lines mirrored.
+- Button Mapping: the reset and launcher-layout notes sit at the bottom left, beside the button hints.
 
 ## November 13, 2026
 

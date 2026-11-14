@@ -151,31 +151,32 @@ namespace kamite::options_overlay
         // A sub-option's elbow from its parent (K's pick, Nov 13): the unselected names' tan.
         constexpr float kElbowThickness = 1.4f;
 
-        // BUTTON MAPPING (claude/button-mapping.md, the original controller page measured from the disc). The title at
-        // the top left as the original's (its letters from kMapTitleX, kMapTitleScale of the other pages' size). The
-        // pad's picture kMapPadHeight lines tall (at most kMapPadShare of the text area wide) centred at kMapPadY, as
-        // much of the page as the original's. A column either side: every panel's inner end kMapKnee past the widest
-        // pad's outline (the lines turn there: a straight edge, the same for every pad), kMapPanel units wide (kMapEdge in from the text area's
-        // edges at most). The right column's rows stacked evenly over kMapTop..kMapBottom (each as tall as its label
-        // needs, at least kMapRow), kMapRowGap..kMapRowGapMax apart, all squeezed together when they do not fit; the
-        // left column's rows level with their mirrors in the right column (L2 by R2, L1 by R1, the d-pad by the middle
-        // face row, L3 by R3, the left stick by the right), below the title (kMapTitleClear).
-        constexpr float kMapTitleX = 20.0f, kMapTitleScale = 0.8f, kMapTitleClear = 62.0f;
-        constexpr float kMapPadY = 230.0f, kMapPadHeight = 190.0f, kMapPadShare = 0.46f;
+        // BUTTON MAPPING (claude/button-mapping.md, the original controller page measured from the disc). The title
+        // centred at the top (K, Nov 14: kMapTitleScale of the other pages' size, at their top), which frees the corners
+        // for the columns. The pad's picture kMapPadHeight lines tall (at most kMapPadShare of the text area wide)
+        // centred at kMapPadY. A column either side: every panel's inner end kMapKnee past the widest pad's outline (the
+        // lines turn there: a straight edge, the same for every pad), kMapPanel units wide (kMapEdge in from the text
+        // area's edges at most). The rows come in pairs, left and right (Select / MENU, L2 / R2, L1 / R1, the d-pad /
+        // the middle face row, L3 / R3, the sticks), each pair sharing its top and bottom (K: the taller label's height),
+        // so their lines mirror each other; the right column's rows stacked evenly over kMapTop..kMapBottom (each at
+        // least kMapRow), kMapRowGap..kMapRowGapMax apart, all squeezed together when they do not fit. The drum's items
+        // fade out near the screen's top (kMapDrumTopFade).
+        constexpr float kMapTitleScale = 0.65f;
+        constexpr float kMapPadY = 214.0f, kMapPadHeight = 190.0f, kMapPadShare = 0.46f, kMapDrumTopFade = 6.0f;
         // The back-button block (stage 4, K Nov 14): its rows start at kMapBlockTop (under the stick presses' rows, so
         // the sticks' leaders pass outside it; the pad keeps its place), kMapBlockGap under the pad at least; each label
         // kMapBlockWidth wide, kMapBlockInner from the middle. A note under the pad (no block) has its baseline at
         // kMapNoteY (under the leaders' ends, like the block). SAVE / LOAD's Start button is kMapInlineIcon x the cap tall,
         // kMapInlineIconGap x the cap from the letters.
-        constexpr float kMapBlockGap = 6.0f, kMapBlockTop = 336.0f, kMapBlockWidth = 88.0f, kMapBlockInner = 6.0f;
+        constexpr float kMapBlockGap = 6.0f, kMapBlockTop = 320.0f, kMapBlockWidth = 88.0f, kMapBlockInner = 6.0f;
         constexpr float kMapBlockRow = 25.0f, kMapBlockRowGap = 3.0f; // a paddle row's least height, the rows' gap
-        constexpr float kMapNoteY = 382.0f, kMapInlineIcon = 1.55f, kMapInlineIconGap = 0.05f;
+        constexpr float kMapNoteY = 366.0f, kMapInlineIcon = 1.55f, kMapInlineIconGap = 0.05f;
         constexpr float kMapKnee = 4.0f, kMapPanel = 160.0f, kMapEdge = 10.0f;
         // The left column is narrower (K, Nov 14: its labels start at its outer end, so a wide one leaves them far from
         // the pad on a wide screen): just room for its labels and the drum's.
         constexpr float kMapPanelLeft = 100.0f;
         constexpr float kMapPadWidest = 262.0f; // the widest pad's picture at kMapPadHeight (the PlayStation one), units
-        constexpr float kMapTop = 40.0f, kMapBottom = 362.0f, kMapRow = 29.0f, kMapRowGap = 4.0f, kMapRowGapMax = 12.0f;
+        constexpr float kMapTop = 24.0f, kMapBottom = 346.0f, kMapRow = 29.0f, kMapRowGap = 4.0f, kMapRowGapMax = 12.0f;
         // Text, measured from the original's cross row (ATTACK / THROW ITEM / CONFIRM): every line's underline touches
         // its letters' stroke (baseline to the line's centre: kMapAbove for a thin divider, kMapAboveLast for the
         // thicker underscore, so both look the same), the next function's letters kMapBelow under it (letter tops); a
@@ -259,7 +260,7 @@ namespace kamite::options_overlay
             float fade;
             uint32_t labelFont = 0, helpFont = 0;
             float dim = 1.0f; // a page shown before it is opened: half strength
-            float helpClear = 0.0f; // BUTTON MAPPING's paddle block reaches down to here (lines): the help keeps below it
+            bool helpOnHints = false; // BUTTON MAPPING (K, Nov 14): the help's last line on the hints' line, bottom left
 
             uint32_t add(const char *text, size_t length)
             {
@@ -449,7 +450,7 @@ namespace kamite::options_overlay
                     lines += *c == '\n' && c[1] ? 1 : 0;
                 const float block = kHelpCap + kHelpLine * static_cast<float>(std::max(lines - 1, 0));
                 float baseline = 0.5f * (kHelpBandTop + kHelpBandBottom - block) + kHelpCap;
-                if (helpClear > 0.0f && baseline - kHelpCap < helpClear + 2.0f) // under the paddles: its last line on the hints'
+                if (helpOnHints) // clear of the paddle block whatever it holds
                     baseline = kHintY - kHelpLine * static_cast<float>(std::max(lines - 1, 0));
                 for (const char *line = body; line && *line;)
                 {
@@ -787,19 +788,21 @@ namespace kamite::options_overlay
                 items.push_back(item);
             }
 
-            // The title image with its letters' left at x (units), scale of its usual size, its top where it always is.
-            void titleAt(uint32_t path, const char *name, float x, float scale)
+            // The title image with its letters centred on the text area, scale of its usual size, its top where it
+            // always is.
+            void titleCentred(uint32_t path, const char *name, float scale)
             {
                 std::string key;
                 for (const char *c = name; *c; ++c)
                     key.push_back(static_cast<char>(*c >= 'A' && *c <= 'Z' ? *c - 'A' + 'a' : *c));
                 const auto found = g_titleLetters.find(key);
                 const float l = found != g_titleLetters.end() ? found->second.first : kLettersLeft * kTitleWidth;
+                const float r = found != g_titleLetters.end() ? found->second.second : kLettersRight * kTitleWidth;
                 Pcsx2GsScreenItem item = base();
                 item.kind = PCSX2GS_SCREEN_IMAGE;
                 item.text = path;
                 item.fill = faded(rgba(255, 255, 255));
-                const float ppu = kTitlePixelsPerUnit / scale, left = x - l / ppu;
+                const float ppu = kTitlePixelsPerUnit / scale, left = 0.5f * space.area - 0.5f * (l + r) / ppu;
                 item.x = space.x(left);
                 item.x1 = space.x(left + kTitleWidth / ppu);
                 item.y = Space::y(kTitleTop);
@@ -828,7 +831,8 @@ namespace kamite::options_overlay
                     int line = -1;
                     float top = 0.0f, bottom = 0.0f;
                     float knee = 0.0f, outer = 0.0f;
-                    bool side = false; // the right-hand side
+                    float scale = 1.0f; // the label's size (the columns' squeeze); a row taller than its label keeps it
+                    bool side = false;  // the right-hand side
                     float left() const { return std::min(knee, outer); }
                     float right() const { return std::max(knee, outer); }
                 };
@@ -840,6 +844,7 @@ namespace kamite::options_overlay
                     float base[4] = {}, cap[4] = {}, under[4] = {};
                     bool divider[4] = {};
                     float height = 0.0f;
+                    bool several = false; // several functions: on its lines from the bottom (else centred in its row)
                 };
                 const auto shapeOf = [&](const MappingLine &l) {
                     Shape t;
@@ -867,10 +872,9 @@ namespace kamite::options_overlay
                     t.height = std::max(l.block ? kMapBlockRow : kMapRow, -top + kMapRowTop);
                     // One function (no divider: COMBO, UNLEASH / THE GODHAND): centred in its row instead (K); only
                     // labels with several functions sit on their lines from the bottom.
-                    bool several = false;
                     for (int i = 0; i + 1 < t.n; ++i)
-                        several = several || t.divider[i];
-                    if (!several)
+                        t.several = t.several || t.divider[i];
+                    if (!t.several)
                     {
                         const float shift = 0.5f * (-t.height - (t.base[0] - t.cap[0])) - 0.5f * t.base[t.n - 1];
                         for (int i = 0; i < t.n; ++i)
@@ -894,10 +898,18 @@ namespace kamite::options_overlay
                         (l.right ? right : left).push_back(r);
                     }
                 }
+                // Each pair as tall as its taller label (K, Nov 14: a pair shares its top and bottom).
+                const auto pairHeight = [&](int line) {
+                    float h = height(m.lines[line]);
+                    for (const Row &o : left)
+                        if (m.lines[o.line].mirror == line)
+                            h = std::max(h, height(m.lines[o.line]));
+                    return h;
+                };
                 // The right column: stacked evenly over the band (squeezed when they do not fit).
                 float total = 0.0f;
                 for (const Row &r : right)
-                    total += height(m.lines[r.line]);
+                    total += pairHeight(r.line);
                 const float top = kMapTop, span = kMapBottom - top;
                 const float gap = right.size() > 1 ? std::clamp((span - total) / static_cast<float>(right.size() - 1), kMapRowGap, kMapRowGapMax) : 0.0f;
                 const float used = total + gap * static_cast<float>(right.empty() ? 0 : right.size() - 1);
@@ -906,22 +918,26 @@ namespace kamite::options_overlay
                 for (Row &r : right)
                 {
                     r.top = y;
-                    r.bottom = y + height(m.lines[r.line]) * squeeze;
+                    r.scale = squeeze;
+                    r.bottom = y + pairHeight(r.line) * squeeze;
                     y = r.bottom + gap * squeeze;
                 }
-                // The left column: each row level with its mirror (the same rows for every pad); one without a mirror
+                // The left column: each row the same as its mirror's (the same rows for every pad); one without a mirror
                 // (never with the shipped layout) stacked under the one above it.
                 {
-                    float below = kMapTitleClear;
+                    float below = kMapTop;
                     for (Row &r : left)
                     {
                         const MappingLine &l = m.lines[r.line];
-                        const float h = height(l) * squeeze;
-                        r.bottom = below + h;
+                        r.top = below;
+                        r.scale = squeeze;
+                        r.bottom = below + height(l) * squeeze;
                         for (const Row &o : right)
                             if (o.line == l.mirror)
+                            {
+                                r.top = o.top;
                                 r.bottom = o.bottom;
-                        r.top = r.bottom - h;
+                            }
                         below = r.bottom + kMapRowGap * squeeze;
                     }
                 }
@@ -936,7 +952,6 @@ namespace kamite::options_overlay
                     }
                     rowTop[0] = std::max(padB + kMapBlockGap, kMapBlockTop);
                     rowTop[1] = rowTop[0] + rowHeight[0] + kMapBlockRowGap;
-                    helpClear = rowHeight[1] > 0.0f ? rowTop[1] + rowHeight[1] : rowHeight[0] > 0.0f ? rowTop[0] + rowHeight[0] : 0.0f;
                     for (Row &r : block)
                     {
                         const MappingLine &l = m.lines[r.line];
@@ -975,7 +990,6 @@ namespace kamite::options_overlay
                 {
                     text(m.padNote, std::strlen(m.padNote), helpFont, cx, kMapNoteY, kHelpCap, kHelpScaleX, 0.0f, kHelp, 0u, 0.0f,
                          PCSX2GS_ALIGN_CENTRE);
-                    helpClear = std::max(helpClear, kMapNoteY);
                     Pcsx2GsScreenItem &item = items.back();
                     item.shadow = faded(kHelpShadow);
                     item.shadow_x = Space::y(kHelpShadowX);
@@ -1007,7 +1021,7 @@ namespace kamite::options_overlay
                     }
                     stroke(under, r.knee + back, r.bottom, r.outer, r.bottom, kMapLine, tint);
                     const Shape t = shapeOf(l);
-                    const float s = (r.bottom - r.top) / t.height;
+                    const float s = r.scale;
                     const float textX = r.left() + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap;
                     const uint32_t faint = rgba(255, 255, 255, static_cast<uint32_t>(255.0f * alpha * kMapSubAlpha));
                     for (int i = 0; i + 1 < t.n; ++i)
@@ -1044,15 +1058,17 @@ namespace kamite::options_overlay
                         dim = keep * (under ? kMapDrumUnder : kMapDrumDim);
                     }
                     const Shape t = shapeOf(l);
-                    const float s = (r.bottom - r.top) / t.height;
-                    const float lettersTop = r.bottom + (t.base[0] - t.cap[0]) * s, lettersBottom = r.bottom + t.base[t.n - 1] * s;
+                    const float s = r.scale;
+                    // A one-function label centred in a row taller than it (its pair's); several sit on their lines.
+                    const float bottom = r.bottom - (t.several ? 0.0f : 0.5f * std::max(r.bottom - r.top - t.height * s, 0.0f));
+                    const float lettersTop = bottom + (t.base[0] - t.cap[0]) * s, lettersBottom = bottom + t.base[t.n - 1] * s;
                     const float icon = std::min(kMapIcon * s, r.bottom - r.top - 2.0f), mid = 0.5f * (lettersTop + lettersBottom);
                     picture(l.icon, r.left() + 1.0f, mid - 0.5f * icon, r.left() + 1.0f + icon * kLinesToUnits, mid + 0.5f * icon,
                             rgba(255, 255, 255, l.fixed ? static_cast<uint32_t>(255.0f * 0.85f) : 255u));
                     const float x0 = r.left() + 1.0f + kMapIcon * kLinesToUnits + kMapTextGap, room = std::max(r.right() - kMapTextMargin - x0, 8.0f);
                     const uint32_t fill = on ? kLabelOn : l.fixed ? kMapFixedText : kMapText, edge = on ? kLabelOnStroke : kMapStroke;
                     for (int i = 0; i < t.n; ++i)
-                        labelLine(l.text[i], l.inlineIcon, x0, r.bottom + t.base[i] * s, t.cap[i] * s, fill, edge, room);
+                        labelLine(l.text[i], l.inlineIcon, x0, bottom + t.base[i] * s, t.cap[i] * s, fill, edge, room);
                     dim = keep;
                 });
                 if (!drum)
@@ -1102,7 +1118,7 @@ namespace kamite::options_overlay
                     const float scale = 1.0f - kMapDrumShrink * a;
                     const float y = drumMid + kMapDrumPitch * d * (1.0f - 0.06f * a);
                     // Items turning up into the CONTROLS title (the left column's top row) fade under it.
-                    const float underTitle = drumRow.side || drumBlock ? 1.0f : std::clamp((y - kMapTitleClear + 8.0f) / 18.0f, 0.0f, 1.0f);
+                    const float underTitle = std::clamp((y - kMapDrumTopFade) / 18.0f, 0.0f, 1.0f);
                     const float alpha = std::clamp(1.0f - kMapDrumFade * a, 0.0f, 1.0f) * std::clamp((kMapDrumReach - a) / 0.6f, 0.0f, 1.0f) *
                                         underTitle;
                     const float lean = inward * kMapDrumLean * d * d;
@@ -1198,8 +1214,9 @@ namespace kamite::options_overlay
             if (!g_titleDir.empty()) // at the top left, as the original controller page's
             {
                 const std::string path = g_titleDir + "/title_controls.png";
-                b.titleAt(b.add(path.data(), path.size()), "CONTROLS", kMapTitleX, kMapTitleScale);
+                b.titleCentred(b.add(path.data(), path.size()), "CONTROLS", kMapTitleScale);
             }
+            b.helpOnHints = true;
             b.help(view.mapping->notice, view.mapping->noticeIcons);
             const MappingView &m = *view.mapping;
             Hint confirm = view.confirmHint, cancel = view.cancelHint, reset;

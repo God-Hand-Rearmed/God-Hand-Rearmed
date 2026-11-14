@@ -76,8 +76,8 @@ namespace kamite::mapping_page
         }
 
         // The columns, top to bottom, the same for every pad (K, Nov 14: the labels stay put, the lines reach the
-        // buttons): the right as the original's page, the left with Select on top (level with R2: the title sits where
-        // Start's row would be mirrored) and the sticks at the bottom like the right's.
+        // buttons): the right as the original's page, the left with Select on top (level with MENU: the title is
+        // centred) and the sticks at the bottom like the right's.
         constexpr uint8_t kLeft[] = {Select, L2, L1, DPad, L3, LStick};
         constexpr uint8_t kRight[] = {Start, R2, R1, North, East, South, West, R3, RStick};
 
@@ -411,14 +411,14 @@ namespace kamite::mapping_page
         // A Steam pad with no paddles reported: Steam Input has them (K's wording).
         d.view.padNote = setFolder == "steamdeck" && state.paddles == 0u ? kSteamPaddleNote : "";
 
-        // The left column's rows sit level with the right's (the original's L2 / R2, L1 / R1 and stick rows share
-        // their heights; the d-pad sits by the middle face row).
+        // The left column's rows pair with the right's (K, Nov 14: with the title centred, Select by MENU, L2 / R2 and
+        // L1 / R1 as the original's, the d-pad by the middle face row, the stick rows together).
         for (size_t i = 0; i < d.lines.size(); ++i)
         {
             if (d.lines[i].right || d.lines[i].block)
                 continue;
             const uint8_t p = d.places[i];
-            const uint8_t want = p == Select ? uint8_t{R2} : p == L2 ? uint8_t{R1} : p == L1 ? uint8_t{North} : p == L3 ? uint8_t{R3}
+            const uint8_t want = p == Select ? uint8_t{Start} : p == L2 ? uint8_t{R2} : p == L1 ? uint8_t{R1} : p == L3 ? uint8_t{R3}
                                  : p == LStick ? uint8_t{RStick} : p == DPad ? uint8_t{East} : kNone;
             for (size_t j = 0; j < d.lines.size(); ++j)
                 if (d.lines[j].right && !d.lines[j].block && d.places[j] == want)

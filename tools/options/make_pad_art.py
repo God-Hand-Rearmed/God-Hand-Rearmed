@@ -29,35 +29,35 @@ BANDS = 64      # silhouette bands
 # for every pad (mapping_page.cpp kLeft / kRight): only the lines change, bending (via) where they would cross. A stick's click
 # line ends on its cap, its own line on the ring below, so the two never run together. via: a bend the line takes on its
 # way (the left face button's line passes under the bottom one, as the original's square line does; Select's rises
-# over the left shoulders to its row beside the top right's, as the original's Start line does on the right).
+# over the left shoulders and Start's over the right ones, mirrored (K, Nov 14: their rows pair at the top).
 PADS = {
     'xbox': dict(
         points=dict(south=(1128, 535, 42), east=(1238, 432, 42), west=(1018, 432, 42), north=(1130, 330, 42),
                     l1=(255, 205, 0), r1=(1225, 212, 0), l2=(300, 112, 0), r2=(1182, 140, 0),
                     l3=(310, 412, 18), r3=(918, 637, 18), start=(880, 428, 26), select=(565, 430, 26),
                     dpad=(500, 665, 70), lstick=(310, 478, 62), rstick=(918, 703, 62)),
-        via=dict(west=(1095, 612), dpad=(440, 300), select=(400, 40))),
+        via=dict(west=(1095, 612), dpad=(440, 300), select=(400, 40), start=(1048, 40))),
     'playstation': dict(
         points=dict(south=(1265, 563, 48), east=(1390, 440, 48), west=(1140, 440, 48), north=(1268, 318, 48),
                     l1=(250, 140, 0), r1=(1335, 140, 0), l2=(255, 45, 0), r2=(1330, 45, 0),
                     l3=(552, 640, 18), r3=(1027, 640, 18), start=(935, 432, 30), select=(648, 432, 30),
                     dpad=(322, 438, 100), lstick=(552, 706, 62), rstick=(1027, 706, 62)),
-        via=dict(west=(1212, 645), select=(430, -15))),
+        via=dict(west=(1212, 645), select=(430, -15), start=(1153, -15))),
     'nintendo': dict(
         points=dict(south=(1193, 515, 42), east=(1313, 422, 42), west=(1067, 422, 42), north=(1190, 328, 42),
                     l1=(300, 110, 0), r1=(1255, 120, 0), l2=(318, 52, 0), r2=(1238, 64, 0),
                     l3=(530, 615, 16), r3=(995, 615, 16), start=(865, 415, 25), select=(670, 415, 25),
                     dpad=(338, 418, 85), lstick=(530, 672, 55), rstick=(995, 672, 55)),
-        via=dict(west=(1150, 592), select=(430, 0))),
+        via=dict(west=(1150, 592), select=(430, 0), start=(1106, 0))),
     # K's render of the new Steam Controller (Nov 14), for the STEAM set (Steam Controller and Steam Deck): d-pad left,
     # View (Select) / Menu (Start) above the sticks, the trackpads under them (the sticks' own lines end on the rings'
-    # visible bottoms). Start bends over the right shoulders (its line would cross R1 / R2), like Select on the left.
+    # visible bottoms).
     'steam': dict(
         points=dict(south=(1172, 435, 42), east=(1260, 362, 42), west=(1093, 365, 42), north=(1178, 290, 42),
                     l1=(215, 145, 0), r1=(1203, 145, 0), l2=(265, 40, 0), r2=(1153, 40, 0),
                     l3=(480, 470, 18), r3=(928, 470, 18), start=(978, 272, 26), select=(428, 272, 26),
                     dpad=(231, 352, 95), lstick=(478, 540, 60), rstick=(928, 540, 60)),
-        via=dict(west=(1135, 510), select=(410, -10), start=(1000, -20))),
+        via=dict(west=(1135, 510), select=(410, -10), start=(1008, -10))),
 }
 
 # The flames (K, Nov 14, from his upscale of the original): a fire behind the pad, seen past its outline: a thin band
