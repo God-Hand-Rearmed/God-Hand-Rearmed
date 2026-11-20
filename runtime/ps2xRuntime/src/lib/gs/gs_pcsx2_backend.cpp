@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #if defined(_WIN32) && __has_include("pcsx2gs_api.h")
@@ -23,13 +24,42 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#elif defined(__linux__) && __has_include("pcsx2gs_api.h")
+#include "pcsx2gs_api.h"
+#define PS2X_HAS_PCSX2_GS 1
+#include <dlfcn.h>
+// The calling convention of the library's functions is the platform's default (__cdecl is Windows' name for it).
+#ifndef __cdecl
+#define __cdecl
+#endif
 #endif
 
 #if PS2X_HAS_PCSX2_GS
 static_assert(sizeof(GSVSyncRegs) == sizeof(Pcsx2GsPrivRegs), "GSVSyncRegs must match Pcsx2GsPrivRegs");
 
+#if !defined(_WIN32)
+// The game window is raylib's GLFW window, built into raylib (no GLFW headers on the include path): the few functions
+// used here, declared as GLFW does. glfwGetX11Window is weak: a GLFW built without X11 leaves it null.
+extern "C"
+{
+    struct GLFWwindow;
+    void glfwInitHint(int hint, int value);
+    int glfwGetPlatform(void);
+    void glfwGetFramebufferSize(GLFWwindow *window, int *width, int *height);
+    unsigned long glfwGetX11Window(GLFWwindow *window) __attribute__((weak));
+    bool IsWindowReady(void); // raylib
+}
+#endif
+
 namespace
 {
+#if defined(_WIN32)
+    using NativeWindow = HWND;
+#else
+    // An X11 window id, kept in a pointer as PCSX2's WindowInfo and Pcsx2GsOpenParams::hwnd do (0 = none).
+    using NativeWindow = void *;
+#endif
+
     const Pcsx2GsApi *g_api = nullptr;
     void(__cdecl *g_setAspect)(uint32_t) = nullptr; // pcsx2gs_set_aspect, when the DLL has it
     void(__cdecl *g_setOption)(const char *, const char *) = nullptr; // pcsx2gs_set_option, when the DLL has it
@@ -38,8 +68,8 @@ namespace
     void(__cdecl *g_setScreen)(const Pcsx2GsScreenItem *, uint32_t, const char *, uint32_t) = nullptr; // pcsx2gs_set_screen
     int(__cdecl *g_setApi)(const char *, void *, uint32_t, uint32_t) = nullptr; // pcsx2gs_set_api, when the DLL has it
     const std::chrono::steady_clock::time_point g_processStart = std::chrono::steady_clock::now();
-    HWND g_parent = nullptr;
-    HWND g_child = nullptr;
+    NativeWindow g_parent = nullptr;
+    NativeWindow g_child = nullptr;
     std::atomic<uint64_t> g_presents{0u};
     std::atomic<uint32_t> g_clientWidth{0u};
     std::atomic<float> g_pendingScale{0.0f}; // SetScale: > 0 until the GS thread hands it over
@@ -58,14 +88,32 @@ namespace
     std::atomic<int> g_apiResult{1};
     std::mutex g_apiMutex;
     std::string g_apiWanted; // guarded by g_apiMutex
-    HWND g_newChild = nullptr; // made in Window, handed over by the steps' order (acquire / release)
+    NativeWindow g_newChild = nullptr; // made in Window, handed over by the steps' order (acquire / release)
     bool g_hostUiVisible = false; // SetHostUiVisible (main thread)
 
     std::filesystem::path exeDirectory()
     {
+#if defined(_WIN32)
         wchar_t path[MAX_PATH] = {};
         const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
         return length ? std::filesystem::path(path).parent_path() : std::filesystem::current_path();
+#else
+        std::error_code ec;
+        const std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
+        return ec ? std::filesystem::current_path() : path.parent_path();
+#endif
+    }
+
+    // KAMITE_HOME: the writable play folder when set (the executable's folder may then be read-only, as in an
+    // AppImage); empty when not set.
+    std::filesystem::path playFolder()
+    {
+#if defined(_WIN32)
+        const wchar_t *value = _wgetenv(L"KAMITE_HOME");
+#else
+        const char *value = std::getenv("KAMITE_HOME");
+#endif
+        return (value && *value) ? std::filesystem::path(value) : std::filesystem::path();
     }
 
     std::string utf8(const std::filesystem::path &path)
@@ -80,6 +128,7 @@ namespace
         return (value && *value) ? std::atoi(value) : fallback;
     }
 
+#if defined(_WIN32)
     // The child window only shows the GS output: mouse input goes through to the game window (HTTRANSPARENT works
     // because both belong to the main thread, which also pumps this window's messages).
     LRESULT CALLBACK ChildProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -94,6 +143,86 @@ namespace
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
     }
+#else
+    // Xlib, opened at run time (GLFW opens it the same way, so GHR has no link to libX11): the calls the child window
+    // needs, with Xlib's own types reduced to what they are (a Display pointer, XIDs as unsigned long).
+    struct X11
+    {
+        using Display = struct _XDisplay;
+        using XID = unsigned long;
+        int (*XInitThreads)() = nullptr;
+        Display *(*XOpenDisplay)(const char *) = nullptr;
+        XID (*XCreateSimpleWindow)(Display *, XID, int, int, unsigned, unsigned, unsigned, unsigned long,
+                                   unsigned long) = nullptr;
+        int (*XSetWindowBackgroundPixmap)(Display *, XID, XID) = nullptr;
+        int (*XMapWindow)(Display *, XID) = nullptr;
+        int (*XUnmapWindow)(Display *, XID) = nullptr;
+        int (*XResizeWindow)(Display *, XID, unsigned, unsigned) = nullptr;
+        int (*XLowerWindow)(Display *, XID) = nullptr;
+        int (*XDestroyWindow)(Display *, XID) = nullptr;
+        int (*XSync)(Display *, int) = nullptr;
+        // libXext's SHAPE extension, when there: an empty input region, so the pointer goes through the child to the
+        // game window as if the child were not there (Windows' HTTRANSPARENT). Without it, pointer events still reach
+        // GLFW (the child selects none, so X hands them to the parent), but GLFW sees the pointer leave its window.
+        void (*XShapeCombineRectangles)(Display *, XID, int, int, int, void *, int, int, int) = nullptr;
+        Display *window = nullptr; // the main thread's connection: makes, sizes, shows and drops the child windows
+        Display *present = nullptr; // the GS thread's: PCSX2's Vulkan surface (pcsx2gs_set_display)
+
+        XID id(NativeWindow w) const { return static_cast<XID>(reinterpret_cast<uintptr_t>(w)); }
+
+        // Main thread, once: false (and a log line) when Xlib or the display is missing.
+        bool Open()
+        {
+            static const bool ok = [this]
+            {
+                void *lib = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+                if (!lib)
+                {
+                    std::fprintf(stderr, "[gs] PCSX2 GS: libX11.so.6 did not load (%s)\n", dlerror());
+                    return false;
+                }
+                bool all = true;
+                auto load = [&](auto &fn, const char *name)
+                {
+                    fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(dlsym(lib, name));
+                    all = all && fn != nullptr;
+                };
+                load(XInitThreads, "XInitThreads");
+                load(XOpenDisplay, "XOpenDisplay");
+                load(XCreateSimpleWindow, "XCreateSimpleWindow");
+                load(XSetWindowBackgroundPixmap, "XSetWindowBackgroundPixmap");
+                load(XMapWindow, "XMapWindow");
+                load(XUnmapWindow, "XUnmapWindow");
+                load(XResizeWindow, "XResizeWindow");
+                load(XLowerWindow, "XLowerWindow");
+                load(XDestroyWindow, "XDestroyWindow");
+                load(XSync, "XSync");
+                if (!all)
+                {
+                    std::fprintf(stderr, "[gs] PCSX2 GS: libX11.so.6 lacks a function it needs\n");
+                    return false;
+                }
+                if (void *ext = dlopen("libXext.so.6", RTLD_NOW | RTLD_LOCAL))
+                    XShapeCombineRectangles = reinterpret_cast<decltype(XShapeCombineRectangles)>(
+                        dlsym(ext, "XShapeCombineRectangles"));
+                // GLFW has already made Xlib thread-safe (its X11 start calls XInitThreads); asking again is harmless.
+                XInitThreads();
+                // Connections of their own (GLFW's stays GLFW's): the X server owns the windows, so a window made on
+                // one connection can be presented into from another. $DISPLAY, as GLFW opens it.
+                window = XOpenDisplay(nullptr);
+                present = XOpenDisplay(nullptr);
+                if (!window || !present)
+                {
+                    std::fprintf(stderr, "[gs] PCSX2 GS: the X11 display did not open (DISPLAY=%s)\n",
+                                 std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "");
+                    return false;
+                }
+                return true;
+            }();
+            return ok;
+        }
+    } g_x11;
+#endif
 
     // PS2X_GIF_DUMP=<start seconds>:<fields>:<file>: the GIF stream sent to PCSX2's GS, from the first vsync after
     // <start seconds> of run time, for <fields> fields. Records (little endian): 'M' u32 size + GS local memory at the
@@ -222,16 +351,76 @@ void GSPcsx2Backend::WriteFrameTime(std::chrono::steady_clock::time_point presen
     m_gifBytesAtPresent = m_gifBytes;
 }
 
+#if !defined(_WIN32)
+namespace
+{
+    void(__cdecl *g_setDisplay)(void *) = nullptr; // pcsx2gs_set_display (Linux)
+
+    // PS2X_GS_RENDERER asks for PCSX2's GS (the default), whether or not the library is there.
+    bool rendererWanted()
+    {
+        const char *value = std::getenv("PS2X_GS_RENDERER");
+        std::string name = (value && *value) ? value : "pcsx2";
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return name == "pcsx2";
+    }
+
+    bool hasX11Display()
+    {
+        const char *display = std::getenv("DISPLAY");
+        return display && *display;
+    }
+
+    constexpr int kGlfwPlatform = 0x00050003;    // GLFW_PLATFORM
+    constexpr int kGlfwPlatformX11 = 0x00060004; // GLFW_PLATFORM_X11
+}
+
+void GSPcsx2Backend::BeforeHostWindow()
+{
+    // The GS presents into an X11 child window of the game window, so GLFW must be on X11. Without $DISPLAY (a
+    // Wayland session with no Xwayland) GLFW keeps its own choice and Requested() turns the PCSX2 GS down.
+    if (rendererWanted() && hasX11Display())
+        glfwInitHint(kGlfwPlatform, kGlfwPlatformX11);
+}
+#else
+void GSPcsx2Backend::BeforeHostWindow() {}
+#endif
+
 bool GSPcsx2Backend::Requested()
 {
     static const bool requested = []
     {
+#if defined(_WIN32)
         // The default since PROGRESS §85; PS2X_GS_RENDERER=nativo (config.ini Renderizador=nativo) keeps the port's GS.
         const char *value = std::getenv("PS2X_GS_RENDERER");
         std::string name = (value && *value) ? value : "pcsx2";
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (name != "pcsx2")
             return false;
+#else
+        if (!rendererWanted())
+            return false;
+        // Linux: the GS needs an X11 window. A game window already made on another platform (Wayland) has none, and
+        // without $DISPLAY none can be made: the built-in GS then (gs_threaded_backend.cpp MakeDefault).
+        if (!hasX11Display() || (IsWindowReady() && glfwGetPlatform() != kGlfwPlatformX11) || !glfwGetX11Window)
+        {
+            std::fprintf(stderr, "[gs] PS2X_GS_RENDERER=pcsx2 but the game window is not an X11 one (DISPLAY=%s); "
+                                 "using the built-in GS\n", std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "");
+            return false;
+        }
+        const std::filesystem::path library = exeDirectory() / "libpcsx2gs.so";
+        void *module = dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!module)
+        {
+            std::fprintf(stderr, "[gs] PS2X_GS_RENDERER=pcsx2 but %s did not load (%s); using the built-in GS\n",
+                         library.c_str(), dlerror());
+            return false;
+        }
+        // dlsym answers what GetProcAddress does on Windows; the code below is the same on both.
+        const auto GetProcAddress = [](void *handle, const char *name) { return dlsym(handle, name); };
+        g_setDisplay = reinterpret_cast<void(__cdecl *)(void *)>(GetProcAddress(module, "pcsx2gs_set_display"));
+#endif
+#if defined(_WIN32)
         const std::filesystem::path dll = exeDirectory() / "pcsx2gs.dll";
         HMODULE module = LoadLibraryW(dll.c_str());
         if (!module)
@@ -240,6 +429,7 @@ bool GSPcsx2Backend::Requested()
                          dll.string().c_str(), GetLastError());
             return false;
         }
+#endif
         const auto getApi = reinterpret_cast<Pcsx2GsGetApiFn>(GetProcAddress(module, "pcsx2gs_get_api"));
         g_api = getApi ? getApi(PCSX2GS_API_VERSION) : nullptr;
         g_setAspect = reinterpret_cast<void(__cdecl *)(uint32_t)>(GetProcAddress(module, "pcsx2gs_set_aspect"));
@@ -256,6 +446,16 @@ bool GSPcsx2Backend::Requested()
                          PCSX2GS_API_VERSION);
             return false;
         }
+#if !defined(_WIN32)
+        if (!g_setDisplay)
+        {
+            g_api = nullptr;
+            std::fprintf(stderr, "[gs] libpcsx2gs.so has no pcsx2gs_set_display; using the built-in GS\n");
+            return false;
+        }
+        std::fprintf(stderr, "[gs] renderer: PCSX2 GS (libpcsx2gs.so, Vulkan on X11)\n");
+        return true;
+#endif
         std::fprintf(stderr, "[gs] renderer: PCSX2 GS (pcsx2gs.dll)\n");
         return true;
     }();
@@ -264,6 +464,43 @@ bool GSPcsx2Backend::Requested()
 
 namespace
 {
+#if !defined(_WIN32)
+    // The game window's size in pixels (its framebuffer: what the child covers).
+    void parentSize(uint32_t &width, uint32_t &height)
+    {
+        int w = 0, h = 0;
+        glfwGetFramebufferSize(static_cast<GLFWwindow *>(g_parent), &w, &h);
+        width = static_cast<uint32_t>(std::max(1, w));
+        height = static_cast<uint32_t>(std::max(1, h));
+    }
+
+    // Main thread: an X11 child window of the game window the GS presents into, the size of the parent. It selects no
+    // events, so input goes to the game window; no background, so the X server never clears it over the picture.
+    NativeWindow makeChild(uint32_t &width, uint32_t &height)
+    {
+        parentSize(width, height);
+        const unsigned long parent = glfwGetX11Window(static_cast<GLFWwindow *>(g_parent));
+        if (!parent)
+        {
+            std::fprintf(stderr, "[gs] PCSX2 GS: the game window has no X11 window\n");
+            return nullptr;
+        }
+        const unsigned long child = g_x11.XCreateSimpleWindow(g_x11.window, parent, 0, 0, width, height, 0, 0, 0);
+        if (!child)
+        {
+            std::fprintf(stderr, "[gs] PCSX2 GS: child window creation failed\n");
+            return nullptr;
+        }
+        g_x11.XSetWindowBackgroundPixmap(g_x11.window, child, 0ul); // None
+        if (g_x11.XShapeCombineRectangles)
+            g_x11.XShapeCombineRectangles(g_x11.window, child, 2 /* ShapeInput */, 0, 0, nullptr, 0, 0 /* ShapeSet */,
+                                          0 /* Unsorted */);
+        g_x11.XMapWindow(g_x11.window, child);
+        // Made on the server before the GS thread makes a Vulkan surface for it on the other connection.
+        g_x11.XSync(g_x11.window, 0);
+        return reinterpret_cast<NativeWindow>(static_cast<uintptr_t>(child));
+    }
+#else
     // Main thread: a child window the GS presents into, the size of the parent's client area.
     HWND makeChild(uint32_t &width, uint32_t &height)
     {
@@ -287,15 +524,28 @@ namespace
             std::fprintf(stderr, "[gs] PCSX2 GS: child window creation failed (error %lu)\n", GetLastError());
         return child;
     }
+#endif
 }
 
 void GSPcsx2Backend::AttachHostWindow(void *parentHwnd)
 {
     if (!Requested() || !parentHwnd || g_child)
         return;
+#if defined(_WIN32)
     g_parent = static_cast<HWND>(parentHwnd);
     // The game window must not paint over its child (GLFW already sets WS_CLIPCHILDREN; made sure here).
     SetWindowLongPtrW(g_parent, GWL_STYLE, GetWindowLongPtrW(g_parent, GWL_STYLE) | WS_CLIPCHILDREN);
+#else
+    // The GLFW window (raylib's GetWindowHandle on Linux). Its platform was checked by Requested() only if it already
+    // existed then; checked here again.
+    if (glfwGetPlatform() != kGlfwPlatformX11 || !g_x11.Open())
+    {
+        std::fprintf(stderr, "[gs] PCSX2 GS: the game window is not an X11 window; nothing will be drawn\n");
+        return;
+    }
+    g_parent = parentHwnd;
+    g_setDisplay(g_x11.present);
+#endif
     uint32_t width = 0u, height = 0u;
     g_child = makeChild(width, height);
     if (!g_child)
@@ -316,9 +566,16 @@ void GSPcsx2Backend::HostTick()
         g_newChild = makeChild(width, height);
         if (g_newChild)
         {
+#if defined(_WIN32)
             SetWindowPos(g_newChild, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             if (g_hostUiVisible)
                 ShowWindow(g_newChild, SW_HIDE);
+#else
+            g_x11.XLowerWindow(g_x11.window, g_x11.id(g_newChild));
+            if (g_hostUiVisible)
+                g_x11.XUnmapWindow(g_x11.window, g_x11.id(g_newChild));
+            g_x11.XSync(g_x11.window, 0);
+#endif
             g_apiStep.store(ApiStep::Reopen, std::memory_order_release);
         }
         else
@@ -329,17 +586,37 @@ void GSPcsx2Backend::HostTick()
     }
     else if (g_apiStep.load(std::memory_order_acquire) == ApiStep::Swap)
     {
+#if !defined(_WIN32)
+        const auto DestroyWindow = [](NativeWindow window)
+        {
+            g_x11.XDestroyWindow(g_x11.window, g_x11.id(window));
+            g_x11.XSync(g_x11.window, 0);
+        };
+#endif
         if (g_newChild && g_apiResult.load(std::memory_order_relaxed) == 2)
             DestroyWindow(g_newChild); // that API already ran: the GS stays in its window
         else if (g_newChild)
         {
-            HWND old = g_child;
+            NativeWindow old = g_child;
             g_child = g_newChild;
             DestroyWindow(old);
         }
         g_newChild = nullptr;
         g_apiStep.store(ApiStep::Idle, std::memory_order_release);
     }
+#if !defined(_WIN32)
+    uint32_t width = 0u, height = 0u;
+    parentSize(width, height);
+    if (width == g_clientWidth.load(std::memory_order_relaxed) && height == g_clientHeight.load(std::memory_order_relaxed))
+        return;
+    g_x11.XResizeWindow(g_x11.window, g_x11.id(g_child), width, height);
+    if (g_newChild)
+        g_x11.XResizeWindow(g_x11.window, g_x11.id(g_newChild), width, height);
+    // On the server before the GS thread resizes its swap chain to the new size.
+    g_x11.XSync(g_x11.window, 0);
+    g_clientWidth.store(width, std::memory_order_relaxed);
+    g_clientHeight.store(height, std::memory_order_relaxed);
+#else
     RECT rect{};
     GetClientRect(g_parent, &rect);
     const uint32_t width = static_cast<uint32_t>(std::max<LONG>(1, rect.right - rect.left));
@@ -351,6 +628,7 @@ void GSPcsx2Backend::HostTick()
         SetWindowPos(g_newChild, nullptr, 0, 0, static_cast<int>(width), static_cast<int>(height), SWP_NOZORDER | SWP_NOACTIVATE);
     g_clientWidth.store(width, std::memory_order_relaxed);
     g_clientHeight.store(height, std::memory_order_relaxed);
+#endif
 }
 
 bool GSPcsx2Backend::SetGraphicsApi(const char *api)
@@ -448,7 +726,15 @@ void GSPcsx2Backend::SetHostUiVisible(bool visible)
     if (!g_child || g_hostUiVisible == visible)
         return;
     g_hostUiVisible = visible;
+#if defined(_WIN32)
     ShowWindow(g_child, visible ? SW_HIDE : SW_SHOWNA);
+#else
+    if (visible)
+        g_x11.XUnmapWindow(g_x11.window, g_x11.id(g_child));
+    else
+        g_x11.XMapWindow(g_x11.window, g_x11.id(g_child));
+    g_x11.XSync(g_x11.window, 0);
+#endif
 }
 
 bool GSPcsx2Backend::HostUiVisible()
@@ -474,7 +760,10 @@ bool GSPcsx2Backend::EnsureOpen()
         return false;
     const std::filesystem::path dir = exeDirectory();
     const std::string resources = utf8(dir / "resources");
-    const std::filesystem::path cacheDir = dir / "shadercache_pcsx2";
+    // The shader cache is written as the game runs: in the play folder (KAMITE_HOME) when there is one, else next to
+    // the executable. The resources are always read from the executable's folder.
+    const std::filesystem::path home = playFolder();
+    const std::filesystem::path cacheDir = (home.empty() ? dir : home) / "shadercache_pcsx2";
     std::error_code ec;
     std::filesystem::create_directories(cacheDir, ec);
     const std::string cache = utf8(cacheDir);
@@ -779,6 +1068,7 @@ void ps2x::gs::setAspect(Aspect) {}
 void ps2xRequestGifDump(uint32_t, const char *) {}
 
 bool GSPcsx2Backend::Requested() { return false; }
+void GSPcsx2Backend::BeforeHostWindow() {}
 void GSPcsx2Backend::AttachHostWindow(void *) {}
 void GSPcsx2Backend::HostTick() {}
 bool GSPcsx2Backend::Active() { return false; }

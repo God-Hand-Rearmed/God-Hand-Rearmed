@@ -56,9 +56,9 @@ endif()
 add_subdirectory(runtime EXCLUDE_FROM_ALL)
 add_subdirectory(src)
 
-# The unit tests (tests/unit): the pure logic of the operating-system layer, run with ctest. They also build on their
-# own without the game code (tests/unit/CMakeLists.txt says how).
-option(KAMITE_BUILD_TESTS "Build the unit tests (tests/unit)" OFF)
+# The tests, run with ctest: tests/unit (the operating-system layer's pure logic; also builds on its own, see
+# tests/unit/CMakeLists.txt) and, further down, the PCSX2 renderer's on Linux.
+option(KAMITE_BUILD_TESTS "Build and register the tests (ctest)" OFF)
 if(KAMITE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests/unit)
@@ -69,7 +69,9 @@ endif()
 # HostStubs.cpp). The runtime falls back to its own GS when the DLL is missing (gs_pcsx2_backend.cpp,
 # GSPcsx2Backend::Requested), and -DKAMITE_PCSX2_GS=OFF builds without it.
 option(KAMITE_PCSX2_GS "Build PCSX2's GS (pcsx2gs.dll)" ON)
-if(KAMITE_PCSX2_GS AND WIN32)
+# Linux: libpcsx2gs.so with the Vulkan renderer only, presenting into an X11 child window (Xwayland under Wayland,
+# gamescope's on the Steam Deck); libshaderc_shared.so.1 and resources/ next to GHR, as on Windows.
+if(KAMITE_PCSX2_GS AND (WIN32 OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)))
     if(NOT EXISTS "${CMAKE_SOURCE_DIR}/thirdparty/pcsx2-gs/CMakeLists.txt")
         message(FATAL_ERROR "KAMITE_PCSX2_GS=ON needs thirdparty/pcsx2-gs (copy it from the Urban Reign port)")
     endif()
@@ -79,6 +81,35 @@ if(KAMITE_PCSX2_GS AND WIN32)
         target_link_libraries(kamite PRIVATE pcsx2gs_api) # the F2 menu's UI table (src/kamite/camera.cpp)
     endif()
     target_link_libraries(ps2_runtime PRIVATE pcsx2gs_api)
+endif()
+
+# Tests registered with CTest (ctest --test-dir <build dir>). pcsx2_gs_smoke: libpcsx2gs.so rendering and presenting
+# on an X11 window (thirdparty/pcsx2-gs/test/SmokeTest.cpp, run_smoke.sh: Xvfb when there is no display; the Vulkan
+# driver comes from the environment, e.g. Mesa's lavapipe through VK_DRIVER_FILES).
+if(KAMITE_BUILD_TESTS)
+    if(TARGET pcsx2_gs_smoke)
+        add_custom_target(kamite_test_programs ALL)
+        add_dependencies(kamite_test_programs pcsx2_gs_smoke)
+        add_test(NAME pcsx2_gs_smoke
+            COMMAND "${CMAKE_SOURCE_DIR}/thirdparty/pcsx2-gs/test/run_smoke.sh" "$<TARGET_FILE:pcsx2_gs_smoke>" 30)
+        set_tests_properties(pcsx2_gs_smoke PROPERTIES TIMEOUT 300)
+
+        # gs_pcsx2_backend_test: the runtime's side (gs_pcsx2_backend.cpp) with a raylib game window and no disc: the
+        # library found next to the executable, the X11 child window, resizes, hiding, the API switch, KAMITE_HOME.
+        add_executable(gs_pcsx2_backend_test
+            runtime/ps2xRuntime/test/gs_pcsx2_backend_test.cpp runtime/ps2xRuntime/src/lib/gs/gs_pcsx2_backend.cpp)
+        target_include_directories(gs_pcsx2_backend_test PRIVATE runtime/ps2xRuntime/include)
+        find_package(X11 REQUIRED)
+        target_link_libraries(gs_pcsx2_backend_test PRIVATE pcsx2gs_api raylib X11::X11 ${CMAKE_DL_LIBS})
+        set_target_properties(gs_pcsx2_backend_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+        add_dependencies(gs_pcsx2_backend_test pcsx2gs)
+        add_dependencies(kamite_test_programs gs_pcsx2_backend_test)
+        add_test(NAME gs_pcsx2_backend_test
+            COMMAND "${CMAKE_SOURCE_DIR}/thirdparty/pcsx2-gs/test/run_smoke.sh" "$<TARGET_FILE:gs_pcsx2_backend_test>" 40)
+        set_tests_properties(gs_pcsx2_backend_test PROPERTIES TIMEOUT 300)
+        add_test(NAME gs_pcsx2_backend_no_x11
+            COMMAND "${CMAKE_COMMAND}" -E env --unset=DISPLAY "$<TARGET_FILE:gs_pcsx2_backend_test>" --no-x11)
+    endif()
 endif()
 
 # KAMITE_LTO: also /GL for ps2_iop and the port sources (linked with /LTCG). ps2_runtime always gets /GL in

@@ -1211,6 +1211,9 @@ void ps2_host_display::openHostWindow(const char *title)
     if (!IsWindowReady())
     {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (ps2_host_display::vsyncEnabled() ? FLAG_VSYNC_HINT : 0u));
+#if !defined(_WIN32)
+        GSPcsx2Backend::BeforeHostWindow(); // Linux: GLFW on X11 for PCSX2's GS (its child window is an X11 one)
+#endif
 #if defined(__linux__) && !defined(__ANDROID__)
         // raylib 5.5's InitWindow logs "Failed to initialize GLFW" and goes on regardless: rlglInit then calls GL
         // through null pointers and the process dies inside InitWindow. GLFW is started here first (raylib's own

@@ -15,9 +15,14 @@
 class GSPcsx2Backend final : public GSRasterBackend
 {
 public:
-    // Main thread: true when PS2X_GS_RENDERER asks for it and pcsx2gs.dll loads.
+    // Main thread: true when PS2X_GS_RENDERER asks for it and pcsx2gs.dll loads (libpcsx2gs.so on Linux, where an
+    // X11 display must also be there: the GS presents into an X11 window).
     static bool Requested();
-    // Main thread, after the game window exists: creates the child window the GS renders into.
+    // Main thread, before the game window is made: on Linux, makes GLFW use X11 (Xwayland under a Wayland session)
+    // when the PCSX2 GS is wanted and an X11 display exists. Nothing elsewhere.
+    static void BeforeHostWindow();
+    // Main thread, after the game window exists: creates the child window the GS renders into. parentHwnd is what
+    // raylib's GetWindowHandle returns: an HWND on Windows, the GLFWwindow on Linux.
     static void AttachHostWindow(void *parentHwnd);
     // Main thread, once per host frame: keeps the child window over the parent's client area.
     static void HostTick();

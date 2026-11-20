@@ -1,0 +1,8 @@
+/* libpcsx2gs.so's exports on Linux: the C interface (include/pcsx2gs_api.h, compat/Bridge.cpp PCSX2GS_EXPORT) and
+   nothing else, not even what static archives built with default visibility bring (the portable build's libc++). */
+{
+    global:
+        pcsx2gs_*;
+    local:
+        *;
+};

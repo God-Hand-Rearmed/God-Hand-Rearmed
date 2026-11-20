@@ -1,7 +1,9 @@
 // Phase 1 test (docs/GS_PCSX2.md): open PCSX2's GS with the DX11 renderer on a window, send a GIF packet (a blue
 // background and two sprites) and present it for a few seconds.
 //   pcsx2_gs_test.exe [scale] [seconds]
+// On Linux the renderer is Vulkan and the window an X11 one (Xlib); the shaders come from resources/ next to the test.
 #include "GS/GS.h"
+#include "common/Console.h"
 #include "pcsx2gs_host.h"
 
 #include <chrono>
@@ -11,15 +13,21 @@
 #include <filesystem>
 #include <vector>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <DbgHelp.h>
 #pragma comment(lib, "dbghelp.lib")
+#else
+#include <X11/Xlib.h>
+#include <unistd.h>
+#endif
 
 extern Pcsx2Config EmuConfig;
 
 namespace
 {
+#ifdef _WIN32
     LONG WINAPI CrashFilter(EXCEPTION_POINTERS *info)
     {
         HANDLE process = GetCurrentProcess();
@@ -54,8 +62,10 @@ namespace
         return EXCEPTION_EXECUTE_HANDLER;
     }
 
+#endif
     constexpr int kWidth = 1280;
     constexpr int kHeight = 896;
+#ifdef _WIN32
 
     LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
@@ -81,6 +91,7 @@ namespace
                                   rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, wc.hInstance, nullptr);
         return hwnd;
     }
+#endif
 
     // A+D packed GIF data.
     struct Packet
@@ -123,6 +134,7 @@ int main(int argc, char *argv[])
 {
     const int scale = argc > 1 ? std::atoi(argv[1]) : 2;
     const int seconds = argc > 2 ? std::atoi(argv[2]) : 3;
+#ifdef _WIN32
     SetUnhandledExceptionFilter(CrashFilter);
     HWND hwnd = CreateTestWindow();
     if (!hwnd)
@@ -137,6 +149,34 @@ int main(int argc, char *argv[])
     const std::filesystem::path exeDir = std::filesystem::current_path();
     pcsx2gs::SetFolders("H:/JOGOS/pcsx2-ref/bin/resources", (exeDir / "gs_cache").string());
     std::filesystem::create_directories(exeDir / "gs_cache");
+    constexpr GSRendererType kRenderer = GSRendererType::DX11;
+#else
+    Log::SetConsoleOutputLevel(LOGLEVEL_INFO); // PCSX2's own log (the device, shader compile errors) on stdout
+    Display *display = XOpenDisplay(nullptr);
+    if (!display)
+    {
+        std::fprintf(stderr, "no X11 display (DISPLAY=%s)\n", std::getenv("DISPLAY") ? std::getenv("DISPLAY") : "");
+        return 1;
+    }
+    const Window window = XCreateSimpleWindow(display, DefaultRootWindow(display), 0, 0, kWidth, kHeight, 0, 0, 0);
+    XStoreName(display, window, "pcsx2_gs_test");
+    XMapWindow(display, window);
+    XSync(display, False);
+
+    WindowInfo wi;
+    wi.type = WindowInfo::Type::X11;
+    wi.display_connection = display;
+    wi.window_handle = reinterpret_cast<void *>(window);
+    wi.surface_width = kWidth;
+    wi.surface_height = kHeight;
+    pcsx2gs::SetRenderWindow(wi);
+    // The shaders next to the test (the build copies resources/ there); the cache in the working folder.
+    const std::filesystem::path exeDir = std::filesystem::read_symlink("/proc/self/exe").parent_path();
+    const std::filesystem::path cacheDir = std::filesystem::current_path() / "gs_cache";
+    pcsx2gs::SetFolders((exeDir / "resources").string(), cacheDir.string());
+    std::filesystem::create_directories(cacheDir);
+    constexpr GSRendererType kRenderer = GSRendererType::VK;
+#endif
 
     // Privileged registers, PS2 layout. Urban Reign's 480p display: PMODE circuit 1, SMODE1 CMOD 0 / LC 32 (480p),
     // DISPLAY1 as the game sets it, DISPFB1 = frame buffer 0, 640 wide, PSMCT32.
@@ -149,10 +189,10 @@ int main(int argc, char *argv[])
     reg(0x0080, 0x1BF4FF00834138ull); // DISPLAY1
 
     Pcsx2Config::GSOptions options;
-    options.Renderer = GSRendererType::DX11;
+    options.Renderer = kRenderer;
     options.UpscaleMultiplier = static_cast<float>(scale);
     EmuConfig.GS = options;
-    if (!GSopen(options, GSRendererType::DX11, regs, GSVSyncMode::FIFO, false))
+    if (!GSopen(options, kRenderer, regs, GSVSyncMode::FIFO, false))
     {
         std::fprintf(stderr, "GSopen failed\n");
         return 2;
@@ -176,6 +216,7 @@ int main(int argc, char *argv[])
     bool running = true;
     while (running && std::chrono::steady_clock::now() < end)
     {
+#ifdef _WIN32
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
@@ -184,6 +225,13 @@ int main(int argc, char *argv[])
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+#else
+        while (XPending(display))
+        {
+            XEvent event;
+            XNextEvent(display, &event);
+        }
+#endif
         GSgifTransfer(reinterpret_cast<const u8 *>(packet.data()), static_cast<u32>(packet.size() / 2u));
         GSvsync(field, true);
         field ^= 1u;
@@ -192,5 +240,9 @@ int main(int argc, char *argv[])
     GSgetInternalResolution(&w, &h);
     std::fprintf(stderr, "internal resolution %dx%d\n", w, h);
     GSclose();
+#ifndef _WIN32
+    XDestroyWindow(display, window);
+    XCloseDisplay(display);
+#endif
     return 0;
 }

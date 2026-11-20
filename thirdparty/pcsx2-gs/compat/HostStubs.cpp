@@ -43,8 +43,13 @@
 #include <mutex>
 #include <string>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace
 {
@@ -483,8 +488,16 @@ const char *ReportInterlaceMode()
 // The software renderer's JIT code lives in PCSX2's code reservation; here only that part (64 MB) exists.
 u8 *SysMemory::GetCodePtr(size_t offset)
 {
+#ifdef _WIN32
     static u8 *base = static_cast<u8 *>(
         VirtualAlloc(nullptr, HostMemoryMap::SWrecSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+#else
+    static u8 *base = [] {
+        void *memory = mmap(nullptr, HostMemoryMap::SWrecSize, PROT_READ | PROT_WRITE | PROT_EXEC,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        return memory == MAP_FAILED ? nullptr : static_cast<u8 *>(memory);
+    }();
+#endif
     if (!base || offset < HostMemoryMap::SWrecOffset || offset > HostMemoryMap::SWrecOffset + HostMemoryMap::SWrecSize)
         return nullptr;
     return base + (offset - HostMemoryMap::SWrecOffset);
@@ -683,7 +696,11 @@ bool ImGuiManager::Initialize()
         io.DisplayFramebufferScale = ImVec2(1, 1);
         // The OSD font: PCSX2's Roboto when resources/fonts has it, else ImGui's built-in one.
         const std::string roboto = EmuFolders::Resources + "/fonts/Roboto-Regular.ttf";
+#ifdef _WIN32
         g_osdFont = GetFileAttributesA(roboto.c_str()) != INVALID_FILE_ATTRIBUTES ? io.Fonts->AddFontFromFileTTF(roboto.c_str(), 20.0f) : nullptr;
+#else
+        g_osdFont = access(roboto.c_str(), R_OK) == 0 ? io.Fonts->AddFontFromFileTTF(roboto.c_str(), 20.0f) : nullptr;
+#endif
         if (!g_osdFont)
             g_osdFont = io.Fonts->AddFontDefault();
     }
@@ -747,12 +764,16 @@ namespace
 {
     bool LoadScreenImage(const char *path, std::vector<uint8_t> &rgba, int &width, int &height)
     {
+#ifdef _WIN32
         const int wide = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
         if (wide <= 0)
             return false;
         std::wstring widePath(static_cast<size_t>(wide), L'\0');
         MultiByteToWideChar(CP_UTF8, 0, path, -1, widePath.data(), wide);
         FILE *fp = _wfopen(widePath.c_str(), L"rb");
+#else
+        FILE *fp = std::fopen(path, "rb"); // UTF-8 paths as they are
+#endif
         if (!fp)
             return false;
         GSTextureReplacements::CFile file(fp);

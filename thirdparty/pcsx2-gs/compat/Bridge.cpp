@@ -9,7 +9,9 @@
 #include "GS/GS.h"
 #include "GS/Renderers/Common/GSRenderer.h"
 #include "VKDxgiPresent.h" // before DX11, as GS.cpp: g_vkDxgiPresent, the DXGI swap chain under Vulkan
+#ifdef _WIN32
 #include "GS/Renderers/DX11/GSDevice11.h"
+#endif
 #include "GS/Renderers/HW/GSTextureReplacements.h"
 #include "GS/Renderers/HW/GSTextureCache.h" // g_texture_cache (DllMain)
 
@@ -23,6 +25,14 @@
 #include <string_view>
 #include <vector>
 #include <xmmintrin.h>
+
+// The C interface's functions: the DLL's exports on Windows; on Linux the only symbols libpcsx2gs.so exports (the rest
+// is compiled with hidden visibility).
+#ifdef _WIN32
+#define PCSX2GS_EXPORT extern "C" __declspec(dllexport)
+#else
+#define PCSX2GS_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 namespace pcsx2gs
 {
@@ -69,6 +79,18 @@ namespace
     alignas(16) u8 g_regs[0x2000] = {};
     bool g_open = false;
     WindowInfo g_window;
+#ifndef _WIN32
+    void *g_x11Display = nullptr; // pcsx2gs_set_display: the X11 connection the window handles belong to
+
+    // Direct3D 11 is Windows only: on Linux every graphics API name is Vulkan (a GHR.ini from Windows may say dx11).
+    bool IsVulkanName(const std::string &name)
+    {
+        if (name == "vulkan" || name == "vk")
+            return true;
+        std::fprintf(stderr, "[pcsx2-gs] graphics API \"%s\" is Windows only; Vulkan is used\n", name.c_str());
+        return false;
+    }
+#endif
 
     // The game's entry in PCSX2's GameIndex.yaml (SLUS-21503, same for SLES-54320, SLPM-66399, SCKA-20084):
     //   gsHWFixes: halfPixelOffset: 2  # Depth of field effect aligned properly + Shifts buildings correctly.
@@ -262,13 +284,20 @@ namespace
             }
             if (key == "api")
             {
+#ifdef _WIN32
                 g_graphicsApi = (text == "vulkan" || text == "vk") ? GSRendererType::VK : GSRendererType::DX11;
+#else
+                IsVulkanName(lower(text));
+                g_graphicsApi = GSRendererType::VK;
+#endif
                 continue;
             }
             if (key == "dxgi_present")
             {
+#ifdef _WIN32
                 // Vulkan's frames shown through a DXGI swap chain (compat/VKDxgiPresent.h); 0 = Vulkan's own.
                 pcsx2gs::g_vkDxgiPresent = value != 0;
+#endif
                 continue;
             }
             if (key == "texture_dir")
@@ -357,7 +386,18 @@ namespace
         if (g_open || !params || !params->hwnd)
             return 0;
         g_window = {};
+#ifdef _WIN32
         g_window.type = WindowInfo::Type::Win32;
+#else
+        // hwnd is an X11 window id, of the connection pcsx2gs_set_display gave (VK_KHR_xlib_surface needs both).
+        if (!g_x11Display)
+        {
+            std::fprintf(stderr, "[pcsx2-gs] no X11 display (pcsx2gs_set_display): cannot open\n");
+            return 0;
+        }
+        g_window.type = WindowInfo::Type::X11;
+        g_window.display_connection = g_x11Display;
+#endif
         g_window.window_handle = params->hwnd;
         g_window.surface_width = std::max(1u, params->width);
         g_window.surface_height = std::max(1u, params->height);
@@ -385,6 +425,7 @@ namespace
                                   : params->vsync == 2u ? GSVSyncMode::Mailbox
                                                         : GSVSyncMode::Disabled;
         bool opened = GSopen(options, options.Renderer, g_regs, vsync, false);
+#ifdef _WIN32
         if (!opened && options.Renderer == GSRendererType::VK)
         {
             // Vulkan could not start (no driver, or shaderc_shared.dll missing): Direct3D 11 instead.
@@ -393,6 +434,7 @@ namespace
             EmuConfig.GS.Renderer = GSRendererType::DX11;
             opened = GSopen(options, options.Renderer, g_regs, vsync, false);
         }
+#endif
         if (!opened)
         {
             std::fprintf(stderr, "[pcsx2-gs] GSopen failed\n");
@@ -416,6 +458,11 @@ namespace
         if (!g_open || !api || !g_gs_device || !g_gs_renderer)
             return -1;
         const std::string name = lower(api);
+#ifndef _WIN32
+        // Vulkan is the only API here and it runs: nothing changes, the new window is not used (the port drops it).
+        IsVulkanName(name);
+        return 2;
+#endif
         const GSRendererType want = (name == "vulkan" || name == "vk") ? GSRendererType::VK : GSRendererType::DX11;
         const RenderAPI wantApi = want == GSRendererType::VK ? RenderAPI::Vulkan : RenderAPI::D3D11;
         if (g_gs_device->GetRenderAPI() == wantApi)
@@ -487,6 +534,7 @@ namespace
     // with mailbox vsync (tools/present_stats.py).
     void WritePresentStats()
     {
+#ifdef _WIN32 // the statistics are a DXGI swap chain's; Linux has none
         static std::FILE *file = []() -> std::FILE *
         {
             const char *path = std::getenv("PS2X_PRESENT_STATS");
@@ -511,6 +559,7 @@ namespace
             stats = {};
         std::fprintf(file, "%lld,%u,%u,%u,%u,%lld\n", static_cast<long long>(now.QuadPart), last, stats.PresentCount,
                      stats.PresentRefreshCount, stats.SyncRefreshCount, static_cast<long long>(stats.SyncQPCTime.QuadPart));
+#endif
     }
 
     void Vsync(const Pcsx2GsPrivRegs *regs)
@@ -681,10 +730,41 @@ namespace
     const Pcsx2GsApi g_api = {PCSX2GS_API_VERSION, Open, Close, Gif, Vsync, Reset, ReadFifo, Resize, SetScale, LoadVram, SaveVram, ReadLocal, pcsx2gs::SetOsd, Snapshot, pcsx2gs::SetMenu, pcsx2gs::MenuInput};
 }
 
-extern "C" __declspec(dllexport) const Pcsx2GsApi *pcsx2gs_get_api(uint32_t version)
+#ifndef _WIN32
+namespace
 {
+    // Linux's DllMain detach below: at exit() the GS objects are left to the OS, not destroyed by the library's static
+    // destructors in an undefined order. An atexit handler runs before the destructors of the statics constructed
+    // before it was registered, and pcsx2gs_get_api registers it after the library has loaded.
+    void ReleaseAtExit()
+    {
+        if (g_texture_cache)
+            (void)g_texture_cache.release();
+        if (g_gs_renderer)
+            (void)g_gs_renderer.release();
+        if (g_gs_device)
+            (void)g_gs_device.release();
+    }
+}
+#endif
+
+PCSX2GS_EXPORT const Pcsx2GsApi *pcsx2gs_get_api(uint32_t version)
+{
+#ifndef _WIN32
+    static const bool registered = std::atexit(ReleaseAtExit) == 0;
+    (void)registered;
+#endif
     return version == PCSX2GS_API_VERSION ? &g_api : nullptr;
 }
+
+#ifndef _WIN32
+// Linux: the X11 connection (a Display *) the window ids given to open and pcsx2gs_set_api belong to, before open.
+// Exported on its own so that the API table stays the same; Pcsx2GsOpenParams::hwnd is then the X11 window id.
+PCSX2GS_EXPORT void pcsx2gs_set_display(void *display)
+{
+    g_x11Display = display;
+}
+#endif
 
 // Options the port changes while the game runs (the in-game menu), any thread; unknown keys are ignored:
 //   texture_add=<path> a replacement image written while the game runs (the port's button prompts), added at
@@ -756,7 +836,7 @@ namespace pcsx2gs
     }
 }
 
-extern "C" __declspec(dllexport) void pcsx2gs_set_option(const char *key, const char *value)
+PCSX2GS_EXPORT void pcsx2gs_set_option(const char *key, const char *value)
 {
     const HostFpuMode fpu;
     if (!key || !value)
@@ -842,19 +922,19 @@ extern "C" __declspec(dllexport) void pcsx2gs_set_option(const char *key, const 
 }
 
 // Lines drawn over the image at each present (pcsx2gs_host.h SetOverlay): the port's hitbox overlay. Any thread.
-extern "C" __declspec(dllexport) void pcsx2gs_set_overlay(const float *lines, const uint32_t *colors, uint32_t count)
+PCSX2GS_EXPORT void pcsx2gs_set_overlay(const float *lines, const uint32_t *colors, uint32_t count)
 {
     pcsx2gs::SetOverlay(lines, colors, count);
 }
 
 // Labels drawn over the image at each present (pcsx2gs_host.h SetOverlayText): the port's enemy labels. Any thread.
-extern "C" __declspec(dllexport) void pcsx2gs_set_overlay_text(const float *xy, const uint32_t *colors, const char *texts, uint32_t count)
+PCSX2GS_EXPORT void pcsx2gs_set_overlay_text(const float *xy, const uint32_t *colors, const char *texts, uint32_t count)
 {
     pcsx2gs::SetOverlayText(xy, colors, texts, count);
 }
 
 // The port's own screen over the image (pcsx2gs_host.h SetScreen): the OPTIONS screen's text. Any thread.
-extern "C" __declspec(dllexport) void pcsx2gs_set_screen(const Pcsx2GsScreenItem *items, uint32_t count, const char *strings, uint32_t bytes)
+PCSX2GS_EXPORT void pcsx2gs_set_screen(const Pcsx2GsScreenItem *items, uint32_t count, const char *strings, uint32_t bytes)
 {
     pcsx2gs::SetScreen(items, count, strings, bytes);
 }
@@ -864,14 +944,14 @@ extern "C" __declspec(dllexport) void pcsx2gs_set_screen(const Pcsx2GsScreenItem
 // kinds of swap chain; the port swaps it in for the old one after this returns). Returns 1 when the API asked for
 // runs, 2 when it already ran (nothing changed, the new window is not used), 0 when it could not start and the one
 // before runs again (in the new window), -1 when neither runs (nothing is drawn from then on).
-extern "C" __declspec(dllexport) int pcsx2gs_set_api(const char *api, void *hwnd, uint32_t width, uint32_t height)
+PCSX2GS_EXPORT int pcsx2gs_set_api(const char *api, void *hwnd, uint32_t width, uint32_t height)
 {
     return ReopenApi(api, hwnd, width, height);
 }
 
 // The aspect ratio while the game runs (0 = 4:3, 1 = 16:9, 2 = fill the window), read at every present: the port uses
 // it to follow the game's own 4:3 / 16:9 option. Exported on its own so that the API table above stays the same.
-extern "C" __declspec(dllexport) void pcsx2gs_set_aspect(uint32_t mode)
+PCSX2GS_EXPORT void pcsx2gs_set_aspect(uint32_t mode)
 {
     const HostFpuMode fpu;
     ApplyAspectMode(mode);
@@ -883,6 +963,7 @@ extern "C" __declspec(dllexport) void pcsx2gs_set_aspect(uint32_t mode)
 // already gone (Oct 26: a crash on every close of the window). The port now ends with TerminateProcess, which skips
 // this detach altogether; this stays for any other way out through ExitProcess. The texture cache goes first: it is
 // the one whose destructor reaches the others.
+#ifdef _WIN32
 #include <windows.h>
 BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID reserved)
 {
@@ -897,3 +978,4 @@ BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID reserved)
     }
     return TRUE;
 }
+#endif
