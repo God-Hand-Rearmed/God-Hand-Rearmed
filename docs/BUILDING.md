@@ -6,7 +6,7 @@ How to build God Hand: Rearmed (codename Kamite) from source, play it, and work 
 
 ### What you need
 
-1. **Windows 10 or 11** and a reasonably modern graphics card.
+1. **Windows 10 or 11** and a reasonably modern graphics card (Linux: see [Linux and Steam Deck](#linux-and-steam-deck)).
 2. **Visual Studio 2022 Build Tools** with "Desktop development with C++" (free from Microsoft).
 3. **Python 3.10 or newer**.
 4. **Your own disc image of the game** (USA, `.iso`, serial SLUS-21503). It must be this exact version: check it against
@@ -42,6 +42,67 @@ are prepared for your card; later starts take seconds.
 
 Your settings are in `build\port\bin\GHR.ini` (every launcher option is a line there, with a comment), your saves in
 `build\port\bin\memcards\`, your controls in `build\port\bin\controls.ini`.
+
+### Linux and Steam Deck
+
+The same steps work on Linux (x86-64). The easiest toolchain is Nix: `nix develop` at the top of the checkout gives
+CMake, Ninja, GCC, zig, Python, the X11 / Wayland / Vulkan headers and the packaging tools (`flake.nix`). Without Nix,
+install CMake 3.21+, Ninja, a C++20 compiler (GCC 12+ or Clang 16+), Python 3.10+, `pkg-config` and the X11 headers
+(`libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`), plus `zig` 0.16 for the portable build below.
+
+```sh
+git clone https://github.com/God-Hand-Rearmed/God-Hand-Rearmed.git
+cd God-Hand-Rearmed
+nix develop                     # or have the tools above installed
+cp /path/to/your-disc.iso game/
+export KAMITE_ALLOW_DOWNLOADS=1 # the first configure downloads raylib, SDL3, imgui, shaderc...
+python3 -I build.py generate
+python3 -I tools/snr2/snr2.py --iso game/your-disc.iso extract
+python3 -I tools/snr2/gen_modules.py
+python3 -I build.py modules
+python3 -I build.py vu
+python3 -I build.py configure --toolchain cmake/toolchains/linux-portable.cmake
+python3 -I build.py build
+python3 -I build.py characters
+build/port/bin/GHR              # or: python3 -I build.py run
+```
+
+- `--toolchain cmake/toolchains/linux-portable.cmake` builds with zig against glibc 2.31 and a static libc++: the
+  result runs on any x86-64 Linux with glibc 2.31 or newer (SteamOS, Debian 11+, Ubuntu 20.04+), not only on the
+  machine that built it. Leave it out to build with your system's compiler for that machine alone.
+- The renderer on Linux is PCSX2's Vulkan renderer (`libpcsx2gs.so`), drawn into the game window through X11 (on a
+  Wayland desktop through Xwayland; the Steam Deck's Game Mode is Xwayland too). Direct3D 11 does not exist there.
+- Settings, saves and logs are in `build/port/bin`, like on Windows.
+
+To make the files players download (what a release attaches next to the Windows zip):
+
+```sh
+python3 -I build.py configure --toolchain cmake/toolchains/linux-portable.cmake -DKAMITE_RELEASE=ON
+python3 -I build.py build
+python3 -I tools/linux/package.py --bin build/port/bin      # or: nix run .#package -- --bin build/port/bin
+```
+
+`dist/` then holds `GHR-v<version>-linux-x86_64.tar.gz`, `GHR-v<version>-x86_64.AppImage` and
+`GHR-v<version>.debug` (GHR's debug info, for reading crash addresses; not for players). The packer refuses a build
+that is not portable or that was made on the stand-in game code. What players see is `tools/linux/README-linux.txt`
+(shipped as README.txt).
+
+#### Linux CI
+
+`.github/workflows/linux.yml` runs `nix flake check` on every push and pull request, then starts the packaged AppImage
+and tar.gz on Debian 11, Ubuntu 20.04 and 24.04, Fedora, Arch and the Steam Runtime's sniper. CI has no disc, so
+its builds use a stand-in for the recompiled game code (`tools/linux/stub_game_code.py`): everything else (runtime,
+launcher, renderer, platform code) is compiled, linked and started, and the artifacts are named `-stub`. The checks:
+
+| Check | What it proves |
+|---|---|
+| `native` | GHR builds with GCC on the stand-in code; the C++ unit tests (`tests/unit`, `KAMITE_BUILD_TESTS=ON`) pass |
+| `portable-binary` | the release toolchain's GHR and libraries need glibc 2.31 at most and no library the package lacks |
+| `linux-stub` | `tools/linux/package.py` makes the AppImage and the tar.gz from that build (reproducible: same input, same bytes) |
+| `packaging-tests` | `tools/linux/test_*.py`: the packer, the AppRun play-folder rules, the desktop entry, the stand-in |
+| `launcher-smoke` | the tar.gz's GHR opens its launcher on a 1280x800 virtual screen and draws it (`tools/linux/smoke_launcher.py`) |
+
+Run them all locally with `nix flake check -L`, one with `nix build .#checks.x86_64-linux.<name> -L`.
 
 ### Options
 

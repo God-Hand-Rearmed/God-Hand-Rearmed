@@ -1,0 +1,76 @@
+# Linux and Steam Deck: every gate runs through Nix (flake.nix), then the packaged AppImage and tar.gz are started on
+# stock distributions. The game itself needs the player's own disc, which CI never has: these builds use the
+# stand-in game code (tools/linux/stub_game_code.py) and are named "-stub"; they start the launcher and nothing more.
+name: Linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    name: nix flake check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - name: Gates (unit tests, packaging tests, portable binary, launcher smoke)
+        run: nix flake check -L
+      - name: Package (AppImage + tar.gz on the stand-in game code)
+        run: |
+          nix build .#linux-stub -L -o linux-stub
+          nix build .#checks.x86_64-linux.launcher-smoke -o launcher-smoke
+          mkdir -p artifacts
+          cp linux-stub/*.AppImage linux-stub/*.tar.gz artifacts/
+          cp launcher-smoke/launcher.png artifacts/launcher-nix.png
+          ls -la artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-stub
+          path: artifacts/
+          if-no-files-found: error
+
+  distro:
+    name: run on ${{ matrix.name }}
+    needs: nix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Debian 11 (glibc 2.31), image: "debian:11" }
+          - { name: Ubuntu 20.04, image: "ubuntu:20.04" }
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04" }
+          - { name: Fedora, image: "fedora:latest" }
+          - { name: Arch (SteamOS base), image: "archlinux:latest" }
+          - { name: Steam Runtime 3 sniper, image: "registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest" }
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-stub
+          path: dist
+      - name: Start the AppImage and the tar.gz
+        run: sh tools/linux/ci_distro_smoke.sh dist results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ strategy.job-index }}
+          path: results/
+          if-no-files-found: ignore

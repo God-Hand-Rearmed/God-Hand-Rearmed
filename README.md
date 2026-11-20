@@ -28,6 +28,20 @@ screen, with as much or as little of our own nonsense as you want.
 
 The first start compiles shaders for your GPU, so the screen may stay black before coming back. Patience, young ass-whooper.
 
+### Linux and Steam Deck
+
+1. Grab `GHR-v…-x86_64.AppImage` (one file) or `GHR-v…-linux-x86_64.tar.gz` (a folder) from
+   [Releases](https://github.com/God-Hand-Rearmed/God-Hand-Rearmed/releases).
+2. AppImage: make it executable (file manager > Properties > Is executable, or `chmod +x`) and run it. Settings and
+   saves go to `~/.local/share/GodHandRearmed` (or into a `GHR-data` folder you make next to the AppImage).
+   Folder: unpack it anywhere you can write to and run `GHR`; it keeps everything inside, like the Windows zip.
+3. Point the launcher at your disc image once (it also looks in `~/Games`, `~/Downloads` and on your SD card), pick a
+   preset, "**Play**"!
+4. **Steam Deck:** do steps 1 to 3 in Desktop Mode, then hit **Add to Steam** in the launcher: back in Game Mode it's in
+   your library with its artwork, fullscreen at the Deck's 16:10.
+
+Needs glibc 2.31 or newer (any distro from 2020 on, SteamOS included) and a Vulkan driver.
+
 When a new version is out, the launcher says so: **What's new** shows the changes, **Update** installs them and
 restarts. Your settings, saves, and mods stay where they are.
 
@@ -37,7 +51,8 @@ restarts. Your settings, saves, and mods stay where they are.
 
 ### God Hand - Gone Native!
 
-Recompiled as a Windows program under Vulkan or DX11; PCSX2 as the renderer until later.
+Recompiled as a Windows program under Vulkan or DX11, and a Linux / Steam Deck one under Vulkan; PCSX2 as the renderer
+until later.
 
 ---
 
@@ -352,7 +367,7 @@ The shaders are being compiled for your GPU. Once. After that it's quick.
 The exe isn't signed (certificates cost money; this is free). **More info > Run anyway**.
 
 **Steam Deck? Linux?**
-Coming. For now it's Windows; Proton may run it, but no promises for now.
+Yes, natively: the AppImage or the tar.gz ([Linux and Steam Deck](#linux-and-steam-deck)). No Proton needed.
 
 **Will my PCSX2 texture pack work?**
 Yes: packs in PCSX2's format (a `replacements` folder). Put it in `textures/SLUS-21503` next to GHR.exe, or point the
@@ -362,7 +377,8 @@ launcher's **Mods > Texture Packs** at it.
 The port keeps its own memory card in `memcards\mc0`.
 
 **Where are my saves?**
-`memcards\mc0` (the game's saves) and `states` (save states), next to GHR.exe. Updates never touch them.
+`memcards\mc0` (the game's saves) and `states` (save states), next to GHR.exe (Linux AppImage:
+`~/.local/share/GodHandRearmed`). Updates never touch them.
 
 **How do I update?**
 Start the launcher. If a new version is out, press **Update**. That's it!
@@ -379,7 +395,7 @@ you saw.
 
 ## Coming Soon
 
-- **Linux / Steam Deck, Android and Mac.**
+- **Android and Mac.**
 - **Photo mode** with a free camera.
 - **Subtitles** for the cutscenes.
 - **More playable characters.**

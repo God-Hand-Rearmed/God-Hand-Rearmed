@@ -1,0 +1,58 @@
+# GHR built in the Nix sandbox on the stand-in game code (tools/linux/stub_game_code.py): everything but the game.
+#
+#   portable = true   the release toolchain (cmake/toolchains/linux-portable.cmake: zig, glibc 2.31, static libc++);
+#                     what tools/linux/package.py packs and what runs on a Steam Deck
+#   portable = false  the dev shell's gcc, with the unit tests (KAMITE_BUILD_TESTS) built and run
+#
+# The real game needs your own disc (build.py generate), which never exists in CI; this build proves that everything
+# else (runtime, launcher, renderer, platform layer) compiles, links and starts on Linux.
+{ pkgs, lib, src, deps, portable ? true, buildTests ? false, buildInputs, nativeBuildInputs }:
+let
+  fetchContentFlags = lib.mapAttrsToList (name: path: "-DFETCHCONTENT_SOURCE_DIR_${name}=${path}") deps;
+in
+pkgs.stdenv.mkDerivation {
+  pname = if portable then "ghr-portable-stub" else "ghr-native-stub";
+  version = import ./version.nix { inherit src; };
+  inherit src buildInputs;
+  nativeBuildInputs = nativeBuildInputs ++ lib.optional portable pkgs.zig;
+
+  dontUseCmakeConfigure = true;
+  dontStrip = true; # tools/linux/package.py strips and keeps the debug info beside the archives
+  dontPatchELF = true; # the portable binary must keep its generic interpreter and no store RPATH
+  dontFixup = portable;
+
+  configurePhase = ''
+    runHook preConfigure
+    export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-cache
+    python3 -I tools/linux/stub_game_code.py $TMPDIR/generated
+    mkdir -p $TMPDIR/no-modules
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      ${lib.optionalString portable "--toolchain cmake/toolchains/linux-portable.cmake"} \
+      -DKAMITE_GENERATED_DIR=$TMPDIR/generated -DKAMITE_MODULES_DIR=$TMPDIR/no-modules \
+      -DKAMITE_RELEASE=ON -DKAMITE_BUILD_TESTS=${if buildTests then "ON" else "OFF"} \
+      -DFETCHCONTENT_FULLY_DISCONNECTED=ON ${lib.concatStringsSep " " fetchContentFlags}
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+    ninja -C build -j''${NIX_BUILD_CORES:-4} kamite ${lib.optionalString buildTests "all"}
+    runHook postBuild
+  '';
+
+  doCheck = buildTests;
+  checkPhase = ''
+    runHook preCheck
+    ctest --test-dir build --output-on-failure
+    runHook postCheck
+  '';
+
+  installPhase = ''
+    runHook preInstall
+    mkdir -p $out
+    cp -a build/bin $out/bin
+    runHook postInstall
+  '';
+
+  meta.description = "God Hand: Rearmed on the stand-in game code (CI build; cannot play the game)";
+}
