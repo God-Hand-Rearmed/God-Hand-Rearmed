@@ -13,6 +13,7 @@ set -eu
 DIST=$(cd "$1" && pwd)
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=/dev/null
 . /etc/os-release
 echo "== $PRETTY_NAME (glibc $(ldd --version 2>/dev/null | head -1 | grep -o '[0-9.]*$'))"
 
@@ -20,8 +21,17 @@ screen=1
 case "$ID" in
     debian|ubuntu|steamrt)
         export DEBIAN_FRONTEND=noninteractive
-        if command -v apt-get >/dev/null && apt-get update -qq >/dev/null 2>&1; then
-            apt-get install -y -qq python3 xvfb x11-apps libgl1 libgl1-mesa-dri libx11-6 libxrandr2 libxinerama1 \
+        # Debian 11 left the main mirrors with its end of life: its packages (security updates included) are on
+        # archive.debian.org now, whose release files no longer get fresh dates.
+        if [ "$ID" = debian ] && [ "${VERSION_ID:-}" = 11 ]; then
+            sed -i 's|deb.debian.org|archive.debian.org|g; s|security.debian.org|archive.debian.org|g' \
+                /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+            set -- -o Acquire::Check-Valid-Until=false
+        else
+            set --
+        fi
+        if command -v apt-get >/dev/null && apt-get "$@" update -qq >/dev/null; then
+            apt-get "$@" install -y -qq python3 xvfb x11-apps libgl1 libgl1-mesa-dri libx11-6 libxrandr2 libxinerama1 \
                 libxcursor1 libxi6 libxext6 >/dev/null || screen=0
         else
             screen=0
@@ -30,16 +40,29 @@ case "$ID" in
         dnf install -y -q python3 xorg-x11-server-Xvfb xwd mesa-dri-drivers mesa-libGL libX11 libXrandr libXinerama \
             libXcursor libXi libXext >/dev/null || screen=0 ;;
     arch)
-        pacman -Sy --noconfirm --needed python xorg-server-xvfb xorg-xwd mesa libx11 libxrandr libxinerama libxcursor \
+        # A full upgrade first: Arch supports no partial ones, and an older image's packages conflict with the
+        # current repositories' (openssl / openssl-3 owning the same files).
+        pacman -Syu --noconfirm --needed python xorg-server-xvfb xorg-xwd mesa libx11 libxrandr libxinerama libxcursor \
             libxi libxext >/dev/null || screen=0 ;;
     *)
         screen=0 ;;
 esac
 command -v python3 >/dev/null && command -v Xvfb >/dev/null && command -v xwd >/dev/null || screen=0
-[ "$screen" = 1 ] || echo "   (no virtual screen here: --help only)"
+# Every distribution in CI must get the launcher test: a failed install is a failure, not a quiet "--help only".
+# KAMITE_SMOKE_HELP_ONLY=1 allows the fallback for a system where no virtual screen can be installed.
+if [ "$screen" != 1 ]; then
+    if [ "${KAMITE_SMOKE_HELP_ONLY:-0}" = 1 ]; then
+        echo "   (no virtual screen here: --help only)"
+    else
+        echo "FAILED: the virtual screen (Xvfb, xwd, Mesa, python3) could not be installed on $PRETTY_NAME"
+        exit 1
+    fi
+fi
 
-TAR=$(ls "$DIST"/GHR-v*-Linux-x64.tar.gz | head -1)
-APPIMAGE=$(ls "$DIST"/GHR-v*-Linux-x64.AppImage | head -1)
+TAR=""; APPIMAGE=""
+for f in "$DIST"/GHR-v*-Linux-x64.tar.gz; do [ -f "$f" ] && TAR=$f && break; done
+for f in "$DIST"/GHR-v*-Linux-x64.AppImage; do [ -f "$f" ] && APPIMAGE=$f && break; done
+[ -n "$TAR" ] && [ -n "$APPIMAGE" ] || { echo "FAILED: no tar.gz / AppImage in $DIST"; exit 1; }
 WORK=$(mktemp -d)
 
 echo "-- tar.gz: $(basename "$TAR")"

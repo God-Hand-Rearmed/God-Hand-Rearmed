@@ -339,7 +339,9 @@ namespace
         CHECK_EQ(kid(entry0, "AppName")->text, std::string("God Hand: Rearmed"));
         CHECK_EQ(kid(entry0, "Exe")->text, std::string("\"/home/deck/Games/GHR.AppImage\""));
         CHECK_EQ(kid(entry0, "StartDir")->text, std::string("\"/home/deck/Games\""));
-        CHECK_EQ(kid(entry0, "icon")->text, std::string("/grid/") + std::to_string(appid) + "_icon.png");
+        // The icon path is the grid folder joined with the platform's separator ("\" on Windows, as Steam's own
+        // Windows entries have it).
+        CHECK_EQ(kid(entry0, "icon")->text, (fs::path("/grid") / (std::to_string(appid) + "_icon.png")).string());
         CHECK_EQ(vdf::numberOf(*kid(entry0, "appid")), appid);
 
         // The bytes Steam reads: map "shortcuts", map "0", the appid (type 2) first, the strings, three map ends.
