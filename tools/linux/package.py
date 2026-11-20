@@ -59,7 +59,8 @@ GLIBC_FLOOR = (2, 31)
 SYSTEM_LIBRARIES = {"libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1", "ld-linux-x86-64.so.2"}
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 # Libraries next to GHR that it opens with dlopen (so no DT_NEEDED names them): shipped when the build made them.
-DLOPENED = ("libpcsx2gs.so", "libshaderc_shared.so", "libshaderc_shared.so.1")
+# (VKShaderCache.cpp opens shaderc by its versioned name, GetVersionedFilename("shaderc_shared", 1).)
+DLOPENED = ("libpcsx2gs.so", "libshaderc_shared.so.1")
 
 DESKTOP_ENTRY = """[Desktop Entry]
 Type=Application
