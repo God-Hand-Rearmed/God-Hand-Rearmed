@@ -79,7 +79,7 @@
             export LD_LIBRARY_PATH=${lib.makeLibraryPath (with pkgs; [ libx11 libxrandr libxinerama libxcursor libxi
               libxext libxrender libxfixes libxcb libxau libxdmcp libglvnd libxkbcommon mesa alsa-lib ])}
             export __GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
-            python3 -I ${src}/tools/linux/smoke_launcher.py --out $out/launcher.png --seconds 90 -- ./GHR
+            python3 -I ${src}/tools/linux/smoke_launcher.py --out $out/launcher.png --seconds 90 --log logs/kamite.log -- ./GHR
           '';
 
           packagingTests = pkgs.runCommand "ghr-packaging-tests" {

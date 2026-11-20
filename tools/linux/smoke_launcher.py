@@ -2,6 +2,9 @@
 
     python -I tools/linux/smoke_launcher.py --out shot.png [--seconds 60] -- <command that starts GHR> [args]
 
+GHR's log goes to its play folder's logs/kamite.log in a release build (GHR.ini LogFile), not to the terminal:
+--log names that file, which is followed as well as the program's own output.
+
 The command is the AppImage, the tar.gz folder's GHR, or GHR behind an explicit loader. With no DISPLAY set, an Xvfb
 (1280x800, the Steam Deck's screen) is started for the run. GHR must not be given a disc image: without one, a release
 build opens the launcher and waits there.
@@ -98,6 +101,7 @@ def main(argv=None) -> int:
     parser.add_argument("--out", type=Path, required=True, help="the screenshot (PNG); the log goes next to it")
     parser.add_argument("--seconds", type=float, default=60.0)
     parser.add_argument("--min-spread", type=float, default=8.0, help="luminance deviation a drawn launcher exceeds")
+    parser.add_argument("--log", type=Path, help="GHR's log file to follow too (a release: <play folder>/logs/kamite.log)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -125,14 +129,41 @@ def main(argv=None) -> int:
             for line in proc.stdout:
                 log.write(line)
                 log.flush()
-                lines.append(line)
-                if READY in line:
-                    seen.set()
-                if any(mark in line for mark in SETTLED):
-                    settled.set()
+                note(line)
 
+    def note(line):
+        lines.append(line)
+        if READY in line:
+            seen.set()
+        if any(mark in line for mark in SETTLED):
+            settled.set()
+
+    stop = threading.Event()
+
+    def follow():
+        """GHR's own log file, from its start (it is created or truncated by the run)."""
+        handle, position = None, 0
+        while not stop.is_set():
+            if handle is None and args.log.exists():
+                handle = open(args.log, "r", encoding="utf-8", errors="replace")
+            if handle is not None:
+                handle.seek(position)
+                chunk = handle.readline()
+                while chunk.endswith("\n"):
+                    note(chunk)
+                    position = handle.tell()
+                    chunk = handle.readline()
+            time.sleep(0.2)
+        if handle is not None:
+            handle.close()
+
+    if args.log and args.log.exists():
+        args.log.unlink()  # a previous run's lines must not count
     reader = threading.Thread(target=pump, daemon=True)
     reader.start()
+    follower = threading.Thread(target=follow, daemon=True) if args.log else None
+    if follower:
+        follower.start()
     failure = None
     try:
         deadline = time.monotonic() + args.seconds
@@ -166,6 +197,9 @@ def main(argv=None) -> int:
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
         reader.join(timeout=5)
+        stop.set()
+        if follower:
+            follower.join(timeout=5)
         if xvfb:
             xvfb.terminate()
             xvfb.wait(timeout=10)

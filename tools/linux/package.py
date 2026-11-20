@@ -58,6 +58,8 @@ GLIBC_FLOOR = (2, 31)
 # Libraries every glibc system has: the only ones a shipped binary may need from outside the package.
 SYSTEM_LIBRARIES = {"libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1", "ld-linux-x86-64.so.2"}
 ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
+# Libraries next to GHR that it opens with dlopen (so no DT_NEEDED names them): shipped when the build made them.
+DLOPENED = ("libpcsx2gs.so", "libshaderc_shared.so", "libshaderc_shared.so.1")
 
 DESKTOP_ENTRY = """[Desktop Entry]
 Type=Application
@@ -254,12 +256,21 @@ def program_files(bin_dir: Path) -> list[Path]:
     if not (bin_dir / "resources").is_dir():
         raise PackageError(f"{bin_dir / 'resources'} is missing")
     files = [exe, bin_dir / "resources"]
-    libraries = [p for p in bin_dir.iterdir() if re.fullmatch(r"lib[^/]+\.so(\.\d+)*", p.name)]
-    # A library ships once, under the name its users load (libSDL3.so.0), as a regular file: the build's symlink chain
-    # (libSDL3.so.0 -> libSDL3.so.0.4.10) is resolved here, because the launcher's updater (update_archive.cpp) only
-    # writes regular files and would drop a symlink, leaving an updated install without the library.
-    linked = {(bin_dir / os.readlink(p)).resolve() for p in libraries if p.is_symlink()}
-    files += sorted((p for p in libraries if p.is_symlink() or p.resolve() not in linked), key=lambda p: p.name)
+    # The libraries shipped are the ones GHR loads, directly or through another shipped library (DT_NEEDED), under the
+    # name it loads them by (libSDL3.so.0), as regular files: the build's symlink chain (libSDL3.so -> libSDL3.so.0 ->
+    # libSDL3.so.0.4.10) is resolved at staging, because the launcher's updater (update_archive.cpp) writes regular
+    # files only and would drop a symlink, leaving an updated install without the library. Libraries loaded at run
+    # time with dlopen are not in DT_NEEDED: they go in DLOPENED.
+    wanted, queue = set(), [exe]
+    while queue:
+        needed, _ = elf_requirements(queue.pop().resolve())
+        for name in needed:
+            path = bin_dir / name
+            if name not in wanted and path.exists():
+                wanted.add(name)
+                queue.append(path)
+    wanted |= {name for name in DLOPENED if (bin_dir / name).exists()}
+    files += [bin_dir / name for name in sorted(wanted)]
     return files
 
 

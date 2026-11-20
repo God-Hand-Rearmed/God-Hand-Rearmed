@@ -49,7 +49,7 @@ FOLDER="$WORK/God Hand Rearmed"
 grep -q "usage:" "$OUT/tar-help.txt"
 echo "   --help: ok"
 if [ "$screen" = 1 ]; then
-    (cd "$FOLDER" && python3 -I "$HERE/smoke_launcher.py" --out "$OUT/tar-launcher.png" --seconds 120 -- ./GHR)
+    (cd "$FOLDER" && python3 -I "$HERE/smoke_launcher.py" --out "$OUT/tar-launcher.png" --seconds 120 --log logs/kamite.log -- ./GHR)
     [ -f "$FOLDER/GHR.ini" ] && [ -d "$FOLDER/logs" ] || { echo "FAILED: the tar.gz folder is not the play folder"; exit 1; }
 fi
 
@@ -63,7 +63,8 @@ grep -q "usage:" "$OUT/appimage-help.txt"
 [ -d "$XDG_DATA_HOME/GodHandRearmed" ] || { echo "FAILED: the AppImage made no play folder in XDG_DATA_HOME"; exit 1; }
 echo "   --help: ok, play folder $XDG_DATA_HOME/GodHandRearmed"
 if [ "$screen" = 1 ]; then
-    python3 -I "$HERE/smoke_launcher.py" --out "$OUT/appimage-launcher.png" --seconds 120 -- "$APPIMAGE"
+    python3 -I "$HERE/smoke_launcher.py" --out "$OUT/appimage-launcher.png" --seconds 120 \
+        --log "$XDG_DATA_HOME/GodHandRearmed/logs/kamite.log" -- "$APPIMAGE"
     [ -f "$XDG_DATA_HOME/GodHandRearmed/GHR.ini" ] || { echo "FAILED: GHR.ini not written to the AppImage's play folder"; exit 1; }
 fi
 echo "== passed on $PRETTY_NAME"

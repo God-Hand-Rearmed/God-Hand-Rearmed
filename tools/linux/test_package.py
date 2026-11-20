@@ -140,19 +140,31 @@ class Program(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_only_program_files_are_shipped(self):
-        bin_dir = fake_bin(self.tmp / "bin")
-        (bin_dir / "libSDL3.so.0.4.10").write_bytes(b"x")
+        bin_dir = self.tmp / "bin"
+        fake_bin(bin_dir)
+        # A library chain as CMake leaves it: libSDL3.so -> libSDL3.so.0 -> libSDL3.so.0.4.10 (soname libSDL3.so.0),
+        # GHR linked against it, plus an unrelated library nothing loads.
+        compile_elf(bin_dir, "libSDL3.so.0.4.10", source="int sdl(void){return 3;}\n",
+                    extra=("-shared", "-fPIC", "-Wl,-soname,libSDL3.so.0"))
         os.symlink("libSDL3.so.0.4.10", bin_dir / "libSDL3.so.0")
+        os.symlink("libSDL3.so.0", bin_dir / "libSDL3.so")
+        compile_elf(bin_dir, "libunused.so", source="int u(void){return 0;}\n", extra=("-shared", "-fPIC"))
+        compile_elf(bin_dir, "GHR", source="int sdl(void);int main(void){return sdl();}\n",
+                    extra=(f"-L{bin_dir}", "-lSDL3"))
         names = [p.name for p in package.program_files(bin_dir)]
-        # The symlink's name ships, as a regular file with the target's bytes; the versioned file does not.
+        # Only the name GHR loads ships, as a regular file with the library's bytes.
         self.assertEqual(names, ["GHR", "resources", "libSDL3.so.0"])
         dest = self.tmp / "out"
         package.stage_program(bin_dir, dest)
         self.assertFalse((dest / "libSDL3.so.0").is_symlink())
-        self.assertEqual((dest / "libSDL3.so.0").read_bytes(), b"x")
-        self.assertFalse((dest / "libSDL3.so.0.4.10").exists())
-        self.assertFalse((dest / "GHR.ini").exists())
-        self.assertFalse((dest / "logs").exists())
+        self.assertEqual((dest / "libSDL3.so.0").read_bytes(), (bin_dir / "libSDL3.so.0.4.10").read_bytes())
+        for name in ("libSDL3.so.0.4.10", "libSDL3.so", "libunused.so", "GHR.ini", "logs"):
+            self.assertFalse((dest / name).exists(), name)
+
+    def test_dlopened_libraries_ship(self):
+        bin_dir = fake_bin(self.tmp / "bin")
+        compile_elf(bin_dir, package.DLOPENED[0], source="int gs(void){return 0;}\n", extra=("-shared", "-fPIC"))
+        self.assertIn(package.DLOPENED[0], [p.name for p in package.program_files(bin_dir)])
 
     def test_read_only_build_folder_is_staged_writable(self):
         bin_dir = fake_bin(self.tmp / "ro")
