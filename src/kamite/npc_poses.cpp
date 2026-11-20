@@ -36,6 +36,7 @@
 // centimetres, and the adjustments). The F2 menu's NPCs tab edits the nearest actor and saves the file. Without that
 // file, resources/npc_poses.txt (shipped: the casino's bystanders) is used.
 #include "kamite/npc_poses.h"
+#include "kamite/paths.h"
 #include "kamite/npc_motions.inc"
 #include "kamite/function_hooks.h"
 #include "kamite/game_layout.h"
@@ -1181,7 +1182,7 @@ namespace kamite::npc_poses
     void install(PS2Runtime &, const fs::path &exeDir)
     {
         g_file = exeDir / "npc_poses.txt";
-        g_shippedFile = exeDir / "resources" / "npc_poses.txt";
+        g_shippedFile = kamite::paths::resources() / "npc_poses.txt";
         if (const char *on = std::getenv("KAMITE_NPC_POSES"))
             g_enabled = *on && *on != '0';
         g_motions.push_back(Motion{"rail", "Rail lean (Quaternius, built in)",
@@ -1191,7 +1192,7 @@ namespace kamite::npc_poses
             // there with the same name replaces the port's).
             std::error_code error;
             std::map<std::string, fs::path> byName;
-            for (const fs::path &folder : {exeDir / "resources" / "npc_motions", exeDir / "mods" / "npc_motions"})
+            for (const fs::path &folder : {kamite::paths::resources() / "npc_motions", exeDir / "mods" / "npc_motions"})
                 for (const auto &entry : fs::directory_iterator(folder, error))
                     if (entry.is_regular_file(error) && entry.path().extension() == ".mot" &&
                         !renamed(entry.path().stem().string()))

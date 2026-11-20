@@ -1,4 +1,5 @@
 #include "kamite/style_sfx.h"
+#include "kamite/paths.h"
 
 #include "kamite/hd_textures.h"
 #include "kamite/log.h"
@@ -26,7 +27,7 @@ namespace kamite::style_sfx
         if (!g_tried)
         {
             g_tried = true;
-            const std::filesystem::path path = hd_textures::exeDirectory() / "resources" / "sfx" / "style_switch.ogg";
+            const std::filesystem::path path = kamite::paths::resources() / "sfx" / "style_switch.ogg";
             Wave wave = LoadWave(path.string().c_str());
             if (wave.frameCount == 0)
                 KM_WARN(Game, "styles: can't read " << path.string() << ": no switch sound");

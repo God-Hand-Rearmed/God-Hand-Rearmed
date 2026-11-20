@@ -1,5 +1,6 @@
 // Button prompts at full resolution from Xelu's prompt pack. See prompt_hd.h.
 #include "kamite/prompt_hd.h"
+#include "kamite/paths.h"
 
 #include "kamite/log.h"
 
@@ -196,7 +197,7 @@ namespace kamite::prompt_hd
             Art &entry = cache[key];
             const size_t hash = file.find('#');
             const std::string name = file.substr(0, hash), variant = hash == std::string::npos ? std::string() : file.substr(hash);
-            const fs::path path = hd_textures::exeDirectory() / "resources" / "prompts" / "xelu" / folder(set) / (name + ".png");
+            const fs::path path = kamite::paths::resources() / "prompts" / "xelu" / folder(set) / (name + ".png");
             hd_textures::Image raw;
             if (!hd_textures::loadPng(path, raw))
             {
@@ -422,7 +423,7 @@ namespace kamite::prompt_hd
         const std::string file = set == Set::PlayStation ? lookup(kPs3, label) : fileFor(set, label);
         if (file.empty())
             return {};
-        const fs::path path = hd_textures::exeDirectory() / "resources" / "prompts" / "xelu" / folder(set) / (file + ".png");
+        const fs::path path = kamite::paths::resources() / "prompts" / "xelu" / folder(set) / (file + ".png");
         std::error_code ec;
         return fs::exists(path, ec) ? path : fs::path();
     }

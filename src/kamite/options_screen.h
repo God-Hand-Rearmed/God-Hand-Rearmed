@@ -19,7 +19,8 @@
 // ones, changed with left / right, saved to GHR.ini and applied at once. RESET GAME and RESTORE DEFAULTS ask Yes / No.
 namespace kamite::options_screen
 {
-    // After the runtime is initialised and hd_textures::install (exeDir: the folder holding GHR.exe).
+    // After the runtime is initialised and hd_textures::install (exeDir: the play folder, paths.h; the resources come
+    // from paths::resources()).
     void install(PS2Runtime &runtime, const std::filesystem::path &exeDir);
     // Game thread, once a game frame (frame_patches): the game's own options (Enemy Life Gauge, the sound mode,
     // vibration) written into the game whenever they differ from GHR.ini's (a loaded save brings its own), and the

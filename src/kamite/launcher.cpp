@@ -1,4 +1,5 @@
 #include "kamite/launcher.h"
+#include "kamite/paths.h"
 #include "kamite/launcher_bark.h"
 #include "kamite/launcher_book.h"
 #include "kamite/launcher_paper.h"
@@ -1249,7 +1250,7 @@ namespace kamite::launcher
                 UnloadMusicStream(state.ambience);
                 state.hasAmbience = false;
             }
-            update::startInstall(g_updater, g_updateCheck.release, state.context->exeDir);
+            update::startInstall(g_updater, g_updateCheck.release, kamite::paths::programDir()); // GHR.ini: the play folder
             state.updatePopup = state.paperOn ? State::UpdatePopup::None : State::UpdatePopup::Working; // (the paper shows it)
         }
 
@@ -1621,7 +1622,7 @@ namespace kamite::launcher
                 state.steamWorker.join();
             state.steamStage = static_cast<int>(steam::Stage::Downloading);
             state.steamPopup = State::SteamPopup::Working;
-            const fs::path resources = state.context->exeDir / "resources";
+            const fs::path resources = kamite::paths::resources();
             state.steamWorker = std::thread([&state, resources] { state.steamResult = steam::addOrUpdate(resources, state.steamStage); });
         }
 
@@ -3680,7 +3681,7 @@ namespace kamite::launcher
             if (state.postersLoaded)
                 return;
             state.postersLoaded = true;
-            const fs::path dir = state.context->exeDir / "resources" / "presets";
+            const fs::path dir = kamite::paths::resources() / "presets";
             std::ifstream layout(dir / "posters.txt");
             std::string word;
             while (layout >> word)
@@ -4841,7 +4842,7 @@ namespace kamite::launcher
                 return it->second;
             Texture2D &texture = state.promptArt[file];
             std::error_code error;
-            const fs::path path = state.context->exeDir / fromUtf8(file);
+            const fs::path path = kamite::paths::programDir() / fromUtf8(file); // "resources/..." (the program folder)
             if (fs::is_regular_file(path, error))
             {
                 texture = LoadTexture(utf8(path).c_str());
@@ -5117,7 +5118,7 @@ namespace kamite::launcher
             std::error_code error;
             for (size_t i = 0; i < 5; ++i)
             {
-                const fs::path path = state.context->exeDir / "resources" / "prompts" / "xelu" / folder / (std::string(files->second[i]) + ".png");
+                const fs::path path = kamite::paths::resources() / "prompts" / "xelu" / folder / (std::string(files->second[i]) + ".png");
                 if (!fs::is_regular_file(path, error))
                     continue;
                 state.prompt[i] = LoadTexture(utf8(path).c_str());
@@ -5581,7 +5582,7 @@ namespace kamite::launcher
         ImGuiIO &io = ImGui::GetIO();
         io.IniFilename = nullptr;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-        const fs::path fontPath = context.exeDir / "resources" / "fonts" / "Roboto-Regular.ttf";
+        const fs::path fontPath = kamite::paths::resources() / "fonts" / "Roboto-Regular.ttf";
         if (fs::is_regular_file(fontPath, error))
             state.font = io.Fonts->AddFontFromFileTTF(utf8(fontPath).c_str(), 20.0f);
         {
@@ -5590,14 +5591,14 @@ namespace kamite::launcher
             io.Fonts->TexMinWidth = 2048;
             io.Fonts->TexMinHeight = 1024;
             io.Fonts->TexGlyphPadding = 2; // the book grows each glyph's quad a texel into it (launcher_book.cpp)
-            const fs::path fonts = context.exeDir / "resources" / "fonts";
+            const fs::path fonts = kamite::paths::resources() / "fonts";
             const auto add = [&](const char *name) -> ImFont * {
                 return fs::is_regular_file(fonts / name, error) ? io.Fonts->AddFontFromFileTTF(utf8(fonts / name).c_str(), 26.0f) : nullptr;
             };
             // K, Nov 18: the posters' fonts, not the bill's old ones (Wendyville titles, Dominican for the rest)
             state.bookFonts.heading = add("Wendyville.ttf");
             g_headingFont = state.bookFonts.heading;
-            state.bookFonts.text = addAtlasFont(io, context.exeDir / "resources" / "splash" / "splash.fnt", fonts / "EBGaramond-Regular.ttf");
+            state.bookFonts.text = addAtlasFont(io, kamite::paths::resources() / "splash" / "splash.fnt", fonts / "EBGaramond-Regular.ttf");
             if (!state.bookFonts.text)
                 state.bookFonts.text = add("EBGaramond-Regular.ttf");
             state.bookFonts.stamp = add("HoltwoodOneSC-Regular.ttf");
@@ -5607,7 +5608,7 @@ namespace kamite::launcher
         applyStyle();
         const auto loadImage = [&](Texture2D &texture, const char *name)
         {
-            const fs::path path = context.exeDir / "resources" / "images" / name;
+            const fs::path path = kamite::paths::resources() / "images" / name;
             if (!fs::is_regular_file(path, error))
                 return;
             texture = LoadTexture(utf8(path).c_str());
@@ -5625,7 +5626,7 @@ namespace kamite::launcher
         loadImage(state.bill.steamMark, "steam_mark.png"); // the bill's Add to Steam mark (Flaticon's sketch, ringed)
         if (state.kana.id != 0u && state.logo.id != 0u)
             state.scene.setKana(state.kana, kLogoContent, static_cast<float>(state.logo.height) / static_cast<float>(state.logo.width));
-        const fs::path burstPath = context.exeDir / "resources" / "images" / "burst.png";
+        const fs::path burstPath = kamite::paths::resources() / "images" / "burst.png";
         if (fs::is_regular_file(burstPath, error))
         {
             state.burst = LoadTexture(utf8(burstPath).c_str());
@@ -5635,23 +5636,23 @@ namespace kamite::launcher
                 SetTextureFilter(state.burst, TEXTURE_FILTER_TRILINEAR);
             }
         }
-        loadSplash(state, context.exeDir / "resources" / "splash");
+        loadSplash(state, kamite::paths::resources() / "splash");
         // The saloon (resources/saloon): its images decode on worker threads while the launcher starts.
-        state.saloonOn = state.scene.open(context.exeDir / "resources" / "saloon");
+        state.saloonOn = state.scene.open(kamite::paths::resources() / "saloon");
         if (state.saloonOn)
         {
-            if (!saloon::loadBillFonts(state.billFonts, context.exeDir / "resources" / "fonts", state.splash))
+            if (!saloon::loadBillFonts(state.billFonts, kamite::paths::resources() / "fonts", state.splash))
             {
                 KM_WARN(Boot, "launcher: the bill's fonts are missing from resources/fonts, plain launcher");
                 state.scene.close();
                 state.saloonOn = false;
             }
-            else if (!(state.paperOn = state.paper.load(context.exeDir / "resources" / "fonts", &state.billFonts.text)))
+            else if (!(state.paperOn = state.paper.load(kamite::paths::resources() / "fonts", &state.billFonts.text)))
                 KM_WARN(Boot, "launcher: the newspaper's fonts are missing from resources/fonts, the corner slip instead");
         }
         InitAudioDevice();
         state.audio = IsAudioDeviceReady();
-        const fs::path musicPath = context.exeDir / "resources" / "music" / "launcher.ogg";
+        const fs::path musicPath = kamite::paths::resources() / "music" / "launcher.ogg";
         state.musicPath = musicPath;
         if (state.audio && fs::is_regular_file(musicPath, error))
         {
@@ -5668,7 +5669,7 @@ namespace kamite::launcher
         // pen's scribble round a loop, the smoothie's last sip.
         if (state.audio)
         {
-            const fs::path sfx = context.exeDir / "resources" / "sfx" / "launcher";
+            const fs::path sfx = kamite::paths::resources() / "sfx" / "launcher";
             if (fs::is_regular_file(sfx / "bar_ambience.ogg", error))
             {
                 state.ambience = LoadMusicStream(utf8(sfx / "bar_ambience.ogg").c_str());
@@ -5719,7 +5720,7 @@ namespace kamite::launcher
         }
         state.volume = std::clamp(static_cast<float>(std::atof(state.ini.get("Launcher", "Volume", "0.8").c_str())), 0.0f, 1.0f);
         state.exePath = platform::thisExe();
-        update::cleanup(context.exeDir);
+        update::cleanup(kamite::paths::programDir());
         if (g_updateCheck.state.load() == static_cast<int>(update::CheckState::Off))
         {
             std::string channel = state.ini.get("Launcher", "Channel", "");

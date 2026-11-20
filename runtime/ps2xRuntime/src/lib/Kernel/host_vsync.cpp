@@ -21,6 +21,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <time.h>
 #endif
 
 namespace
@@ -176,6 +178,7 @@ bool ps2xHostVsync(std::chrono::steady_clock::time_point &lastVblank, std::chron
     }
     return true;
 #else
+    // No vblank source off Windows (D3DKMT): the lock reports nothing measured and EeScheduler paces as without it.
     (void)lastVblank;
     (void)period;
     return false;
@@ -235,6 +238,10 @@ double ps2xCurrentThreadCpuMs() noexcept
     { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
     return static_cast<double>(ticks(kernel) + ticks(user)) / 10000.0;
 #else
-    return 0.0;
+    // The calling thread's user + system time, as GetThreadTimes gives it on Windows (PS2X_PACING_STATS).
+    timespec t{};
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t) != 0)
+        return 0.0;
+    return static_cast<double>(t.tv_sec) * 1000.0 + static_cast<double>(t.tv_nsec) / 1.0e6;
 #endif
 }

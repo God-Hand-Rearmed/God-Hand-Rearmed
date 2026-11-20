@@ -430,6 +430,9 @@ namespace kamite
         AddVectoredExceptionHandler(0, &fatalExceptionHandler);
     }
 #else
+    // Linux: no-ops. There is no Application event log to read back (the system journal / coredumpctl keeps the
+    // crashes, and crash_posix writes the "[crash]" lines as they happen), no vectored exception handler (the signal
+    // handlers in crash_posix cover the same faults) and no "Not responding" flag for a window to watch.
     void startWindowWatch() {}
     void reportPreviousCrashes() {}
     void installFatalExceptionLog() {}

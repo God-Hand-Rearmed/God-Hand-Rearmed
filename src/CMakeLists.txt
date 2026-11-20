@@ -105,6 +105,9 @@ set(KAMITE_HOST_SOURCES
     kamite/prompt_art.cpp
     kamite/sha256.cpp
     kamite/thread_policy.cpp
+    kamite/paths.cpp
+    kamite/steam_deck.cpp
+    kamite/crash_posix.cpp
 )
 
 # GHR.ini (top level) is built into GHR.exe as its default settings: kamite_generated/kamite/default_ini.h.
@@ -373,6 +376,14 @@ if(MSVC)
     target_link_libraries(kamite PRIVATE dbghelp winmm)
 endif()
 
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+    # Linux: libcurl is opened with dlopen (launcher_platform.cpp), which glibc before 2.34 keeps in libdl. The
+    # shared libraries GHR ships (libSDL3.so.0) sit next to it: $ORIGIN finds them wherever the folder or the
+    # AppImage is.
+    target_link_libraries(kamite PRIVATE ${CMAKE_DL_LIBS})
+    set_target_properties(kamite PROPERTIES BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "\$ORIGIN")
+endif()
+
 # The launcher's saloon (resources/saloon, claude/saloon-launcher.md) is AVIF: libavif with dav1d to decode it, fetched
 # at configure time like SDL3 (the libsdl-org forks SDL_image vendors; both build with CMake). dav1d builds C only, so no
 # NASM or Meson is needed; KAMITE_DAV1D_ASM=ON adds its x86 assembly (faster, needs nasm on the PATH). Without it
@@ -421,14 +432,14 @@ if(KAMITE_DEBUG_UI AND TARGET rlImGui)
     target_compile_definitions(kamite PRIVATE PS2X_ENABLE_DEBUG_UI=1)
     # The launcher (src/kamite/launcher.cpp) draws with the same Dear ImGui.
     target_sources(kamite PRIVATE kamite/launcher.cpp kamite/launcher_bark.cpp kamite/launcher_book.cpp kamite/launcher_platform.cpp
-                                  kamite/launcher_update.cpp)
+                                  kamite/launcher_update.cpp kamite/update_archive.cpp)
     target_compile_definitions(kamite PRIVATE KAMITE_HAS_LAUNCHER=1)
     if(WIN32)
         target_link_libraries(kamite PRIVATE winhttp) # downloads: updates, Add to Steam's art
     endif()
     # Add to Steam (src/kamite/launcher_steam.cpp): desktop only, left out of the Android build.
     if(KAMITE_STEAM_SHORTCUT)
-        target_sources(kamite PRIVATE kamite/launcher_steam.cpp)
+        target_sources(kamite PRIVATE kamite/launcher_steam.cpp kamite/steam_shortcuts.cpp)
         target_compile_definitions(kamite PRIVATE KAMITE_STEAM_SHORTCUT=1)
     endif()
 endif()

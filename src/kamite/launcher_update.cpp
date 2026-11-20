@@ -5,6 +5,8 @@
 #include "kamite/json_reader.h"
 #include "kamite/launcher_platform.h"
 #include "kamite/log.h"
+#include "kamite/paths.h"
+#include "kamite/update_archive.h"
 #include "kamite/version.h"
 
 #include "raylib.h"
@@ -12,15 +14,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <string_view>
 #include <vector>
 
 // raylib's own inflate (rcore.c builds sinfl.h with SUPPORT_COMPRESSION_API): the zip's deflate streams.
 extern "C" int sinflate(void *out, int cap, const void *in, int size);
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace kamite::launcher::update
 {
@@ -141,18 +150,21 @@ namespace kamite::launcher::update
                     newest = f;
                 if (!newer(f.version, current))
                     continue;
+                // The download this build installs (archive::pickAsset: Windows the .zip; Linux the tar.gz, or the
+                // AppImage when it runs as one).
                 if (const Json *assets = item["assets"]; assets && assets->kind == Json::Kind::Array)
+                {
+                    std::vector<std::string> names;
                     for (const Json &asset : assets->items)
+                        names.push_back(text(asset["name"]));
+                    if (const int pick = archive::pickAsset(names, archive::current()); pick >= 0)
                     {
-                        const std::string name = lower(text(asset["name"]));
-                        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".zip") == 0)
-                        {
-                            f.url = text(asset["browser_download_url"]);
-                            const Json *size = asset["size"];
-                            f.size = size && size->kind == Json::Kind::Number ? static_cast<uint64_t>(size->number) : 0u;
-                            break;
-                        }
+                        const Json &asset = assets->items[static_cast<size_t>(pick)];
+                        f.url = text(asset["browser_download_url"]);
+                        const Json *size = asset["size"];
+                        f.size = size && size->kind == Json::Kind::Number ? static_cast<uint64_t>(size->number) : 0u;
                     }
+                }
                 found.push_back(std::move(f));
             }
             if (!checker.hasCurrent && !kRelease && !newest.version.empty())
@@ -224,6 +236,12 @@ namespace kamite::launcher::update
 
         void checkTester(Checker &checker)
         {
+#if !defined(_WIN32)
+            // The tester builds are Windows zips (tools/win/Publish-Tester.ps1): nothing a Linux build can install.
+            KM_INFO(Boot, "update: the tester channel has Windows builds only; not checked on Linux");
+            checker.state.store(static_cast<int>(CheckState::UpToDate));
+            return;
+#endif
             std::vector<uint8_t> bytes;
             Json item;
             if (!platform::httpGet(kTesterApi, bytes, 8u << 20, "application/vnd.github+json") ||
@@ -432,6 +450,64 @@ namespace kamite::launcher::update
             }
         }
 
+        // One file or folder of a release archive (the zip or the tar.gz), its bytes read when they are needed.
+        struct Item
+        {
+            std::string name; // relative, '/' separated
+            bool folder = false;
+            bool executable = false; // the tar's x bit (the zip has none: Windows needs none)
+            std::function<bool(std::vector<uint8_t> &)> read;
+        };
+
+        // The AppImage (Linux, $APPIMAGE set): one file, downloaded next to the running one and renamed over it. The
+        // running program keeps its old copy open (its squashfs stays mounted) until it quits; the relaunch starts
+        // the new one. Settings and saves live in the play folder, outside the AppImage, so nothing else changes.
+        void installAppImage(Installer &installer, const Release &release, const std::function<void(const std::string &)> &fail)
+        {
+#if defined(_WIN32)
+            (void)installer;
+            (void)release;
+            fail("This build cannot install an AppImage.");
+#else
+            const char *appImage = std::getenv("APPIMAGE");
+            const fs::path target = appImage ? fs::path(appImage) : fs::path();
+            if (target.empty())
+                return fail("The AppImage's own file is not known (APPIMAGE is not set).");
+            fs::path fresh = target;
+            fresh += kNewSuffix;
+            std::vector<uint8_t> bytes;
+            if (!platform::httpGet(release.zipUrl, bytes, 2048u << 20, nullptr, &installer.received))
+                return fail("The download did not finish. Check your connection and try again.");
+            if (release.zipSize != 0 && bytes.size() != release.zipSize)
+                return fail("The download came out the wrong size. Try again.");
+            installer.stage.store(static_cast<int>(Stage::Installing));
+            // An AppImage is an ELF program with the squashfs after it: anything else is not one.
+            static constexpr uint8_t kElf[4] = {0x7F, 'E', 'L', 'F'};
+            if (bytes.size() < 4096 || std::memcmp(bytes.data(), kElf, 4) != 0)
+                return fail("The download is not an AppImage. Try again.");
+            std::error_code error;
+            if (!writeFile(fresh, bytes))
+            {
+                fs::remove(fresh, error);
+                return fail("Couldn't write the update next to " + utf8(target.filename()) + " (is the disk full, or the folder read-only?).");
+            }
+            if (::chmod(fresh.c_str(), 0755) != 0)
+            {
+                fs::remove(fresh, error);
+                return fail("Couldn't make the update runnable.");
+            }
+            // rename() replaces the old file in one step: there is never a moment without an AppImage there.
+            fs::rename(fresh, target, error);
+            if (error)
+            {
+                fs::remove(fresh, error);
+                return fail("Couldn't replace " + utf8(target.filename()) + ". Is its folder read-only?");
+            }
+            KM_INFO(Boot, "update: " << release.tag << " installed (AppImage " << utf8(target) << ")");
+            installer.stage.store(static_cast<int>(Stage::Done));
+#endif
+        }
+
         void install(Installer &installer, const Release &release, const fs::path &exeDir)
         {
             const auto fail = [&](const std::string &why)
@@ -440,16 +516,44 @@ namespace kamite::launcher::update
                 KM_INFO(Boot, "update: failed: " << why);
                 installer.stage.store(static_cast<int>(Stage::Failed));
             };
+            const archive::Package package = archive::current();
+            if (package == archive::Package::LinuxAppImage)
+                return installAppImage(installer, release, fail);
             std::vector<uint8_t> zip;
             if (!platform::httpGet(release.zipUrl, zip, 2048u << 20, nullptr, &installer.received))
                 return fail("The download did not finish. Check your connection and try again.");
             if (release.zipSize != 0 && zip.size() != release.zipSize)
                 return fail("The download came out the wrong size. Try again.");
             installer.stage.store(static_cast<int>(Stage::Installing));
+            std::vector<Item> items;
             std::vector<Entry> entries;
+            std::vector<uint8_t> tar;
+            std::vector<archive::TarEntry> tarEntries;
             std::string why;
-            if (!readZip(zip, entries, why))
-                return fail("The update could not be read: " + why + ".");
+            if (package == archive::Package::WindowsZip)
+            {
+                if (!readZip(zip, entries, why))
+                    return fail("The update could not be read: " + why + ".");
+                for (const Entry &e : entries)
+                    items.push_back(Item{e.name, e.folder, false, [&zip, &e](std::vector<uint8_t> &out) { return unpack(zip, e, out); }});
+            }
+            else
+            {
+                size_t skipped = 0;
+                if (!archive::gunzip(zip, tar, 2048u << 20, why) || !archive::readTar(tar, tarEntries, skipped, why))
+                    return fail("The update could not be read: " + why + ".");
+                zip.clear();
+                zip.shrink_to_fit();
+                if (skipped != 0)
+                    KM_INFO(Boot, "update: " << skipped << " link(s) or special file(s) in the tar.gz left out");
+                for (const archive::TarEntry &e : tarEntries)
+                    items.push_back(Item{e.name, e.folder, e.executable, [&tar, &e](std::vector<uint8_t> &out)
+                                         {
+                                             out.assign(tar.begin() + static_cast<std::ptrdiff_t>(e.data),
+                                                        tar.begin() + static_cast<std::ptrdiff_t>(e.data + e.size));
+                                             return true;
+                                         }});
+            }
 
             // Each new file is written next to its old one first; nothing is replaced until all of them are there.
             struct Swap
@@ -466,25 +570,27 @@ namespace kamite::launcher::update
                     fs::remove(s.fresh, error);
             };
             std::vector<uint8_t> bytes;
-            for (const Entry &e : entries)
+            for (const Item &e : items)
             {
                 const std::string name = lower(e.name);
                 const std::string head = name.substr(0, name.find('/'));
                 if (std::find(std::begin(kKeptFolders), std::end(kKeptFolders), head) != std::end(kKeptFolders) && name.find('/') != std::string::npos)
                     continue;
-                const fs::path target = exeDir / fromUtf8(e.name);
+                const bool settingsFile = std::find(std::begin(kSettingsFiles), std::end(kSettingsFiles), name) != std::end(kSettingsFiles);
+                // The settings files belong to the play folder (paths.h), the rest to the program folder; the same
+                // folder unless KAMITE_HOME names another.
+                const fs::path target = (settingsFile ? paths::home() : exeDir) / fromUtf8(e.name);
                 if (e.folder)
                 {
                     fs::create_directories(target, error);
                     continue;
                 }
-                if (!unpack(zip, e, bytes))
+                if (!e.read(bytes))
                 {
                     removeFresh();
                     return fail("The update is damaged (" + e.name + "). Try again.");
                 }
-                if (std::find(std::begin(kSettingsFiles), std::end(kSettingsFiles), name) != std::end(kSettingsFiles) &&
-                    fs::exists(target, error))
+                if (settingsFile && fs::exists(target, error))
                 {
                     merges.emplace_back(target, std::move(bytes));
                     bytes = {};
@@ -495,7 +601,13 @@ namespace kamite::launcher::update
                 s.target = target;
                 s.fresh = target;
                 s.fresh += kNewSuffix;
-                if (!writeFile(s.fresh, bytes))
+                bool written = writeFile(s.fresh, bytes);
+#if !defined(_WIN32)
+                // The tar's x bit (GHR itself): kept, else the new GHR would not start.
+                if (written)
+                    written = ::chmod(s.fresh.c_str(), e.executable ? 0755 : 0644) == 0;
+#endif
+                if (!written)
                 {
                     removeFresh();
                     fs::remove(s.fresh, error);
@@ -503,8 +615,11 @@ namespace kamite::launcher::update
                 }
                 swaps.push_back(std::move(s));
             }
+            items.clear();
             zip.clear();
             zip.shrink_to_fit();
+            tar.clear();
+            tar.shrink_to_fit();
 
             // The swap: the old file renamed aside (Windows lets a running program and its DLLs be renamed), the new
             // one into its place; undone in full if any step fails.
@@ -558,7 +673,7 @@ namespace kamite::launcher::update
             std::ofstream list(exeDir / kCleanupList, std::ios::app);
             for (const fs::path &old : renamedAside)
                 list << utf8(old) << '\n';
-            KM_INFO(Boot, "update: " << release.tag << " installed (" << swaps.size() << " files)");
+            KM_INFO(Boot, "update: " << release.tag << " installed (" << swaps.size() << " files, " << archive::name(package) << ")");
             installer.stage.store(static_cast<int>(Stage::Done));
         }
     }

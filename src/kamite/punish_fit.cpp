@@ -54,6 +54,7 @@
 // model's own (the actor's scale applies).
 
 #include "kamite/punish_fit.h"
+#include "kamite/paths.h"
 
 #include "kamite/body_detail.h"
 #include "kamite/bone_tweaks.h"
@@ -1902,7 +1903,7 @@ namespace kamite::punish_fit
     void install(PS2Runtime &runtime, const fs::path &exeDir)
     {
         g_file = exeDir / "punish_fit.txt";
-        g_shippedFile = exeDir / "resources" / "punish_fit.txt";
+        g_shippedFile = kamite::paths::resources() / "punish_fit.txt";
         // Installed always and switched live with Buck Breaker (K, Nov 13); off, every punish is the game's own.
         g_ram = runtime.memory().getRDRAM();
         if (!g_ram || !runtime.hasFunction(kAlign) || !(g_align = runtime.lookupFunction(kAlign)) ||
