@@ -417,7 +417,7 @@ namespace ps2x::pnach
             {
                 std::error_code error;
                 const auto time = std::filesystem::last_write_time(path, error);
-                text += path + '|' + (error ? std::string("-") : std::to_string(time.time_since_epoch().count())) + '\n';
+                text += path + '|' + (error ? std::string("-") : std::to_string(static_cast<long long>(time.time_since_epoch().count()))) + '\n';
             }
             return text;
         }

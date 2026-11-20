@@ -1,0 +1,6 @@
+#!/bin/sh
+# C compiler of the portable Linux build (cmake/toolchains/linux-portable.cmake): zig's clang against glibc 2.31's
+# symbol versions, so the binary runs on any x86-64 Linux with glibc 2.31 or newer (SteamOS, Debian 11+, Ubuntu 20.04+,
+# the Steam Runtime's sniper). KAMITE_ZIG_TARGET overrides the target. NIX_CFLAGS_COMPILE: the -isystem paths a Nix
+# shell gives its own compilers (the X11 / Wayland headers GLFW and SDL3 include), passed on to zig.
+exec zig cc -target "${KAMITE_ZIG_TARGET:-x86_64-linux-gnu.2.31}" $NIX_CFLAGS_COMPILE "$@"

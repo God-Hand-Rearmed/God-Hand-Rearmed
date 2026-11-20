@@ -84,6 +84,23 @@ else()
     )
     FetchContent_MakeAvailable(raylib)
 
+    # Linux desktop: GLFW opens libGL / libEGL itself at run time (dlopen) and rlgl reaches every GL function through
+    # glad's pointers, so nothing needs libOpenGL / libGLX at link time. raylib's CMake links them anyway, which ties
+    # the executable to the build machine's GL path (a Nix store path, or a distro's libGL that a Steam Deck or a
+    # container may lack). Dropped here: the binary then loads whichever GL driver the player's system has.
+    if(UNIX AND NOT APPLE AND NOT PS2X_IS_ANDROID AND TARGET raylib)
+        get_target_property(PS2X_RAYLIB_LINKS raylib INTERFACE_LINK_LIBRARIES)
+        if(PS2X_RAYLIB_LINKS)
+            list(FILTER PS2X_RAYLIB_LINKS EXCLUDE REGEX "(^|[/:])(lib)?(OpenGL|GLX|GL)(\\.so[.0-9]*)?>?$|OpenGL::")
+            set_target_properties(raylib PROPERTIES INTERFACE_LINK_LIBRARIES "${PS2X_RAYLIB_LINKS}")
+        endif()
+        get_target_property(PS2X_RAYLIB_PRIVATE raylib LINK_LIBRARIES)
+        if(PS2X_RAYLIB_PRIVATE)
+            list(FILTER PS2X_RAYLIB_PRIVATE EXCLUDE REGEX "(^|[/:])(lib)?(OpenGL|GLX|GL)(\\.so[.0-9]*)?>?$|OpenGL::")
+            set_target_properties(raylib PROPERTIES LINK_LIBRARIES "${PS2X_RAYLIB_PRIVATE}")
+        endif()
+    endif()
+
     # SDL3 for the controllers only (ps2_host_gamepads.cpp: PCSX2's "SDL-<n>" numbering, vibration, PlayStation
     # controllers without Steam/DS4Windows); the window stays raylib's. Built as SDL3.dll next to the executable, which
     # a launcher can also load to list the controllers. PS2X_SDL_INPUT=0 at run time reads GLFW's gamepads instead.

@@ -1,0 +1,4 @@
+#!/bin/sh
+# C++ compiler of the portable Linux build: see zig-cc. libc++ is linked statically, so the binary needs no
+# libstdc++ of any version from the player's system.
+exec zig c++ -target "${KAMITE_ZIG_TARGET:-x86_64-linux-gnu.2.31}" $NIX_CFLAGS_COMPILE "$@"

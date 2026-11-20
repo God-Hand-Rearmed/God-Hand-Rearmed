@@ -11,7 +11,9 @@ else()
     set(KAMITE_ARCH_FLAG "")
 endif()
 
-set(KAMITE_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated")
+# Where build.py generate writes the recompiled game code. A cache path so a disc-free build (CI, tools/linux/
+# stub_game_code.py) can point it at a stand-in that has the same entry points and no game code.
+set(KAMITE_GENERATED_DIR "${CMAKE_SOURCE_DIR}/generated" CACHE PATH "The recompiled game code (build.py generate)")
 set(KAMITE_RUNTIME_INCLUDE "${CMAKE_SOURCE_DIR}/runtime/ps2xRuntime/include")
 
 if(NOT EXISTS "${KAMITE_GENERATED_DIR}/register_functions.cpp")
@@ -251,7 +253,7 @@ endif()
 # per-module PCH (~160 MB each) would cost ~13 GB for 81 modules. The module headers are not in the PCH (each source
 # includes its own "<mod>_functions.h" from its folder). kamite_generated/kamite/module_index.cpp lists the packs
 # (and keeps the linker from dropping them).
-set(KAMITE_MODULES_DIR "${CMAKE_SOURCE_DIR}/generated_modules")
+set(KAMITE_MODULES_DIR "${CMAKE_SOURCE_DIR}/generated_modules" CACHE PATH "The recompiled SNR2 modules (build.py modules)")
 file(GLOB KAMITE_MODULE_PACKS CONFIGURE_DEPENDS "${KAMITE_MODULES_DIR}/*/*_pack.cpp")
 set(KAMITE_MODULE_SOURCES "")
 set(KAMITE_MODULE_DECLS "")

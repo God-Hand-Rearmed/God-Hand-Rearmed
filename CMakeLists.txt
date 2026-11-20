@@ -46,6 +46,13 @@ option(KAMITE_STEAM_SHORTCUT "Add to Steam in the launcher" ${KAMITE_STEAM_SHORT
 set(PS2X_ENABLE_AGRESSIVE_LOGS OFF CACHE BOOL "" FORCE)
 set(PS2X_ENABLE_SCCACHE OFF CACHE BOOL "" FORCE)
 
+# GCC and Clang need the instruction set named before the runtime's SSE4.1 intrinsics compile (MSVC takes them as
+# they are). SSE4.1 is the floor the Windows build already assumes (src/CMakeLists.txt KAMITE_ARCH); every x86-64 CPU
+# the port runs on has it, the Steam Deck's Zen 2 included. No -mfma: the VU code must not contract into FMA.
+if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    add_compile_options(-msse4.1)
+endif()
+
 add_subdirectory(runtime EXCLUDE_FROM_ALL)
 add_subdirectory(src)
 

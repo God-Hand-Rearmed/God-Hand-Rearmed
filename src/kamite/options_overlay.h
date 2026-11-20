@@ -229,9 +229,11 @@ namespace kamite::options_overlay
     // The rows a page shows at once (scrolling keeps the cursor among them).
     int pageRowsShown(const Page &page, int scroll);
 
+    // The PRESETS band text fitted to the picture. Without the renderer's overlay (no pcsx2gs_api.h: the built-in GS)
+    // nothing draws it, and the band comes back unwrapped at the help text's size.
+    PresetFit fitPresetText(const char *tagline, const char *band, float aspect);
 #if defined(KAMITE_HAS_SCREEN_OVERLAY)
     void build(const View &view, std::vector<Pcsx2GsScreenItem> &items, std::string &strings);
-    PresetFit fitPresetText(const char *tagline, const char *band, float aspect);
     // A line of the help font's text at this cap height (lines), in layout units (calibrated against the renderer).
     float helpTextWidth(const char *text, size_t length, float cap);
     // Black over the whole picture at this strength (0..1): the fade behind an OPTIONS change.

@@ -775,6 +775,8 @@ void ps2x::gs::setAspect(Aspect aspect)
 #else // no pcsx2gs_api.h: the built-in GS only
 
 void ps2x::gs::setAspect(Aspect) {}
+// F10 (ps2_runtime.cpp): the GIF dump is the PCSX2 renderer's; the built-in GS has none.
+void ps2xRequestGifDump(uint32_t, const char *) {}
 
 bool GSPcsx2Backend::Requested() { return false; }
 void GSPcsx2Backend::AttachHostWindow(void *) {}

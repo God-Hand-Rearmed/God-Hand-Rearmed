@@ -1663,4 +1663,12 @@ namespace kamite::options_overlay
         b.hints(view.confirmHint, view.cancelHint);
     }
 #endif
+#if !defined(KAMITE_HAS_SCREEN_OVERLAY)
+    PresetFit fitPresetText(const char *, const char *band, float)
+    {
+        PresetFit fit;
+        fit.band = band ? band : "";
+        return fit;
+    }
+#endif
 }
