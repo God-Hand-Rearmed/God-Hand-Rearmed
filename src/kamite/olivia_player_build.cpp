@@ -1,5 +1,6 @@
 // Playable Olivia's player files (see olivia_player_build.h). The formats: tools/models/gamemodel.py, mot.py.
 #include "kamite/olivia_player_build.h"
+#include "kamite/model_files.h"
 
 #include <algorithm>
 #include <array>
@@ -11,91 +12,7 @@ namespace kamite::olivia_player
 {
     namespace
     {
-        using Bytes = std::vector<uint8_t>;
-
-        uint32_t r32(const Bytes &b, size_t o)
-        {
-            uint32_t v = 0;
-            std::memcpy(&v, b.data() + o, 4);
-            return v;
-        }
-        uint16_t r16(const Bytes &b, size_t o)
-        {
-            uint16_t v = 0;
-            std::memcpy(&v, b.data() + o, 2);
-            return v;
-        }
-        float rf(const Bytes &b, size_t o)
-        {
-            float v = 0.0f;
-            std::memcpy(&v, b.data() + o, 4);
-            return v;
-        }
-        void put32(Bytes &b, size_t o, uint32_t v) { std::memcpy(b.data() + o, &v, 4); }
-        void put16(Bytes &b, size_t o, uint16_t v) { std::memcpy(b.data() + o, &v, 2); }
-        void putf(Bytes &b, size_t o, float v) { std::memcpy(b.data() + o, &v, 4); }
-        void pad(Bytes &b, size_t align)
-        {
-            while (b.size() % align)
-                b.push_back(0);
-        }
-        bool inside(const Bytes &b, size_t at, size_t bytes) { return at <= b.size() && bytes <= b.size() - at; }
-
-        // ---- dat: u32 count, u32 offsets[count] (0 = none), char type[4][count]; entries 32-byte aligned ------------
-        struct Entry
-        {
-            char type[4] = {};
-            Bytes bytes;
-            bool present = false;
-        };
-        bool readDat(const Bytes &dat, std::vector<Entry> &out)
-        {
-            if (dat.size() < 4)
-                return false;
-            const uint32_t n = r32(dat, 0);
-            if (n == 0 || n > 4096 || !inside(dat, 4, 8u * n))
-                return false;
-            std::vector<uint32_t> starts;
-            for (uint32_t i = 0; i < n; ++i)
-                if (const uint32_t o = r32(dat, 4 + 4 * i); o)
-                    starts.push_back(o);
-            std::sort(starts.begin(), starts.end());
-            out.assign(n, Entry{});
-            for (uint32_t i = 0; i < n; ++i)
-            {
-                Entry &e = out[i];
-                std::memcpy(e.type, dat.data() + 4 + 4 * n + 4 * i, 4);
-                const uint32_t at = r32(dat, 4 + 4 * i);
-                if (at == 0)
-                    continue;
-                if (at >= dat.size())
-                    return false;
-                const auto next = std::upper_bound(starts.begin(), starts.end(), at);
-                const uint32_t end = next == starts.end() ? static_cast<uint32_t>(dat.size()) : *next;
-                e.bytes.assign(dat.begin() + at, dat.begin() + end);
-                e.present = true;
-            }
-            return true;
-        }
-        Bytes writeDat(const std::vector<Entry> &entries)
-        {
-            const uint32_t n = static_cast<uint32_t>(entries.size());
-            Bytes o(4 + 8u * n, 0);
-            put32(o, 0, n);
-            for (uint32_t i = 0; i < n; ++i)
-                std::memcpy(o.data() + 4 + 4 * n + 4 * i, entries[i].type, 4);
-            for (uint32_t i = 0; i < n; ++i)
-            {
-                if (!entries[i].present)
-                    continue;
-                pad(o, 0x20);
-                put32(o, 4 + 4 * i, static_cast<uint32_t>(o.size()));
-                o.insert(o.end(), entries[i].bytes.begin(), entries[i].bytes.end());
-            }
-            pad(o, 0x20);
-            return o;
-        }
-        bool entryIs(const Entry &e, const char *type) { return e.present && std::strncmp(e.type, type, 4) == 0; }
+        using namespace model_files; // Bytes, r32 ..., readDat / writeDat, readTm3 / writeTm3
 
         // ---- scr: "scr\0", kind, node count, 0, node offsets; the mdbs; 112-byte node records (+0 mdb, +4 the anchor,
         // +8 name, +16 srt, +52 the rest). The nodes' mdbs are copied as they are (every offset in one is its own).
@@ -535,54 +452,6 @@ namespace kamite::olivia_player
                 }
             }
             return true;
-        }
-
-        // ---- TM3: "TM3", count, 4, 0, offsets, names (8 bytes), TIM3s 64-aligned --------------------------------------
-        using Textures = std::vector<std::pair<std::string, Bytes>>;
-        bool readTm3(const Bytes &t, Textures &out)
-        {
-            if (!inside(t, 0, 16) || std::memcmp(t.data(), "TM3", 3) != 0)
-                return false;
-            const uint32_t n = r32(t, 4);
-            const size_t names = 16 + 4u * n + ((n & 1) ? 4 : 0);
-            if (n == 0 || n > 64 || !inside(t, names, 8u * n))
-                return false;
-            for (uint32_t i = 0; i < n; ++i)
-            {
-                const uint32_t at = r32(t, 16 + 4 * i);
-                uint32_t end = static_cast<uint32_t>(t.size());
-                for (uint32_t k = 0; k < n; ++k)
-                    if (const uint32_t o = r32(t, 16 + 4 * k); o > at && o < end)
-                        end = o;
-                if (at >= end)
-                    return false;
-                const char *name = reinterpret_cast<const char *>(t.data() + names + 8 * i);
-                out.emplace_back(std::string(name, strnlen(name, 8)), Bytes(t.begin() + at, t.begin() + end));
-            }
-            return true;
-        }
-        Bytes writeTm3(const Textures &texs)
-        {
-            const uint32_t n = static_cast<uint32_t>(texs.size());
-            Bytes o{'T', 'M', '3', 0};
-            o.resize(16, 0);
-            put32(o, 4, n);
-            put32(o, 8, 4);
-            o.resize(16 + 4u * n + ((n & 1) ? 4 : 0), 0);
-            for (const auto &[name, tim] : texs)
-            {
-                const size_t at = o.size();
-                o.resize(at + 8, 0);
-                std::memcpy(o.data() + at, name.c_str(), std::min<size_t>(8, name.size()));
-            }
-            for (uint32_t i = 0; i < n; ++i)
-            {
-                pad(o, 64);
-                put32(o, 16 + 4 * i, static_cast<uint32_t>(o.size()));
-                o.insert(o.end(), texs[i].second.begin(), texs[i].second.end());
-            }
-            pad(o, 64);
-            return o;
         }
 
         // ---- skin: a TIM3's palette (+16: picture header; total, CLUT bytes, image bytes, header size; the CLUT after

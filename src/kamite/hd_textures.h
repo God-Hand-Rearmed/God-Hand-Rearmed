@@ -58,4 +58,7 @@ namespace kamite::hd_textures
     };
     bool loadPng(const std::filesystem::path &path, Image &out);
     bool savePng(const std::filesystem::path &path, const Image &image);
+    // An RGB8 image (width x height x 3 bytes) as a PNG without alpha (the painted character textures' images, as the
+    // Python tools save them).
+    bool saveRgbPng(const std::filesystem::path &path, int width, int height, const std::vector<uint8_t> &rgb);
 }

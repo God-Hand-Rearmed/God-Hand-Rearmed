@@ -172,15 +172,13 @@ namespace kamite::disc_files
 
     bool readFromImage(const std::filesystem::path &image, std::string_view path, std::vector<uint8_t> &out)
     {
-        std::ifstream in(image, std::ios::binary);
-        if (!in)
+        PS2DiscImageFile in; // its own reader (.iso or .chd): PS2CdImage may hold another image or none
+        std::string error;
+        if (!in.open(image, error))
             return false;
         auto readAt = [&](uint64_t offset, size_t size, std::vector<uint8_t> &buf) {
             buf.assign(size, 0u);
-            in.clear();
-            in.seekg(static_cast<std::streamoff>(offset));
-            in.read(reinterpret_cast<char *>(buf.data()), static_cast<std::streamsize>(size));
-            return static_cast<size_t>(in.gcount()) == size;
+            return in.read(offset, buf.data(), size);
         };
         constexpr uint64_t kSector = PS2CdImage::kSectorSize;
         // ISO9660: the primary volume descriptor (sector 16) holds the root directory's record at +156.

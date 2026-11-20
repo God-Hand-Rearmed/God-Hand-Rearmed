@@ -21,16 +21,48 @@ namespace kamite
             return image.read(static_cast<uint64_t>(entry.lba) * PS2CdImage::kSectorSize, out.data(), out.size());
         }
 
-        std::string lower(std::string s)
-        {
-            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return s;
-        }
-
         bool cnfBootsGame(const std::vector<uint8_t> &cnf)
         {
             const std::string text(cnf.begin(), cnf.end());
             return text.find("BOOT2") != std::string::npos && text.find(kSystemCnfBoot) != std::string::npos;
+        }
+
+        // The serial SYSTEM.CNF boots ("BOOT2 = cdrom0:\SLES_544.90;1" -> "SLES-54490"), "" if none.
+        std::string cnfSerial(const std::vector<uint8_t> &cnf)
+        {
+            const std::string text(cnf.begin(), cnf.end());
+            const size_t boot = text.find("BOOT2");
+            const size_t slash = boot == std::string::npos ? std::string::npos : text.find('\\', boot);
+            if (slash == std::string::npos)
+                return {};
+            std::string serial;
+            for (size_t i = slash + 1; i < text.size() && text[i] != ';' && text[i] != '\r' && text[i] != '\n'; ++i)
+                if (text[i] == '_')
+                    serial += '-';
+                else if (text[i] != '.')
+                    serial += static_cast<char>(std::toupper(static_cast<unsigned char>(text[i])));
+            return serial;
+        }
+
+        // Why another disc can't be used, in a player's words: God Hand's other releases by name (their serials:
+        // the PCSX2 wiki and psxdatacenter), anything else by its serial.
+        std::string otherDisc(const std::string &serial)
+        {
+            struct Release
+            {
+                const char *serial, *what;
+            };
+            static constexpr Release kReleases[] = {
+                {"SLES-54490", "the European (PAL) release of God Hand"},
+                {"SLPM-66550", "the Japanese release of God Hand"},
+                {"SLPM-74241", "the Japanese \"PlayStation 2 the Best\" release of God Hand"},
+                {"SCKA-20090", "the Korean release of God Hand"},
+            };
+            std::string what = serial.empty() ? std::string("another game") : "another game (" + serial + ")";
+            for (const Release &release : kReleases)
+                if (serial == release.serial)
+                    what = std::string(release.what) + " (" + serial + ")";
+            return "This is " + what + ". " + kWindowTitle + " needs the USA release (" + kSerial + ").";
         }
 
         // Any ISO whose SYSTEM.CNF boots cdrom0:\SLUS_215.03;1 counts here; the boot ELF hash is checked afterwards.
@@ -55,7 +87,9 @@ namespace kamite
                 {
                     if (file.required)
                     {
-                        error = std::string(file.path) + " (" + file.what + ") not found on the disc; expected " + kSerial;
+                        error = std::string("The disc image has no ") + file.path + " (" + file.what +
+                                "): it may be incomplete or damaged. Make a new copy of your " + kGameTitle + " disc (USA, " +
+                                kSerial + ").";
                         return false;
                     }
                     KM_WARN(Boot, file.path << " (" << file.what << ") not found on the disc");
@@ -92,7 +126,7 @@ namespace kamite
                 continue;
             for (const auto &entry : std::filesystem::directory_iterator(root, error))
             {
-                if (entry.is_regular_file(error) && lower(entry.path().extension().string()) == ".iso" && bootsGame(entry.path()))
+                if (entry.is_regular_file(error) && PS2DiscImageFile::hasImageExtension(entry.path()) && bootsGame(entry.path()))
                     return entry.path();
             }
         }
@@ -105,19 +139,21 @@ namespace kamite
         PS2CdImage &image = PS2CdImage::instance();
         if (!image.open(imagePath))
         {
-            result.error = "cannot mount " + imagePath.string() + " as an ISO9660 disc image";
+            result.error = "This file can't be read as a disc image (.iso or .chd).";
+            KM_ERROR(Boot, "cannot mount " << imagePath.string() << " as an ISO9660 disc image (.iso or .chd)");
             return result;
         }
 
         std::vector<uint8_t> systemCnf;
         if (!readWholeFile(image, "SYSTEM.CNF", systemCnf))
         {
-            result.error = "SYSTEM.CNF not found; this is not a PS2 game disc";
+            result.error = std::string("This isn't a PlayStation 2 game disc (it has no SYSTEM.CNF). ") + kWindowTitle +
+                           " needs " + kGameTitle + " (USA, " + kSerial + ").";
             return result;
         }
         if (!cnfBootsGame(systemCnf))
         {
-            result.error = std::string("SYSTEM.CNF does not boot ") + kSystemCnfBoot + "; expected " + kGameTitle + " (" + kSerial + ")";
+            result.error = otherDisc(cnfSerial(systemCnf));
             return result;
         }
         if (!checkDiscFiles(image, result.error))
@@ -132,8 +168,11 @@ namespace kamite
         const std::string bootHash = Sha256::hex(bootElf.data(), bootElf.size());
         if (bootHash != kBootElfSha256)
         {
-            result.error = std::string("boot executable hash mismatch (") + bootHash + "); the recompiled code was built from " +
-                           kSerial + " " + kBootElfSha256;
+            // The USA serial with other game code: a patched copy, a prototype or a review disc.
+            result.error = std::string("This copy's game code differs from the retail USA release (a patched, prototype or "
+                                       "review copy?). ") + kWindowTitle + " needs the retail USA disc (" + kSerial + ").";
+            KM_ERROR(Boot, kBootElfPath << " sha256 " << bootHash << "; the recompiled code was built from " << kSerial << " "
+                                        << kBootElfSha256);
             return result;
         }
         KM_INFO(Boot, kBootElfPath << " sha256 " << bootHash << " (matches " << kSerial << ")");

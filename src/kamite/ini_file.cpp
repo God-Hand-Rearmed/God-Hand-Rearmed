@@ -115,6 +115,40 @@ namespace kamite
         return !(value == "0" || value == "false" || value == "off" || value == "no");
     }
 
+    int IniFile::addMissing(const std::string &text)
+    {
+        std::istringstream lines(text);
+        std::string line, section;
+        int added = 0;
+        constexpr const char *kMissing = "\x01missing";
+        while (std::getline(lines, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            const size_t first = line.find_first_not_of(" \t");
+            if (first == std::string::npos || line[first] == '#' || line[first] == ';')
+                continue;
+            if (line[first] == '[')
+            {
+                const size_t close = line.find(']', first);
+                section = close == std::string::npos ? std::string() : line.substr(first + 1, close - first - 1);
+                continue;
+            }
+            const size_t equals = line.find('=');
+            if (equals == std::string::npos)
+                continue;
+            std::string key = line.substr(first, equals - first);
+            key.erase(key.find_last_not_of(" \t") + 1);
+            if (key.empty() || get(section, key, kMissing) != kMissing)
+                continue;
+            std::string value = line.substr(equals + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            set(section, key, value);
+            ++added;
+        }
+        return added;
+    }
+
     void IniFile::set(const std::string &section, const std::string &key, const std::string &value)
     {
         const int index = find(section, key);

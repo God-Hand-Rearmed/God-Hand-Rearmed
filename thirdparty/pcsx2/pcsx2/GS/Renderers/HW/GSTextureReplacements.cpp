@@ -27,6 +27,7 @@
 namespace pcsx2gs
 {
 	const std::vector<std::string>& ExtraTextureFolders();
+	const std::vector<std::string>& FirstTextureFolders();
 }
 
 #include <cinttypes>
@@ -467,7 +468,15 @@ void GSTextureReplacements::ReloadReplacementMap()
 	}
 
 	files.clear();
-	FileSystem::FindFiles(replacement_dir.c_str(), "*", FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RECURSIVE, &files);
+	// pcsx2gs (Kamite): folders before the pack (the enabled mods' textures/, the winner first): the first image of a
+	// name is the one used (AddReplacementTexture's emplace).
+	for (const std::string& first : pcsx2gs::FirstTextureFolders())
+	{
+		const size_t before = files.size();
+		FileSystem::FindFiles(first.c_str(), "*", FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RECURSIVE | FILESYSTEM_FIND_KEEP_ARRAY, &files);
+		std::fprintf(stderr, "[pcsx2-gs] %zu replacement textures in %s (ahead of the pack)\n", files.size() - before, first.c_str());
+	}
+	FileSystem::FindFiles(replacement_dir.c_str(), "*", FILESYSTEM_FIND_FILES | FILESYSTEM_FIND_HIDDEN_FILES | FILESYSTEM_FIND_RECURSIVE | FILESYSTEM_FIND_KEEP_ARRAY, &files);
 	// pcsx2gs (Kamite): more replacement folders from the host, e.g. a character mod's own textures.
 	for (const std::string& extra : pcsx2gs::ExtraTextureFolders())
 	{

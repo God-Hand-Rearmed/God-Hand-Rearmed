@@ -2768,6 +2768,52 @@ namespace kamite::body_detail
                     under->D[i] = r1.c + r1.u * allowed - under->m.P[i];
             }
         }
+        // The skirt's waistband kept off the body under it (K, Nov 20: Olivia's belt z-fought above 120% Cash). At the
+        // back of her waist (y ~1.09) the band's edge sits 3-4.5 mm off the dress, and the dress, whose triangles there
+        // span heights the field grows differently, closed the gap to 0 at 130%. Each skirt record within 2 x kBand of
+        // the body is pushed away from it (the direction to it at rest) at full growth by what keeps its gap, up to kBand,
+        // at every size (growth is linear in Cash: checked at quarters). Records touching the body at rest stay so.
+        if (skirt && under)
+        {
+            constexpr double kBand = 0.004;
+            const size_t ut = under->m.triangles();
+            const auto nearest = [&](D3 p, double f, D3 *at) {
+                double best = 1e9;
+                for (size_t t = 0; t < ut; ++t)
+                {
+                    const int a = under->m.T[3 * t], b = under->m.T[3 * t + 1], c = under->m.T[3 * t + 2];
+                    const D3 A = under->m.P[a] + under->D[a] * f, B = under->m.P[b] + under->D[b] * f,
+                             C = under->m.P[c] + under->D[c] * f;
+                    const D3 lo{std::min({A.x, B.x, C.x}), std::min({A.y, B.y, C.y}), std::min({A.z, B.z, C.z})};
+                    const D3 hi{std::max({A.x, B.x, C.x}), std::max({A.y, B.y, C.y}), std::max({A.z, B.z, C.z})};
+                    if (p.x < lo.x - best || p.x > hi.x + best || p.y < lo.y - best || p.y > hi.y + best ||
+                        p.z < lo.z - best || p.z > hi.z + best)
+                        continue;
+                    const D3 q = triClosest(p, A, B, C);
+                    if (const double d = len(p - q); d < best)
+                    {
+                        best = d;
+                        if (at)
+                            *at = q;
+                    }
+                }
+                return best;
+            };
+            for (size_t i = 0; i < skirt->D.size(); ++i)
+            {
+                const D3 p = skirt->m.P[i];
+                D3 q;
+                const double g0 = nearest(p, 0.0, &q);
+                if (g0 > 2.0 * kBand || g0 < 1e-5)
+                    continue;
+                const double target = std::min(g0, kBand);
+                double need = 0.0;
+                for (double f : {0.25, 0.5, 0.75, 1.0})
+                    need = std::max(need, (target - nearest(p + skirt->D[i] * f, f, nullptr)) / f);
+                if (need > 0.0)
+                    skirt->D[i] = skirt->D[i] + (p - q) * (need / g0);
+            }
+        }
         if (plate) // a belt plate over the skirt: pushed out so what is under it stays under it
         {
             D3 lo{1e9, 1e9, 1e9}, hi{-1e9, -1e9, -1e9};

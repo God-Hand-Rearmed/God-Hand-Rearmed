@@ -14,14 +14,14 @@ What you need
 Two ways to run it
 ------------------
 The AppImage (one file):
-    chmod +x GHR-v{version}-x86_64.AppImage
-    ./GHR-v{version}-x86_64.AppImage
+    chmod +x GHR-v{version}-Linux-x64.AppImage
+    ./GHR-v{version}-Linux-x64.AppImage
   Settings, saves, logs and mods go to ~/.local/share/GodHandRearmed. To keep them beside the AppImage instead, make a
   folder named GHR-data next to it before the first start.
   If it says FUSE is missing, run it with APPIMAGE_EXTRACT_AND_RUN=1 set, or install your distribution's fuse package.
 
-The folder (GHR-v{version}-linux-x86_64.tar.gz):
-    tar xf GHR-v{version}-linux-x86_64.tar.gz
+The folder (GHR-v{version}-Linux-x64.tar.gz):
+    tar xf GHR-v{version}-Linux-x64.tar.gz
     "God Hand Rearmed/GHR"
   Unpack it anywhere you can write to. Settings and saves live inside the folder, like the Windows version.
   ./install-desktop-entry.sh adds it to your application menu.

@@ -243,12 +243,12 @@ for i,(n,t) in sorted(textures.items()):
     print('HD',n,big.shape[1],'x',big.shape[0],'->',name)
 open(OUT+'/xavier_textures.tm3','wb').write(tm)
 print('scr',len(scr),'tm3',len(tm))
-# The size check: the merge exactly as the build does it (build_characters.merge_file), against GENE_PL00. The game
-# reads pl/pl00.dat into a buffer of PLAYER_BUFFER bytes it allocates once (heap A, 0x30D7A8). The port can grow that
-# buffer for a larger file, but a save state keeps the buffer of the build it was made with, and a larger file then
-# overran it (the game hung, Oct 27). So the file must fit the game's own buffer: XAVIER_GROW_MAX (bytes over it) is 0.
+# The size: the merge exactly as the build does it (build_characters.merge_file), against GENE_PL00 and the game's own
+# player buffer (PLAYER_BUFFER bytes, allocated once in heap A, 0x30D7A8). Since the limit break a bigger pl00.dat is
+# served at the read and that buffer swapped for one from the extension RAM (save states keep it), so the file may be
+# any size; XAVIER_GROW_MAX (bytes over the buffer) can still set a cap.
 PLAYER_BUFFER=0x1E6800
-GROW_MAX=int(os.environ.get('XAVIER_GROW_MAX',0))
+GROW_MAX=int(os.environ.get('XAVIER_GROW_MAX',1<<30))
 ROOT=os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0,os.path.join(ROOT,'tools','models'))
 from build_characters import merge_file

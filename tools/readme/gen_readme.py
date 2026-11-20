@@ -27,8 +27,8 @@ README = ROOT / "README.md"
 INPUT = ROOT / "runtime" / "ps2xRuntime" / "src" / "lib" / "ps2_host_input.cpp"
 SOURCES = ["tools/readme/dump_tables.cpp", "src/kamite/settings_table.cpp", "src/kamite/presets.cpp",
            "src/kamite/ini_file.cpp"]
-# Not listed: hidden in this release (no character besides Gene ships).
-SKIPPED = {"Character"}
+# Not listed: no character in a release has costumes yet (Olivia's are in test builds only).
+SKIPPED = {"Costume"}
 
 
 def dump_tables():

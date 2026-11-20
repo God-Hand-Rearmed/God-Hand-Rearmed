@@ -136,6 +136,13 @@ static uint64_t fnv(const void *p, size_t n, uint64_t h = 0xCBF29CE484222325ull)
 
 static double g_vuSeconds = 0.0;
 static bool g_native = false; // runOne(compiled): a native program first where one matches (native mode)
+// VU1_REPLAY_CLEAR_STICKY=1 (native mode): every run starts with the status register's sticky Z/S/U/O bits clear, as at
+// the start of a session; the native programs set them (src/kamite/render/vu_vec.h kStatusStickyFlags), so those bits
+// are left out of the status comparison.
+static const bool g_clearSticky = [] {
+    const char *v = std::getenv("VU1_REPLAY_CLEAR_STICKY");
+    return v && *v == '1';
+}();
 static uint64_t g_nativeRuns = 0, g_nativeDeclined = 0;
 static Outcome runOne(const Run &run, std::vector<uint8_t> &code, bool compiled)
 {
@@ -145,6 +152,8 @@ static Outcome runOne(const Run &run, std::vector<uint8_t> &code, bool compiled)
     Outcome out;
     out.data = run.data;
     VU1InterpreterAccess::traceRestore(vu, run.state);
+    if (g_clearSticky)
+        vu.state().status &= ~0x3C0u;
     VU1InterpreterAccess::CompiledProgram program = nullptr;
     if (compiled)
     {
@@ -642,7 +651,8 @@ int main(int argc, char **argv)
             scalar("i", ia, ib);
             scalar("clip", fast.state.clip, slow.state.clip);
             scalar("mac", fast.state.mac, slow.state.mac);
-            scalar("status", fast.state.status, slow.state.status);
+            scalar("status", fast.state.status & (g_clearSticky ? ~0x3C0u : ~0u),
+                   slow.state.status & (g_clearSticky ? ~0x3C0u : ~0u));
             scalar("pc", fast.state.pc, slow.state.pc);
             scalar("cycles", fast.cycle - runs[i].state.cycle, slow.cycle - runs[i].state.cycle);
             size_t dataDiff = 0;

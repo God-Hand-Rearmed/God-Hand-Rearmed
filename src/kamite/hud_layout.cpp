@@ -666,6 +666,7 @@ namespace kamite::hud
         // cIDBase_trans, before an entry is drawn: $a1 = the entry (noted for the F6 dump; the roulette's hint bar is
         // laid out again here, roulette_bar.h).
         bool g_entryOverride = false; // g_ctx replaced for one entry (the style indicator); put back at the next
+        bool g_styleEntry = false; // this entry carries the style letters (the gold counter's alignment leaves it alone)
         Context g_savedCtx;
 
         void idEntry(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
@@ -684,7 +685,8 @@ namespace kamite::hud
             // The style indicator (Nov 10) goes round the minimap: the minimap's anchor, its own group. With the keyboard
             // it is the line over the level meter (K, Nov 16): the left edge's anchor, as before.
             bool leftEdge = false;
-            if (style_presets::onHudEntry(g_entry))
+            g_styleEntry = style_presets::onHudEntry(g_entry);
+            if (g_styleEntry)
             {
                 if (!style_presets::lettersOnRadar())
                     leftEdge = true;
@@ -718,6 +720,7 @@ namespace kamite::hud
         void idEnd(uint8_t *, R5900Context *, PS2Runtime *)
         {
             g_entryOverride = false;
+            g_styleEntry = false;
             g_idCaller = 0u;
             g_inIdTrans = false;
             g_ctx = g_region == Region::Forced ? g_regionCtx : g_region == Region::Inherit ? g_lastEntry : Context{};
@@ -729,7 +732,9 @@ namespace kamite::hud
         // drawn from a fixed left x, K Oct 29). Shadow kept at its offset from the number.
         void moneyText(uint8_t *rdram, R5900Context *ctx, PS2Runtime *)
         {
-            if (!g_inIdTrans || g_moneyLayout == 0u || g_curLayout != g_moneyLayout || g_entryOverride || menuNow() ||
+            // The style letters ride in the same two entries: the keyboard's line over the level meter at 4:3 (no
+            // override there) was right-aligned to the minimap with the counter (K, Nov 20).
+            if (!g_inIdTrans || g_moneyLayout == 0u || g_curLayout != g_moneyLayout || g_entryOverride || g_styleEntry || menuNow() ||
                 !std::isfinite(g_radarRight))
                 return;
             const uint32_t text = read32(rdram, g_moneyLayout + kMoneyText) & PS2_RAM_MASK;

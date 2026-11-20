@@ -2228,6 +2228,29 @@ address = "0x002C3308"
 hook = "km_dbg_room_reset"
 flag = "debug_cheats"
 
+# The main loop's wait for the next frame (src/kamite/frame_wait.cpp): in each of its four spins, after the movie poll
+# returns and before the counter is read, the EE clock runs to the next event instead of spinning (no movie playing).
+# Flag frame_hook (always on; KAMITE_FRAME_WAIT=0 is checked in the hook): the patch flags are 32 at most.
+[[patches.hooks]]
+address = "0x0030ADA0"
+hook = "km_frame_wait_vblank_word"
+flag = "frame_hook"
+
+[[patches.hooks]]
+address = "0x0030ADE0"
+hook = "km_frame_wait_vblank"
+flag = "frame_hook"
+
+[[patches.hooks]]
+address = "0x0030AE40"
+hook = "km_frame_wait_timer_word"
+flag = "frame_hook"
+
+[[patches.hooks]]
+address = "0x0030AE80"
+hook = "km_frame_wait_timer"
+flag = "frame_hook"
+
 # Top of the main loop, after the wait for the next frame: frame divider, stick hold (fps60), L3 dash, frame count.
 [[patches.hooks]]
 address = "0x0030ADF4"

@@ -340,4 +340,24 @@ namespace kamite::hd_textures
         MemFree(png);
         return static_cast<bool>(out);
     }
+
+    bool saveRgbPng(const fs::path &path, int width, int height, const std::vector<uint8_t> &rgb)
+    {
+        if (width <= 0 || height <= 0 || rgb.size() != static_cast<size_t>(width) * static_cast<size_t>(height) * 3u)
+            return false;
+        ::Image raw{};
+        raw.data = const_cast<uint8_t *>(rgb.data());
+        raw.width = width;
+        raw.height = height;
+        raw.mipmaps = 1;
+        raw.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8;
+        int size = 0;
+        unsigned char *png = ExportImageToMemory(raw, ".png", &size);
+        if (!png || size <= 0)
+            return false;
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(png), size);
+        MemFree(png);
+        return static_cast<bool>(out);
+    }
 }

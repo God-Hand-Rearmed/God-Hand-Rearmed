@@ -25,7 +25,7 @@ body:
     id: log
     attributes:
       label: Log
-      description: Drag `logs\kamite.log` (next to GHR.exe) in here. Grab it right after the problem, before starting the game again.
+      description: Drag `logs\kamite.log` (next to GHR.exe) in here. Started the game again since? The session before is `logs\kamite.1.log`.
   - type: dropdown
     id: fps
     attributes:

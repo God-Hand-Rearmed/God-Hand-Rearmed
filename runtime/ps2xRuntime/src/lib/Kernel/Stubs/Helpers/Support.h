@@ -200,7 +200,11 @@ namespace
         if (!g_cdImageSizeValid || g_cdImageSizePath != imagePath)
         {
             std::error_code ec;
-            g_cdImageSizeBytes = static_cast<uint64_t>(std::filesystem::file_size(imagePath, ec));
+            // The disc's size as PS2CdImage reads it (a .chd's file is smaller than the disc it holds).
+            if (PS2CdImage::instance().ensureOpenFromIoPaths())
+                g_cdImageSizeBytes = PS2CdImage::instance().sizeBytes();
+            else
+                g_cdImageSizeBytes = static_cast<uint64_t>(std::filesystem::file_size(imagePath, ec));
             g_cdImageSizePath = imagePath;
             g_cdImageSizeValid = !ec;
         }

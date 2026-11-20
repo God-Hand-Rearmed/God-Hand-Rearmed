@@ -57,29 +57,6 @@ class Facts(unittest.TestCase):
     def test_version_matches_header(self):
         self.assertRegex(package.read_version(), r"^\d+(\.\d+)+$")
 
-    def test_release_pairs_come_from_cmake(self):
-        pairs = package.release_pairs()
-        self.assertIn("Headless=0", pairs)
-        self.assertIn("TimeLimitSeconds=0", pairs)
-        self.assertTrue(all("=" in p for p in pairs))
-
-    def test_release_ini_sets_every_key_like_cmake(self):
-        template = "[Run]\n# Headless=1 in a comment stays\nHeadless=1\nTimeLimitSeconds=120\n[Video]\nRenderer=builtin\n"
-        out = package.release_ini(template, ["Headless=0", "TimeLimitSeconds=0", "Renderer=pcsx2"])
-        self.assertIn("\nHeadless=0\n", out)
-        self.assertIn("\nTimeLimitSeconds=0\n", out)
-        self.assertIn("\nRenderer=pcsx2\n", out)
-        self.assertIn("# Headless=1 in a comment stays", out)
-
-    def test_release_ini_refuses_a_missing_key(self):
-        with self.assertRaises(package.PackageError):
-            package.release_ini("[Run]\nHeadless=1\n", ["Nope=1"])
-
-    def test_release_ini_of_the_real_template(self):
-        out = package.release_ini((ROOT / "GHR.ini").read_text(), package.release_pairs())
-        for pair in package.release_pairs():
-            self.assertRegex(out, rf"\n{re.escape(pair)}\n")
-
     def test_icon_has_every_size(self):
         icons = package.icon_pngs(ROOT / "src" / "kamite" / "ghr.ico")
         for size in package.ICON_SIZES:
@@ -194,21 +171,21 @@ class Program(unittest.TestCase):
             out_dir.mkdir()
             outs.append(package.build_tar(bin_dir, out_dir, "GHR-v1", "1", 1700000000, False, None))
         self.assertEqual(hashlib.sha256(outs[0].read_bytes()).digest(), hashlib.sha256(outs[1].read_bytes()).digest())
-        self.assertEqual(outs[0].name, "GHR-v1-linux-x86_64.tar.gz")
+        self.assertEqual(outs[0].name, "GHR-v1-Linux-x64.tar.gz")
         with tarfile.open(outs[0]) as tar:
             members = {m.name: m for m in tar.getmembers()}
         top = package.FOLDER_NAME
-        for name in ("GHR", "GHR.ini", "README.txt", "LICENSE", "licenses", "resources/fonts/a.ttf",
+        for name in ("GHR", "README.txt", "LICENSE", "licenses", "resources/fonts/a.ttf",
                      "godhandrearmed.png", "install-desktop-entry.sh"):
             self.assertIn(f"{top}/{name}", members)
         self.assertEqual(members[f"{top}/GHR"].mode, 0o755)
         self.assertEqual(members[f"{top}/install-desktop-entry.sh"].mode, 0o755)
-        self.assertEqual(members[f"{top}/GHR.ini"].mode, 0o644)
+        self.assertEqual(members[f"{top}/README.txt"].mode, 0o644)
         self.assertTrue(all(m.uid == 0 and m.mtime == 1700000000 for m in members.values()))
         self.assertNotIn(f"{top}/logs", members)
-        with tarfile.open(outs[0]) as tar:
-            ini = tar.extractfile(f"{top}/GHR.ini").read().decode()
-        self.assertIn("\nHeadless=0\n", ini)  # the players' values, not the developer's leftover file
+        # No settings files: GHR writes them at the first start; an update must never replace the player's.
+        self.assertNotIn(f"{top}/GHR.ini", members)
+        self.assertNotIn(f"{top}/controls.ini", members)
         readme = (ROOT / "tools" / "linux" / "README-linux.txt").read_text().replace("{version}", "1")
         with tarfile.open(outs[0]) as tar:
             self.assertEqual(tar.extractfile(f"{top}/README.txt").read().decode(), readme)
@@ -225,7 +202,7 @@ class Program(unittest.TestCase):
         self.assertEqual(code, 0)
         made = list((self.tmp / "dist").iterdir())
         self.assertEqual(len(made), 1)
-        self.assertIn("-stub-linux-x86_64.tar.gz", made[0].name)
+        self.assertIn("-stub-Linux-x64.tar.gz", made[0].name)
 
     def test_nonportable_build_is_refused(self):
         # A binary compiled here needs this machine's glibc (2.34+ for any current one) or more: not portable.
@@ -245,7 +222,7 @@ class Program(unittest.TestCase):
         out_dir.mkdir()
         package.build_tar(bin_dir, out_dir, "GHR-v1", "1", 0, False, shutil.which("objcopy"))
         self.assertTrue((out_dir / "GHR-v1.debug").exists())
-        with tarfile.open(out_dir / "GHR-v1-linux-x86_64.tar.gz") as tar:
+        with tarfile.open(out_dir / "GHR-v1-Linux-x64.tar.gz") as tar:
             shipped = tar.extractfile(f"{package.FOLDER_NAME}/GHR").read()
         self.assertLess(len(shipped), before)
         self.assertIn(b".gnu_debuglink", shipped)
@@ -257,7 +234,7 @@ class Program(unittest.TestCase):
         out_dir = self.tmp / "dist"
         out_dir.mkdir()
         out = package.build_appimage(bin_dir, out_dir, "GHR-v1", "1", 0, False, runtime, shutil.which("mksquashfs"), None)
-        self.assertEqual(out.name, "GHR-v1-x86_64.AppImage")
+        self.assertEqual(out.name, "GHR-v1-Linux-x64.AppImage")
         self.assertTrue(os.access(out, os.X_OK))
         data = out.read_bytes()
         self.assertTrue(data.startswith(runtime))

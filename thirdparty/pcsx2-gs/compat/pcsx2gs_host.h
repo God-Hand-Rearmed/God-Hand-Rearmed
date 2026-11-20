@@ -19,6 +19,9 @@ namespace pcsx2gs
     // More folders searched like replacements/ (any layout below them), e.g. a character mod's textures.
     void AddExtraTextureFolder(const std::string &folder);
     const std::vector<std::string> &ExtraTextureFolders();
+    // Folders searched before replacements/ (the first image of a name wins): the enabled mods' textures/.
+    void AddFirstTextureFolder(const std::string &folder);
+    const std::vector<std::string> &FirstTextureFolders();
     // Field rate the GS paces for (GetVerticalFrequency), e.g. 59.94.
     void SetVerticalFrequency(double hz);
     // Texts ImGuiManager::RenderOSD draws (pcsx2gs_api.h set_osd); thread-safe.

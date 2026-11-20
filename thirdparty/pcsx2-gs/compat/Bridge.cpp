@@ -329,6 +329,28 @@ namespace
                 }
                 continue;
             }
+            if (key == "texture_first")
+            {
+                // Folders searched before the pack's replacements/ (the enabled mods' textures/), '|' between them, the
+                // winner first; on even without a pack.
+                size_t start = 0;
+                while (start <= text.size())
+                {
+                    const size_t bar = text.find('|', start);
+                    const std::string folder = text.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+                    if (!folder.empty())
+                        pcsx2gs::AddFirstTextureFolder(folder);
+                    if (bar == std::string::npos)
+                        break;
+                    start = bar + 1;
+                }
+                if (!pcsx2gs::FirstTextureFolders().empty())
+                {
+                    options.LoadTextureReplacements = true;
+                    options.LoadTextureReplacementsAsync = true;
+                }
+                continue;
+            }
             const auto clampU8 = [](int v, int lo, int hi) { return static_cast<u8>(std::clamp(v, lo, hi)); };
             if (ApplyGraphicsOption(options, key, value)) // fxaa, trilinear, anisotropy, brightness_percent
                 UpdateShadeBoost(options);

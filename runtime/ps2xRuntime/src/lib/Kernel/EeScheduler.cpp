@@ -999,30 +999,51 @@ uint64_t EeScheduler::consumeCycles(uint64_t cycles) noexcept
     return consumed;
 }
 
+// For a guest spin that only an interrupt or a scheduler event can end (the port's hooks call it in the spin, e.g. the
+// main loop's wait for the next frame: src/kamite/frame_wait.cpp). The EE clock runs to the next event the way the
+// spin's own checkpoints would take it there (EE timers, the IOP and the GS interrupt poll in accountCycles; the host
+// pacing check, which in the MTVU model holds the EE back while the VU/GIF workers are busy), without running guest
+// code, and stops as soon as something is due (m_checkpointPending): the guest's next checkpoint unwinds to it as
+// before. Returns the cycles skipped; 0 inside an interrupt, a host call or an invocation, with one pending, or while a
+// thread of the same or a higher priority is ready (the time slice would hand it the EE). Lower-priority threads stay
+// starved, as they are on the PS2 while the guest spins.
 uint64_t EeScheduler::skipIdleCycles() noexcept
 {
     const GuestThread *running = currentThread();
-    if (running == nullptr || m_insideInterrupt || !running->invocations.empty() ||
-        hasReadyAtOrAbovePriority(running->currentPriority))
+    if (running == nullptr || m_insideInterrupt || m_hostCallDepth != 0u || !running->invocations.empty() ||
+        !m_pendingInvocations.empty() || hasReadyAtOrAbovePriority(running->currentPriority))
     {
         return 0u;
     }
+    if (g_ps2xEeDeferred != 0u)
+        accountCycles(0u); // the checkpoints' deferred cycles first
 
     uint64_t skipped = 0u;
     while (!m_checkpointPending.load(std::memory_order_acquire) &&
+           !m_stopRequested.load(std::memory_order_acquire) &&
            !m_rescheduleRequested &&
            m_pendingInvocations.empty())
     {
-        const uint64_t nextEventCycle = m_nextDeadlineCycle.load(std::memory_order_acquire);
-        if (nextEventCycle == 0u || m_eeCycle >= nextEventCycle)
+        if (m_hostPacing && m_eeCycle >= m_pacingCheckCycle)
         {
+            hostCatchUp(); // moves m_pacingCheckCycle on
+            continue;
+        }
+        const uint64_t nextEventCycle = m_nextDeadlineCycle.load(std::memory_order_acquire);
+        const uint64_t timerCycles = m_runtime.memory().cyclesUntilNextEeTimerInterrupt();
+        if (nextEventCycle == 0u && timerCycles == std::numeric_limits<uint64_t>::max())
+            break; // nothing scheduled that could end the spin: leave it to the guest
+        if (nextEventCycle != 0u && m_eeCycle >= nextEventCycle)
+        {
+            m_checkpointPending.store(true, std::memory_order_release);
             break;
         }
-        const uint64_t step = std::min({nextEventCycle - m_eeCycle,
-                                        kIdleSkipStepCycles,
-                                        m_runtime.memory().cyclesUntilNextEeTimerInterrupt()});
+        uint64_t step = std::min(kIdleSkipStepCycles, timerCycles);
+        if (nextEventCycle != 0u)
+            step = std::min(step, nextEventCycle - m_eeCycle);
         if (step == 0u)
         {
+            m_checkpointPending.store(true, std::memory_order_release);
             break;
         }
         accountCycles(static_cast<uint32_t>(step));

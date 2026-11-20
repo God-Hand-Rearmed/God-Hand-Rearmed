@@ -21,6 +21,9 @@ namespace kamite
         // does not exist).
         void set(const std::string &section, const std::string &key, const std::string &value);
         void setBool(const std::string &section, const std::string &key, bool value) { set(section, key, value ? "1" : "0"); }
+        // Adds the keys this file lacks from another settings text (a release's defaults), each at the end of its
+        // section; the file's own values and order stay. Returns how many were added (not saved).
+        int addMissing(const std::string &text);
 
     private:
         int find(const std::string &section, const std::string &key) const; // line index or -1

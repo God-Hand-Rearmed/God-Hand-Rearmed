@@ -6,6 +6,7 @@
 #include "kamite/file_layer.h"
 #include "kamite/function_hooks.h"
 #include "kamite/log.h"
+#include "kamite/mods.h"
 #include "kamite/olivia_model.h"
 #include "runtime/ps2_cd_image.h"
 #include "ps2_runtime.h"
@@ -241,6 +242,12 @@ namespace kamite::body_detail
                 const auto file = disc_files::find(path);
                 if (!file)
                     continue;
+                // A mod's own file shows as it is (mod-support decision 3; rebuilding from it is step 3).
+                if (const std::string *mod = mods::replacing(path))
+                {
+                    KM_INFO(Boot, "body detail: " << path << " comes from the mod " << *mod << "; left as the mod has it");
+                    continue;
+                }
                 const bool whole = std::any_of(blocks.begin(), blocks.end(), [](const Placed &p) { return p.scr.size() > p.room; });
                 if (!whole)
                 {
@@ -475,6 +482,11 @@ namespace kamite::body_detail
                 std::copy(block.begin(), block.end(), olivia.dat.begin() + olivia.md);
             g_grownBlocks[g.file] = block;
             ++grown;
+        }
+        if (oliviaBuilt && mods::replacing("em/ema0.dat"))
+        {
+            KM_INFO(Boot, "body detail: em/ema0.dat comes from the mod " << *mods::replacing("em/ema0.dat") << "; gameplay Olivia left as the mod has her");
+            oliviaBuilt = false;
         }
         if (oliviaBuilt)
         {

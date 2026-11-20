@@ -5,12 +5,42 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+// A disc image file read as the disc's 2048-byte sectors: a plain .iso, or a CHD (MAME's compressed image, libchdr:
+// chdman createdvd, or createcd's 2448-byte frames with MODE1 / MODE2 data). Not thread-safe (PS2CdImage locks).
+class PS2DiscImageFile
+{
+public:
+    PS2DiscImageFile();
+    ~PS2DiscImageFile();
+    PS2DiscImageFile(const PS2DiscImageFile &) = delete;
+    PS2DiscImageFile &operator=(const PS2DiscImageFile &) = delete;
+
+    // False when the file can't be opened or holds no disc this reads; error says why.
+    bool open(const std::filesystem::path &path, std::string &error);
+    void close();
+    bool isOpen() const;
+    bool isChd() const;
+    uint64_t sizeBytes() const; // the disc's data, 2048 bytes a sector (a .chd's file is smaller)
+    // False past the end or when a compressed hunk can't be decoded.
+    bool read(uint64_t offset, void *destination, size_t size);
+
+    // .iso or .chd (the disc images a folder search picks up).
+    static bool hasImageExtension(const std::filesystem::path &path);
+
+private:
+    struct Chd;
+    std::FILE *m_file = nullptr;
+    std::unique_ptr<Chd> m_chd;
+    uint64_t m_size = 0;
+};
 
 class PS2CdImage
 {
@@ -47,7 +77,7 @@ private:
     bool readUnlocked(uint64_t offset, void *destination, size_t size) const;
 
     mutable std::mutex m_mutex;
-    std::FILE *m_file = nullptr;
+    mutable PS2DiscImageFile m_image;
     std::filesystem::path m_path;
     uint64_t m_size = 0;
     bool m_openAttempted = false;

@@ -190,8 +190,8 @@ namespace
     void testPickAsset()
     {
         using archive::Package;
-        const std::vector<std::string> all = {"GHR-v0.7.0-x86_64.AppImage.zsync", "GHR-v0.7.0-linux-x86_64.tar.gz",
-                                              "GHR-v0.7.0-x86_64.AppImage", "GHR-v0.7.0.zip", "SHA256SUMS.txt"};
+        const std::vector<std::string> all = {"GHR-v0.7.0-Linux-x64.AppImage.zsync", "GHR-v0.7.0-Linux-x64.tar.gz",
+                                              "GHR-v0.7.0-Linux-x64.AppImage", "GHR-v0.7.0.zip", "SHA256SUMS.txt"};
         CHECK_EQ(archive::pickAsset(all, Package::WindowsZip), 3);
         CHECK_EQ(archive::pickAsset(all, Package::LinuxFolder), 1);
         CHECK_EQ(archive::pickAsset(all, Package::LinuxAppImage), 2);
@@ -199,15 +199,15 @@ namespace
         CHECK_EQ(archive::pickAsset({"ghr-V0.7.0-LINUX-X86_64.TAR.GZ"}, Package::LinuxFolder), 0);
         CHECK_EQ(archive::pickAsset({"GHR-V0.7.0.ZIP"}, Package::WindowsZip), 0);
         // Windows never takes a Linux download, whatever it is packed in.
-        const std::vector<std::string> linuxOnly = {"GHR-v0.7.0-linux-x86_64.tar.gz", "GHR-v0.7.0-x86_64.AppImage",
-                                                    "GHR-v0.7.0-linux-x86_64.zip", "GHR-v0.7.0-x86_64.AppImage.zip"};
+        const std::vector<std::string> linuxOnly = {"GHR-v0.7.0-Linux-x64.tar.gz", "GHR-v0.7.0-Linux-x64.AppImage",
+                                                    "GHR-v0.7.0-Linux-x64.zip", "GHR-v0.7.0-Linux-x64.AppImage.zip"};
         CHECK_EQ(archive::pickAsset(linuxOnly, Package::WindowsZip), -1);
         // Linux never takes the Windows zip; each Linux form only its own.
         CHECK_EQ(archive::pickAsset({"GHR-v0.7.0.zip"}, Package::LinuxFolder), -1);
         CHECK_EQ(archive::pickAsset({"GHR-v0.7.0.zip"}, Package::LinuxAppImage), -1);
-        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-x86_64.AppImage"}, Package::LinuxFolder), -1);
-        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-linux-x86_64.tar.gz"}, Package::LinuxAppImage), -1);
-        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-linux-aarch64.tar.gz", "GHR-v0.7.0-aarch64.AppImage"}, Package::LinuxFolder), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-x64.AppImage"}, Package::LinuxFolder), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-x64.tar.gz"}, Package::LinuxAppImage), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-arm64.tar.gz", "GHR-v0.7.0-Linux-arm64.AppImage"}, Package::LinuxFolder), -1);
         CHECK_EQ(archive::pickAsset({}, Package::WindowsZip), -1);
         // The tester zips stay a zip (Windows' rule as it was).
         CHECK_EQ(archive::pickAsset({"GHR-tester-1a2b3c4-1795100000.zip"}, Package::WindowsZip), 0);

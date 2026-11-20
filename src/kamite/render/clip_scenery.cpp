@@ -546,11 +546,6 @@ namespace kamite::render
             if (count <= 0 || count > kMaxVertices || top < kLowEnd || out + 1 + 3 * count > kStackTop - 16 ||
                 (mem.word(top, 0) & 0x8000u) == 0u || ((mem.word(top, 1) >> 26) & 3u) == 3u)
                 return false;
-            // Declined until the status register's sticky zero / sign / underflow / overflow bits are all set (within
-            // the game's first 3D frame; never cleared again).
-            if ((st.status & 0x3C0u) != 0x3C0u)
-                return false;
-
             const VuFloatEnv env;
             Constants k;
             for (int i = 0; i < 4; ++i)
@@ -762,7 +757,7 @@ namespace kamite::render
 
             // Flags: the run's last FMAC is the next vertex's MADDw (vf23), the clip tests' MULx vf31 when the last
             // triangle went to them, or the clipper's last; the last DIV is 1 / vf23.w; the sticky bits gather every
-            // DIV's divide-by-zero / 0/0 (the others are set).
+            // DIV's divide-by-zero / 0/0, and the sticky zero / sign / underflow / overflow are set (kStatusStickyFlags).
             LastFmac lastFmac{LastFmac::Madd, nextPart, k.toScreen[3], splat(1.0f)};
             if (lastClipped)
                 lastFmac = clipper.last;
@@ -770,7 +765,8 @@ namespace kamite::render
                 lastFmac = {LastFmac::Mul, k.zeroW, splat(0.0f)};
             uint32_t statusLow = 0u;
             st.mac = lastFmac.flags(statusLow);
-            st.status = (st.status & 0xFC0u) | statusLow | (lane<3>(norm(nextScreenH)) == 0.0f ? 0x20u : 0u) | divSticky;
+            st.status = (st.status & 0xFC0u) | kStatusStickyFlags | statusLow |
+                        (lane<3>(norm(nextScreenH)) == 0.0f ? 0x20u : 0u) | divSticky;
             st.pc = kEndPc;
 
             // 0x0340: the strip's packet (after the clipper's last piece has gone)

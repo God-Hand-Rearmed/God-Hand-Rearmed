@@ -7,13 +7,13 @@ rem window of its own to steal the focus); a replay that ends with an error is t
 rem the case is not stamped, so the next double-click replays it.
 rem Each run also appends the SHA-256 of its CSV / RAM / snapshot files to cases\fingerprints.txt (one line per case
 rem and run): identical lines across builds = the game ran exactly the same. RUNS replays every case that many times
-rem per build (2 while the limit break is being checked). With 2, the whole-RAM snapshots of the previous build
+rem per build (1 normally; 2 to check memory / determinism work: Replay-Cases-Twice.cmd). With 2, the whole-RAM snapshots of the previous build
 rem (.snap.prev.bin) are compared with this build's, leaving out the words that differ between this build's own two
 rem runs (tools\fps60\snap_compare.py; its verdicts go to fingerprints.txt too). Run 1's CSV stays as <case>.<rate>.csv.run1,
 rem so a run whose CSV differs can be compared frame by frame.
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-set RUNS=2
+if not defined RUNS set RUNS=1
 if not exist cases\*.case (
     echo No cases in %~dp0cases
     goto :end

@@ -32,13 +32,51 @@ def overlay(base_rgba, layer_rgba):
 
 
 def quantize16(rgba):
-    """16-colour indices and palette (RGBA, alpha 255) of an opaque image."""
-    q = Image.fromarray(np.ascontiguousarray(rgba[..., :3]), 'RGB').quantize(16, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-    pal3 = np.array(q.getpalette()[:48], np.uint8).reshape(-1, 3)
-    while len(pal3) < 16:
-        pal3 = np.vstack([pal3, pal3[-1:]])
-    pal = np.hstack([pal3[:16], np.full((16, 1), 255, np.uint8)])
-    d = ((rgba[:, :, None, :3].astype(int) - pal[None, None, :, :3].astype(int)) ** 2).sum(-1)
+    """16-colour indices and palette (RGBA, alpha 255) of an opaque image (at most 512x512): a median cut (the box with
+    the largest squared error is split at its population's median along its widest channel, the first channel of
+    R, G, B on ties; each box's colour is its rounded mean), then each pixel's nearest colour (the first on ties).
+    src/kamite/character_build.cpp quantize16 does the same step for step (the game builds characters at boot), so the
+    float steps here are exact (sums of squares below 2^53) and the ties are spelt out."""
+    rgb = np.ascontiguousarray(rgba[..., :3])
+    px = rgb.reshape(-1, 3).astype(np.int64)
+    keys, counts = np.unique((px[:, 0] << 16) | (px[:, 1] << 8) | px[:, 2], return_counts=True)
+    boxes = [[((int(k) >> 16) & 255, (int(k) >> 8) & 255, int(k) & 255, int(c)) for k, c in zip(keys, counts)]]
+    while len(boxes) < 16:
+        best, bi = -1.0, -1
+        for i, b in enumerate(boxes):
+            if len(b) < 2:
+                continue
+            n = sum(c[3] for c in b)
+            s = 0.0
+            for q in range(3):
+                s1 = sum(c[q] * c[3] for c in b)
+                s2 = sum(c[q] * c[q] * c[3] for c in b)
+                s += float(s2) - float(s1 * s1) / float(n)
+            if s > best:
+                best, bi = s, i
+        if bi < 0:
+            break
+        b = boxes[bi]
+        n = sum(c[3] for c in b)
+        rng = [max(c[q] for c in b) - min(c[q] for c in b) for q in range(3)]
+        ch = rng.index(max(rng))
+        b = sorted(b, key=lambda c: (c[ch], c[0], c[1], c[2]))
+        cut, cum = len(b) - 1, 0
+        for i in range(1, len(b)):
+            cum += b[i - 1][3]
+            if 2 * cum >= n:
+                cut = i
+                break
+        boxes[bi] = b[:cut]
+        boxes.append(b[cut:])
+    pal = []
+    for b in boxes:
+        n = sum(c[3] for c in b)
+        pal.append(tuple((sum(c[q] * c[3] for c in b) + n // 2) // n for q in range(3)) + (255,))
+    while len(pal) < 16:
+        pal.append(pal[-1])
+    pal = np.array(pal, np.uint8)
+    d = ((rgb[:, :, None, :].astype(int) - pal[None, None, :, :3].astype(int)) ** 2).sum(-1)
     return np.argmin(d, -1).astype(np.uint8), pal
 
 

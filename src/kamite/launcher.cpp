@@ -16,6 +16,8 @@
 #define KAMITE_LAUNCHER_STEAM 1
 #endif
 #include "kamite/log.h"
+#include "kamite/mod_list.h"
+#include "kamite/mod_zip.h"
 #include "kamite/presets.h"
 #include "kamite/settings_table.h"
 #include "kamite/version.h"
@@ -45,6 +47,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <thread>
@@ -287,6 +290,8 @@ namespace kamite::launcher
             uint32_t bookFocusSeed = 1;
             int bookQuiet = 0;    // frames the focus moves without the pen (a slip switched)
             std::string bookTitle, bookHelp, bookNote; // the right page: the focused row's
+            float bookHelpRoom = 0.0f;  // the help's height on the right page (page units; 0: any): it shrinks to fit
+            float bookHelpSize = 28.0f; // the help's size as drawn (page units)
             int bookChoice = -1;  // the setting whose list is open (kSettings index)
             Sound rustle{};
             bool hasRustle = false;
@@ -2521,7 +2526,7 @@ namespace kamite::launcher
             pushSize(state, 22.0f);
             ImGui::BeginChild("install", ImVec2(width, 0.0f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders |
                                                                   ImGuiChildFlags_AlwaysUseWindowPadding);
-            ImGui::TextWrapped("The port plays from your own disc image (USA, SLUS-21503, the .iso of the disc). "
+            ImGui::TextWrapped("The port plays from your own disc image (USA, SLUS-21503: an .iso, or a .chd of it). "
                                "Nothing is copied: the game reads it while you play, so keep it where it is.");
             ImGui::Spacing();
             if (ImGui::Button("Choose disc image..."))
@@ -3498,7 +3503,7 @@ namespace kamite::launcher
                 const bool allowed = settings::parentAllows(state.ini, s);
                 if (!allowed && !s.greyed)
                     continue;
-                // Character only with a character besides Gene (built from the disc; none in a release yet), Costume only
+                // Character only with a character besides Gene (Xavier, built from the disc at boot, ships), Costume only
                 // for a character with costumes.
                 if (std::strcmp(s.id, "Character") == 0 && !otherCharacters(state))
                     continue;
@@ -3864,6 +3869,7 @@ namespace kamite::launcher
         constexpr const char *kBookTabs[] = {"Presets", "Display", "Graphics", "Interface", "Gameplay", "Sound", "Controls", "Mods"};
         constexpr int kBookTabCount = static_cast<int>(std::size(kBookTabs));
         constexpr int kBookControlsTab = 6;
+        constexpr int kBookModsTab = 7;
         constexpr const char *kControlsPages[] = {"Settings", "Controller", "Keys & Mouse", "Hotkeys"};
         constexpr int kControlsPageCount = static_cast<int>(std::size(kControlsPages));
         constexpr ImU32 kBookInk = IM_COL32(38, 26, 18, 238), kBookFaded = IM_COL32(38, 26, 18, 105);
@@ -4398,6 +4404,8 @@ namespace kamite::launcher
             ImGui::PopID();
         }
 
+        void bookModList(State &state, const Book &b, bool input); // the Mods tab's list (below)
+
         void bookSettings(State &state, const Book &b, settings::Tab tab)
         {
             const char *category = nullptr;
@@ -4419,6 +4427,8 @@ namespace kamite::launcher
                 }
                 bookSetting(state, b, i);
             }
+            if (tab == settings::Tab::Mods)
+                bookModList(state, b, !state.optionsLeaving);
         }
 
         // ---- stamps and notes ----------------------------------------------------------------------------------------
@@ -4619,6 +4629,546 @@ namespace kamite::launcher
                 }
                 ImGui::EndPopup();
             }
+        }
+
+        // ---- the Mods tab's list of mods (claude/mod-support.md, step 1) ---------------------------------------------
+        // The mods under mods/ in load order (mod_list.h), scanned when the tab shows and again when a folder comes or
+        // goes. A tick, a move or a mod seen for the first time goes into GHR.ini [Mods] LoadOrder / Disabled at once
+        // (saved with the rest when Options closes); a new mod stays marked NEW until the launcher closes.
+        struct ModJob // Install from zip, on a thread of its own (the note shows its progress)
+        {
+            mod_zip::Plan plan;
+            mod_zip::Progress progress;
+            std::atomic<bool> finished{false};
+            bool ok = false;
+            std::string error;
+        };
+        struct ModsPage
+        {
+            bool scanned = false;
+            std::vector<mod_list::Mod> mods;
+            std::vector<mod_list::Overrides> overrides;
+            std::vector<std::string> folders; // the folder names at the last scan
+            std::vector<std::string> fresh;   // folders (lower case) new this session: marked NEW
+            double nextCheck = 0.0;
+            int focused = -1;                 // the mod row with the focus this frame (-1: none)
+            std::string scrollTo;             // a mod just moved: kept in view
+            enum class Note
+            {
+                None,
+                Problem,
+                Replace,
+                Working,
+                Done
+            } note = Note::None;
+            bool openNote = false;
+            std::string noteText;
+            mod_zip::Plan plan;
+            std::shared_ptr<ModJob> job;
+        };
+        ModsPage g_modsPage;
+
+        fs::path modsFolder(const State &state) { return state.context->exeDir / "mods"; }
+
+        bool isFresh(const mod_list::Mod &m)
+        {
+            const std::vector<std::string> &f = g_modsPage.fresh;
+            return std::find(f.begin(), f.end(), lower(m.folder)) != f.end();
+        }
+
+        // The list as it stands -> GHR.ini, and what the mods take from each other.
+        void storeModList(State &state)
+        {
+            ModsPage &p = g_modsPage;
+            const std::string order = mod_list::orderText(p.mods), off = mod_list::disabledText(p.mods);
+            if (state.ini.get("Mods", "LoadOrder") != order)
+                state.ini.set("Mods", "LoadOrder", order);
+            if (state.ini.get("Mods", "Disabled") != off)
+                state.ini.set("Mods", "Disabled", off);
+            p.overrides = mod_list::overrides(p.mods);
+        }
+
+        void scanMods(State &state, bool force)
+        {
+            ModsPage &p = g_modsPage;
+            const double now = GetTime();
+            if (p.scanned && !force)
+            {
+                if (now < p.nextCheck)
+                    return;
+                p.nextCheck = now + 1.5;
+                if (mod_list::folderNames(modsFolder(state)) == p.folders)
+                    return;
+            }
+            p.scanned = true;
+            p.nextCheck = now + 1.5;
+            p.folders = mod_list::folderNames(modsFolder(state));
+            p.mods = mod_list::scan(modsFolder(state), state.ini.get("Mods", "LoadOrder"), state.ini.get("Mods", "Disabled"), true);
+            for (const mod_list::Mod &m : p.mods)
+                if (m.isNew && !isFresh(m))
+                    p.fresh.push_back(lower(m.folder));
+            storeModList(state); // the new ones are seen now: listed (on, at the bottom)
+        }
+
+        void moveMod(State &state, size_t index, int by)
+        {
+            ModsPage &p = g_modsPage;
+            const long to = static_cast<long>(index) + by;
+            if (to < 0 || to >= static_cast<long>(p.mods.size()))
+                return;
+            std::swap(p.mods[index], p.mods[static_cast<size_t>(to)]);
+            p.scrollTo = p.mods[static_cast<size_t>(to)].folder;
+            storeModList(state);
+            menuSound(state, kTick);
+        }
+
+        std::string countOf(size_t n, const char *what)
+        {
+            return std::to_string(n) + " " + what + (n == 1 ? "" : "s");
+        }
+
+        std::string joinWords(const std::vector<std::string> &parts)
+        {
+            std::string out;
+            for (size_t i = 0; i < parts.size(); ++i)
+                out += (i == 0 ? "" : i + 1 == parts.size() ? " and " : ", ") + parts[i];
+            return out;
+        }
+
+        // "pl/pl00.dat and 2 textures"
+        std::string conflictText(const mod_list::Conflict &c)
+        {
+            std::vector<std::string> parts;
+            if (c.files.size() <= 2)
+                parts.insert(parts.end(), c.files.begin(), c.files.end());
+            else
+                parts.push_back(countOf(c.files.size(), "game file"));
+            if (c.textures != 0)
+                parts.push_back(countOf(c.textures, "texture"));
+            return joinWords(parts);
+        }
+
+        // The right page for a mod: who made it, what it is, what it holds, what it wins and loses to the others.
+        std::string modHelp(const State &state, size_t i)
+        {
+            const ModsPage &p = g_modsPage;
+            const mod_list::Mod &m = p.mods[i];
+            std::string text;
+            if (!m.author.empty() && !m.version.empty())
+                text = "By " + m.author + ", version " + m.version + ".";
+            else if (!m.author.empty())
+                text = "By " + m.author + ".";
+            else if (!m.version.empty())
+                text = "Version " + m.version + ".";
+            if (!m.description.empty())
+                text += (text.empty() ? "" : "\n") + m.description;
+            std::vector<std::string> parts;
+            if (!m.files.empty())
+                parts.push_back(countOf(m.files.size(), "game file"));
+            if (m.textureCount != 0)
+                parts.push_back(countOf(m.textureCount, "texture"));
+            if (!m.patches.empty())
+                parts.push_back(countOf(m.patches.size(), "patch file"));
+            text += std::string(text.empty() ? "" : "\n\n") +
+                    (parts.empty() ? "No game files, textures or patches in it." : "It replaces " + joinWords(parts) + ".");
+            if (m.hasCharacters)
+                text += " Its characters/ come in a later version of GHR.";
+            if (i < p.overrides.size())
+            {
+                const mod_list::Overrides &o = p.overrides[i];
+                int lines = 0, more = 0;
+                for (const mod_list::Conflict &c : o.wins)
+                {
+                    if (lines++ < 2)
+                        text += "\nWins over " + p.mods[c.other].name + ": " + conflictText(c) + ".";
+                    else
+                        ++more;
+                }
+                for (const mod_list::Conflict &c : o.loses)
+                {
+                    if (lines++ < 3)
+                        text += "\nLoses to " + p.mods[c.other].name + ", lower in the list: " + conflictText(c) + ".";
+                    else
+                        ++more;
+                }
+                if (more != 0)
+                    text += "\n... and " + countOf(static_cast<size_t>(more), "more mod") + ".";
+            }
+            if (!m.enabled)
+                text += "\n\nOff: the game leaves it out.";
+            else if (isFresh(m))
+                text += "\n\nNew: GHR put it on, at the bottom of the list.";
+            if (state.lastDevice == 0)
+                text += "\nThe marks by its number move it up or down.";
+            return text;
+        }
+
+        // A mod's row: its place (the number; the up / down marks, for the mouse), its name (NEW in red pencil, a note
+        // when it wins or loses files to another mod), its tick (a press of the row turns it on or off). The focused row
+        // moves with LT / RT or Z / C (the Controls tab's sub-tab keys; free here).
+        void bookModRow(State &state, const Book &b, size_t i, bool input, long &moveFrom, int &moveBy)
+        {
+            ModsPage &p = g_modsPage;
+            const mod_list::Mod &m = p.mods[i];
+            ImDrawList *dl = ImGui::GetWindowDrawList();
+            const float u = b.u, w = ImGui::GetContentRegionAvail().x;
+            const ImVec2 min = ImGui::GetCursorScreenPos(), max(min.x + w, min.y + kRowH * u);
+            const float mid = min.y + kRowH * u * 0.5f, size = 26.0f * u;
+            const float numberRight = min.x + 30.0f * u, upX = min.x + 50.0f * u, downX = min.x + 76.0f * u, nameX = min.x + 98.0f * u;
+            ImGui::PushID(m.folder.c_str());
+            const std::string number = std::to_string(i + 1);
+            const float ns = 22.0f * u;
+            bookText(dl, state.bookFonts.text, ns, ImVec2(numberRight - textSize(state.bookFonts.text, ns, number.c_str()).x, mid - ns * 0.56f),
+                     kBookFaded, number.c_str());
+            const auto mark = [&](const char *id, float x, bool up, bool usable) {
+                bool pressed = false, hovered = false;
+                if (usable)
+                {
+                    pressed = bookItem(state, id, ImVec2(x - 12.0f * u, min.y + 2.0f * u), ImVec2(x + 12.0f * u, max.y - 2.0f * u), false);
+                    hovered = ImGui::IsItemHovered();
+                }
+                const float h = 5.5f * u, half = 7.5f * u;
+                const float tip = up ? mid - h : mid + h, base = up ? mid + h : mid - h;
+                const ImVec2 caret[3] = {ImVec2(x - half, base), ImVec2(x, tip), ImVec2(x + half, base)};
+                book::line(dl, caret, 3, (hovered ? 2.4f : 1.7f) * u, !usable ? IM_COL32(38, 26, 18, 40) : hovered ? kBookPencil : kBookFaded);
+                return pressed && input;
+            };
+            if (mark("##up", upX, true, i > 0))
+            {
+                moveFrom = static_cast<long>(i);
+                moveBy = -1;
+            }
+            if (mark("##down", downX, false, i + 1 < p.mods.size()))
+            {
+                moveFrom = static_cast<long>(i);
+                moveBy = 1;
+            }
+            const bool pressed = bookItem(state, "##mod", ImVec2(nameX - 8.0f * u, min.y), max);
+            tickItem();
+            const bool focused = ImGui::IsItemFocused();
+            if (p.scrollTo == m.folder)
+            {
+                ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
+                p.scrollTo.clear();
+            }
+            if (pressed && input)
+            {
+                p.mods[i].enabled = !p.mods[i].enabled;
+                storeModList(state);
+            }
+            // the name, shrunk to leave room for its notes and the tick
+            const bool fresh = isFresh(m);
+            std::string tag;
+            if (i < p.overrides.size() && m.enabled)
+            {
+                const mod_list::Overrides &o = p.overrides[i];
+                if (!o.wins.empty())
+                    tag = o.wins.size() == 1 ? "overrides " + p.mods[o.wins[0].other].name : "overrides " + countOf(o.wins.size(), "mod");
+                else if (!o.loses.empty())
+                    tag = "partly overridden";
+            }
+            const float tagSize = 19.0f * u, gap = 10.0f * u;
+            const float newW = fresh ? textSize(state.bookFonts.text, tagSize, "new").x + gap : 0.0f;
+            float tagW = tag.empty() ? 0.0f : textSize(state.bookFonts.text, tagSize, tag.c_str()).x + gap;
+            const float room = max.x - 40.0f * u - nameX;
+            if (tagW > room * 0.45f)
+            {
+                tag = !p.overrides[i].wins.empty() ? "overrides " + countOf(p.overrides[i].wins.size(), "mod") : tag;
+                tagW = textSize(state.bookFonts.text, tagSize, tag.c_str()).x + gap;
+            }
+            const float full = textSize(state.bookFonts.text, size, m.name.c_str()).x;
+            const float nameRoom = std::max(room * 0.4f, room - newW - tagW);
+            const float nameSize = size * (full > nameRoom ? std::max(0.62f, nameRoom / full) : 1.0f);
+            const ImVec2 at(nameX, mid - nameSize * 0.56f);
+            bookText(dl, state.bookFonts.text, nameSize, at, m.enabled ? kBookInk : kBookFaded, m.name.c_str());
+            const ImVec2 ts = textSize(state.bookFonts.text, nameSize, m.name.c_str());
+            float x = at.x + std::min(ts.x, nameRoom) + gap;
+            if (fresh)
+            {
+                bookText(dl, state.bookFonts.text, tagSize, ImVec2(x, mid - tagSize * 0.62f), kBookPencil, "new");
+                x += newW;
+            }
+            if (!tag.empty())
+                bookText(dl, state.bookFonts.text, tagSize, ImVec2(x, mid - tagSize * 0.62f), m.enabled ? kBookFaded : kBookPencilFaded,
+                         tag.c_str());
+            book::tickBox(dl, ImVec2(max.x - 14.0f * u, mid), 22.0f * u, m.enabled, kBookInk);
+            if (focused)
+            {
+                p.focused = static_cast<int>(i);
+                bookLoop(state, b, dl, ImVec2(at.x, at.y + nameSize * 0.12f), ImVec2(at.x + ts.x, at.y + nameSize * 1.02f));
+                bookHelp(state, m.name.c_str(), modHelp(state, i).c_str());
+                if (input && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
+                {
+                    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL2, false) || ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                        moveFrom = static_cast<long>(i), moveBy = -1;
+                    else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR2, false) || ImGui::IsKeyPressed(ImGuiKey_C, false))
+                        moveFrom = static_cast<long>(i), moveBy = 1;
+                }
+            }
+            ImGui::PopID();
+            ImGui::SetCursorScreenPos(ImVec2(min.x, max.y));
+            ImGui::Dummy(ImVec2(w, 0.0f));
+        }
+
+        // The Mods tab's MODS heading and list (after Character and Texture Packs).
+        void bookModList(State &state, const Book &b, bool input)
+        {
+            ModsPage &p = g_modsPage;
+            scanMods(state, false);
+            p.focused = -1;
+            bookCategory(state, b, "Mods", false);
+            if (p.mods.empty())
+            {
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                const float u = b.u, w = ImGui::GetContentRegionAvail().x, size = 24.0f * u;
+                const char *text = "None yet. A mod is a folder in mods next to GHR.exe: install one from its zip or open the "
+                                   "folder (on the right).";
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                bookText(dl, state.bookFonts.text, size, ImVec2(at.x, at.y + 6.0f * u), kBookFaded, text, w);
+                ImGui::Dummy(ImVec2(w, textSize(state.bookFonts.text, size, text, w).y + 12.0f * u));
+                return;
+            }
+            long moveFrom = -1;
+            int moveBy = 0;
+            for (size_t i = 0; i < p.mods.size(); ++i)
+                bookModRow(state, b, i, input, moveFrom, moveBy);
+            if (moveFrom >= 0)
+                moveMod(state, static_cast<size_t>(moveFrom), moveBy);
+        }
+
+        // ---- Install from zip (the Mods tab's stamp) ------------------------------------------------------------------
+        void startModInstall(State &state)
+        {
+            ModsPage &p = g_modsPage;
+            auto job = std::make_shared<ModJob>();
+            job->plan = p.plan;
+            const fs::path folder = modsFolder(state);
+            p.job = job;
+            p.note = ModsPage::Note::Working;
+            std::thread([job, folder] {
+                job->ok = mod_zip::install(job->plan, folder, job->error, &job->progress);
+                job->finished = true;
+            }).detach();
+        }
+
+        std::string modNames(const mod_zip::Plan &plan)
+        {
+            std::vector<std::string> names;
+            for (const mod_zip::Found &m : plan.mods)
+                names.push_back(m.name + (m.version.empty() ? "" : " " + m.version));
+            return joinWords(names);
+        }
+
+        void installModZip(State &state)
+        {
+            ModsPage &p = g_modsPage;
+            const fs::path zip = platform::pickZip(GetWindowHandle());
+            if (zip.empty())
+                return;
+            p.plan = mod_zip::inspect(zip, modsFolder(state));
+            p.openNote = true;
+            if (!p.plan.error.empty())
+            {
+                p.note = ModsPage::Note::Problem;
+                p.noteText = utf8(zip.filename()) + " " + p.plan.error + ".";
+                KM_WARN(Boot, "launcher: install from zip: " << utf8(zip) << " " << p.plan.error);
+                return;
+            }
+            std::vector<std::string> replaced;
+            bool same = true;
+            for (const mod_zip::Found &m : p.plan.mods)
+                if (m.exists)
+                {
+                    replaced.push_back(m.name + (m.oldVersion.empty() ? "" : " " + m.oldVersion));
+                    same = same && m.oldVersion == m.version;
+                }
+            if (!replaced.empty())
+            {
+                p.note = ModsPage::Note::Replace;
+                p.noteText = same ? "You have " + joinWords(replaced) + " already. Put it in again? It keeps its place in the list."
+                                  : "Replace the " + joinWords(replaced) + " you have with " + modNames(p.plan) +
+                                        "? It keeps its place in the list.";
+                return;
+            }
+            startModInstall(state);
+        }
+
+        // The zip's note: a problem, the replace question, the progress, the result.
+        void bookModNote(State &state, const Book &b)
+        {
+            ModsPage &p = g_modsPage;
+            if (p.openNote)
+            {
+                p.openNote = false;
+                ImGui::OpenPopup("##bookmods");
+            }
+            if (!bookNoteBegin(b, "##bookmods"))
+                return;
+            g_captureFrame = true; // its Esc / B must not also leave Options
+            if (p.note == ModsPage::Note::Working && p.job && p.job->finished)
+            {
+                const std::string names = modNames(p.job->plan);
+                if (p.job->ok)
+                {
+                    p.note = ModsPage::Note::Done;
+                    p.noteText = "Installed " + names + ".";
+                    KM_INFO(Boot, "launcher: installed " << names << " from " << utf8(p.job->plan.zip));
+                }
+                else
+                {
+                    p.note = ModsPage::Note::Problem;
+                    p.noteText = "Not installed: " + p.job->error + ".";
+                    KM_WARN(Boot, "launcher: install from " << utf8(p.job->plan.zip) << " failed: " << p.job->error);
+                }
+                p.job.reset();
+                scanMods(state, true);
+            }
+            if (p.note == ModsPage::Note::Working)
+            {
+                const uint64_t total = p.job ? p.job->progress.total.load() : 0u, done = p.job ? p.job->progress.done.load() : 0u;
+                const std::string text = "Installing " + modNames(p.plan) + "... " +
+                                         std::to_string(total ? static_cast<int>(done * 100u / total) : 0) + "%";
+                bookNoteText(state, b, text.c_str());
+                ImGui::EndPopup();
+                return;
+            }
+            bookNoteText(state, b, p.noteText.c_str());
+            const ImVec2 at = ImGui::GetCursorScreenPos();
+            bool close = false;
+            if (p.note == ModsPage::Note::Replace)
+            {
+                const bool cancel = bookWord(state, b, "##cancel", "Cancel", ImVec2(at.x + 20.0f * b.u, at.y + 8.0f * b.u), true);
+                const bool replace = bookWord(state, b, "##replace", "Replace", ImVec2(at.x + 240.0f * b.u, at.y + 8.0f * b.u), false);
+                if (replace)
+                {
+                    menuSound(state, kConfirm);
+                    startModInstall(state);
+                }
+                else if (cancel || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+                {
+                    menuSound(state, kCancel);
+                    close = true;
+                }
+            }
+            else
+            {
+                const bool ok = bookWord(state, b, "##ok", "OK", ImVec2(at.x + 20.0f * b.u, at.y + 8.0f * b.u), true);
+                if (ok || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false))
+                {
+                    menuSound(state, ok ? kConfirm : kCancel);
+                    close = true;
+                }
+            }
+            ImGui::SetCursorScreenPos(ImVec2(at.x, at.y + 54.0f * b.u));
+            ImGui::Dummy(ImVec2(1.0f, 1.0f));
+            if (close)
+            {
+                p.note = ModsPage::Note::None;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        // The right page's stamps on the Mods tab, and for a focused mod the keys that move it.
+        void bookModsRight(State &state, const Book &b, bool input)
+        {
+            ModsPage &p = g_modsPage;
+            const float u = b.u;
+            if (p.focused >= 0 && state.lastDevice != 0 && !state.bookHelp.empty())
+            {
+                // under the help text: "Move it" and the sub-tab prompts (LT / RT, Z / C)
+                const float w = b.rightMax.x - b.rightMin.x, hs = 38.0f * u;
+                const float th = textSize(state.bookFonts.heading, hs, state.bookTitle.c_str(), w).y;
+                const float y = b.rightMin.y + th + 50.0f * u + textSize(state.bookFonts.text, state.bookHelpSize * u, state.bookHelp.c_str(), w).y + 18.0f * u;
+                const float size = 26.0f * u;
+                const float upW = textSize(state.bookFonts.text, size, "Up").x, downAt = b.rightMin.x + upW + 76.0f * u;
+                const float downW = textSize(state.bookFonts.text, size, "Down").x;
+                bookText(b.dl, state.bookFonts.text, size, ImVec2(b.rightMin.x, y), kBookInk, "Up");
+                bookText(b.dl, state.bookFonts.text, size, ImVec2(downAt, y), kBookInk, "Down");
+                book::paint(b.dl); // the prompts in their own colours (as the index tabs' and the slips')
+                bookPrompt(b.dl, state.prompt[2], ImVec2(b.rightMin.x + upW + 32.0f * u, y + size * 0.55f), 38.0f * u);
+                bookPrompt(b.dl, state.prompt[3], ImVec2(downAt + downW + 32.0f * u, y + size * 0.55f), 38.0f * u);
+                book::ink(b.dl);
+            }
+            if (!input)
+                return;
+            const ImVec2 at((b.rightMin.x + b.rightMax.x) * 0.5f, b.rightMax.y - 130.0f * u);
+            if (bookStamp(state, b, "##zip", "INSTALL FROM ZIP", at, 20.0f * u, -1.5f))
+                installModZip(state);
+            if (bookStamp(state, b, "##modsfolder", "OPEN MODS FOLDER", ImVec2(at.x, at.y + 70.0f * u), 20.0f * u, 1.0f))
+            {
+                std::error_code error;
+                fs::create_directories(modsFolder(state), error);
+                platform::open(modsFolder(state));
+            }
+        }
+
+        // The plain Options panel's version (when the saloon can't load): a box, Up / Down per mod; the two buttons.
+        void drawModList(State &state)
+        {
+            ModsPage &p = g_modsPage;
+            scanMods(state, false);
+            if (!beginCategory("Mods"))
+                return;
+            long moveFrom = -1;
+            int moveBy = 0;
+            for (size_t i = 0; i < p.mods.size(); ++i)
+            {
+                mod_list::Mod &m = p.mods[i];
+                ImGui::PushID(m.folder.c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted((std::to_string(i + 1) + ". " + m.name + (isFresh(m) ? "  (new)" : "")).c_str());
+                if (ImGui::IsItemHovered() && !m.description.empty())
+                    ImGui::SetTooltip("%s", m.description.c_str());
+                ImGui::TableNextColumn();
+                bool on = m.enabled;
+                if (ImGui::Checkbox("On", &on))
+                {
+                    m.enabled = on;
+                    storeModList(state);
+                }
+                tickItem();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(i == 0);
+                if (ImGui::SmallButton("Up"))
+                    moveFrom = static_cast<long>(i), moveBy = -1;
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(i + 1 == p.mods.size());
+                if (ImGui::SmallButton("Down"))
+                    moveFrom = static_cast<long>(i), moveBy = 1;
+                ImGui::EndDisabled();
+                ImGui::PopID();
+            }
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (ImGui::Button("Install from zip..."))
+            {
+                const fs::path zip = platform::pickZip(GetWindowHandle());
+                if (!zip.empty())
+                {
+                    p.plan = mod_zip::inspect(zip, modsFolder(state));
+                    std::string error = p.plan.error;
+                    if (error.empty() && !mod_zip::install(p.plan, modsFolder(state), error))
+                        p.noteText = "Not installed: " + error + ".";
+                    else
+                        p.noteText = error.empty() ? "Installed " + modNames(p.plan) + "." : utf8(zip.filename()) + " " + error + ".";
+                    scanMods(state, true);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Open mods folder"))
+            {
+                std::error_code error;
+                fs::create_directories(modsFolder(state), error);
+                platform::open(modsFolder(state));
+            }
+            if (!p.noteText.empty())
+                ImGui::TextWrapped("%s", p.noteText.c_str());
+            ImGui::EndTable();
+            if (moveFrom >= 0)
+                moveMod(state, static_cast<size_t>(moveFrom), moveBy);
         }
 
         // ---- the pages ---------------------------------------------------------------------------------------------
@@ -5056,7 +5606,15 @@ namespace kamite::launcher
             bookText(dl, state.bookFonts.heading, hs, ImVec2(m.x, m.y + 6.0f * u), kBookInk, state.bookTitle.c_str(), w);
             const float th = textSize(state.bookFonts.heading, hs, state.bookTitle.c_str(), w).y;
             bookRule(b, dl, m.x, m.x + w, m.y + 6.0f * u + th + 6.0f * u, kBookInk, 1.8f * u, 3u);
-            bookText(dl, state.bookFonts.text, 28.0f * u, ImVec2(m.x, m.y + th + 50.0f * u), kBookInk, state.bookHelp.c_str(), w);
+            float size = 28.0f * u;
+            if (state.bookHelpRoom > 0.0f) // a long help (a mod's) shrinks to leave its page's stamps clear
+            {
+                const float room = state.bookHelpRoom * u - (th + 50.0f * u), h = textSize(state.bookFonts.text, size, state.bookHelp.c_str(), w).y;
+                if (h > room && room > 0.0f)
+                    size *= std::max(0.7f, room / h);
+            }
+            state.bookHelpSize = size / u;
+            bookText(dl, state.bookFonts.text, size, ImVec2(m.x, m.y + th + 50.0f * u), kBookInk, state.bookHelp.c_str(), w);
             if (!state.bookNote.empty())
             {
                 const float ns = 25.0f * u;
@@ -5412,7 +5970,11 @@ namespace kamite::launcher
                 bookPresetsRight(state, pg, now, focusedPreset >= 0 ? focusedPreset : std::max(0, now));
             else
             {
+                // the Mods tab: the help stops above its stamps and the line of keys that move a mod
+                state.bookHelpRoom = state.bookTab == kBookModsTab ? (b.rightMax.y - b.rightMin.y) / pg.u - 215.0f : 0.0f;
                 bookHelpPage(state, pg);
+                if (state.bookTab == kBookModsTab)
+                    bookModsRight(state, pg, input && !popup);
                 if (input && !popup && state.bookTab == kBookControlsTab && (state.bookControls == 1 || state.bookControls == 2))
                 {
                     const ImVec2 at((b.rightMin.x + b.rightMax.x) * 0.5f, b.rightMax.y - 150.0f * pg.u);
@@ -5445,6 +6007,7 @@ namespace kamite::launcher
                 }
             }
             bookNotes(state, pg);
+            bookModNote(state, pg);
             ImGui::PopClipRect();
             state.bookTabChanged = false;
             if (state.bookQuiet > 0)
@@ -5499,6 +6062,8 @@ namespace kamite::launcher
                     drawTab(state, tab);
                     if (tab == settings::Tab::Controls)
                         drawControls(state); // the bindings and hotkeys
+                    if (tab == settings::Tab::Mods)
+                        drawModList(state); // the mods under mods/
                     ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();

@@ -9,9 +9,11 @@
     python -I build.py configure [-DOPTION=...]       CMake configure (Ninja, RelWithDebInfo, no LTCG)
     python -I build.py build [target]                 compile GHR.exe (configures first if needed)
     python -I build.py all [--iso X]                  generate -> configure -> build
-    python -I build.py characters [--iso X] [--texture-pack D] [id ...]  playable characters (assets/characters) built
-                                                      from your disc into build/port/bin/mods/characters (D: the HD
-                                                      pack folder, for the painted textures' full-resolution versions)
+    python -I build.py characters [--iso X] [--texture-pack D] [id ...]  the Python build of the playable characters
+                                                      (assets/characters) into build/port/bin/mods/characters (D: the HD
+                                                      pack folder). Not needed to play: GHR makes them from your disc at
+                                                      boot (src/kamite/builtin_characters.h) and ignores that folder; a
+                                                      check of the C++ build (the same bytes)
     python -I build.py boot [--seconds N] [--iso X]   one hidden, time-capped run; output in build/port/bin/logs
     python -I build.py run [args]                     a normal run in a window (arguments go to GHR.exe)
     python -I build.py status                         what exists so far
@@ -65,6 +67,15 @@ EXIT_CODES = {
 # Builds, the recompiler and test boots run at below-normal priority so the PC stays responsive (child processes such
 # as ninja/cl inherit it) only when KAMITE_LOW_PRIORITY=1 (2026-10-18: normal priority and all cores by default).
 LOW_PRIORITY = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) if os.environ.get("KAMITE_LOW_PRIORITY") == "1" else 0
+
+
+def recomp_env():
+    """The recompiler's environment: classic code unless KAMITE_CODEGEN=locals (register locals: ps2xRecomp
+    function_emitter.cpp, runtime ps2_cg.h; correct, but ~20% more game-thread CPU in K's replays on MSVC, Nov 20:
+    claude/perf-enemies.md); static JAL/JALR through PS2Runtime::callGuestFunction unless PS2X_STATIC_CALLS=dispatch."""
+    env = dict(os.environ)
+    env["PS2X_CODEGEN"] = "locals" if os.environ.get("KAMITE_CODEGEN") == "locals" else "classic"
+    return env
 
 
 def run(cmd, **kwargs):
@@ -292,7 +303,7 @@ def generate(args=()):
     print(f"+ {recompiler} {staged}  (output in {log})", flush=True)
     with open(log, "w", encoding="utf-8") as out:
         code = subprocess.run([str(recompiler), str(staged)], cwd=ROOT / "build", stdout=out, stderr=subprocess.STDOUT,
-                              creationflags=LOW_PRIORITY).returncode
+                              creationflags=LOW_PRIORITY, env=recomp_env()).returncode
     if code:
         print(f"ps2_recomp failed ({code}); see {log}")
         return code
@@ -375,6 +386,8 @@ INCLUDE_STUBS = "#include <ps2_recompiled_stubs.h>"
 def module_stamp(mod, toml_path, recompiler):
     """Inputs of one module pack: the toml, snr2's outputs, the recompiler binary and this post-processing version."""
     h = hashlib.sha256(MODULE_PIPELINE.encode())
+    env = recomp_env()
+    h.update(f"{env['PS2X_CODEGEN']}:{env.get('PS2X_STATIC_CALLS', '')}".encode())
     for path in (toml_path, SNR2_OUT / mod / f"{mod}_link.json", SNR2_OUT / mod / f"{mod}_linked.bin",
                  SNR2_OUT / mod / f"{mod}_functions.csv", SNR2_OUT / mod / f"{mod}.elf",
                  SNR2_OUT / mod / f"{mod}_runtime_relocations.csv"):
@@ -527,7 +540,7 @@ def modules(args=()):
         print(f"+ {recompiler} {staged}  (output in {log})", flush=True)
         with open(log, "w", encoding="utf-8") as out:
             code = subprocess.run([str(recompiler), str(staged)], cwd=ROOT / "build", stdout=out, stderr=subprocess.STDOUT,
-                                  creationflags=LOW_PRIORITY).returncode
+                                  creationflags=LOW_PRIORITY, env=recomp_env()).returncode
         if code or not (staging / "register_functions.cpp").exists():
             print(f"{mod}: ps2_recomp failed ({code}); see {log}")
             return code or 1

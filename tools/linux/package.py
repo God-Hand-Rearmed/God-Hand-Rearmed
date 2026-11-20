@@ -3,15 +3,16 @@
     python -I tools/linux/package.py --bin build/linux/bin [--out dist] [--formats tar,appimage]
                                      [--appimage-runtime FILE] [--allow-stub] [--allow-nonportable]
 
-  dist/GHR-v<version>-linux-x86_64.tar.gz   "God Hand Rearmed/": GHR, its libraries, resources/, a fresh GHR.ini
-                                             (the players' values), README.txt, LICENSE, licenses/, the icon and
-                                             install-desktop-entry.sh. Unpack it anywhere you can write to; it is a
+  dist/GHR-v<version>-Linux-x64.tar.gz   "God Hand Rearmed/": GHR, its libraries, resources/, README.txt, LICENSE,
+                                             licenses/, the icon and install-desktop-entry.sh. No GHR.ini or
+                                             controls.ini, like the Windows zip: GHR writes its defaults at the first
+                                             start, and a folder updated in place keeps the player's. Unpack it anywhere you can write to; it is a
                                              play folder exactly like the Windows zip (settings and saves inside it).
-  dist/GHR-v<version>-x86_64.AppImage        One file. Settings and saves go to ~/.local/share/GodHandRearmed, or to a
+  dist/GHR-v<version>-Linux-x64.AppImage        One file. Settings and saves go to ~/.local/share/GodHandRearmed, or to a
                                              folder named GHR-data next to the AppImage when there is one (AppRun).
 
 The names are what the launcher's updater looks for (src/kamite/launcher_update.cpp): the AppImage replaces itself with
-the newest "-x86_64.AppImage", a folder install takes the "-linux-x86_64.tar.gz".
+the newest "-Linux-x64.AppImage", a folder install takes the "-Linux-x64.tar.gz".
 
 Checks before anything is written (the release is refused when one fails):
 - the build is not one on the stand-in game code (STUB-GAME-CODE.txt from tools/linux/stub_game_code.py), unless
@@ -124,26 +125,6 @@ def read_version(root: Path = ROOT) -> str:
     if not match:
         raise PackageError("src/kamite/version.h has no KAMITE_VERSION")
     return match.group(1)
-
-
-def release_pairs(root: Path = ROOT) -> list[str]:
-    """The KEY=VALUE pairs a release's GHR.ini takes (src/CMakeLists.txt, the KAMITE_RELEASE foreach): one list, read
-    from there, so the two never drift."""
-    text = (root / "src" / "CMakeLists.txt").read_text(encoding="utf-8")
-    match = re.search(r"foreach\(KAMITE_INI_PAIR((?:\s+\"[^\"]*\")+)\)", text)
-    if not match:
-        raise PackageError("src/CMakeLists.txt: the KAMITE_INI_PAIR list is missing")
-    return re.findall(r'"([^"]*)"', match.group(1))
-
-
-def release_ini(template: str, pairs: list[str]) -> str:
-    """GHR.ini with each pair's key set to its value, as CMake does it: "\\nKEY=..." lines replaced (every section)."""
-    for pair in pairs:
-        key, value = pair.split("=", 1)
-        template, count = re.subn(rf"\n{re.escape(key)}=[^\n]*", lambda _m: f"\n{key}={value}", template)
-        if count == 0:
-            raise PackageError(f"GHR.ini has no {key}= line to set")
-    return template
 
 
 def source_date_epoch(root: Path = ROOT) -> int:
@@ -392,8 +373,6 @@ def build_tar(bin_dir: Path, out_dir: Path, base: str, version: str, epoch: int,
         stage_program(bin_dir, folder)
         if objcopy:
             strip_debug(folder, objcopy, out_dir / f"{base}.debug")
-        ini = release_ini((root / "GHR.ini").read_text(encoding="utf-8"), release_pairs(root))
-        (folder / "GHR.ini").write_text(ini, encoding="utf-8")
         stage_docs(folder, readme_text(version, root), root)
         (folder / f"{APP_ID}.png").write_bytes(icon_pngs(root / "src" / "kamite" / "ghr.ico")[256])
         script = folder / "install-desktop-entry.sh"
@@ -401,7 +380,7 @@ def build_tar(bin_dir: Path, out_dir: Path, base: str, version: str, epoch: int,
         script.chmod(0o755)
         if stub:
             shutil.copy2(bin_dir / "STUB-GAME-CODE.txt", folder / "STUB-GAME-CODE.txt")
-        out = out_dir / f"{base}-linux-x86_64.tar.gz"
+        out = out_dir / f"{base}-Linux-x64.tar.gz"
         write_tar(folder, FOLDER_NAME, out, epoch)
     return out
 
@@ -438,7 +417,7 @@ def build_appimage(bin_dir: Path, out_dir: Path, base: str, version: str, epoch:
         for path in [appdir, *appdir.rglob("*")]:
             if not path.is_symlink():
                 os.utime(path, (epoch, epoch))
-        out = out_dir / f"{base}-x86_64.AppImage"
+        out = out_dir / f"{base}-Linux-x64.AppImage"
         write_appimage(appdir, runtime, out, epoch, mksquashfs)
     return out
 

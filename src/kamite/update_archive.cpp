@@ -150,10 +150,10 @@ namespace kamite::launcher::update::archive
                 fits = endsWith(n, ".zip") && n.find("linux") == std::string::npos && n.find("appimage") == std::string::npos;
                 break;
             case Package::LinuxFolder:
-                fits = endsWith(n, "-linux-x86_64.tar.gz");
+                fits = endsWith(n, "-linux-x64.tar.gz");
                 break;
             case Package::LinuxAppImage:
-                fits = endsWith(n, "-x86_64.appimage");
+                fits = endsWith(n, "-linux-x64.appimage");
                 break;
             }
             if (fits)

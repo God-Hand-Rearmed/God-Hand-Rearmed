@@ -6,6 +6,7 @@
 #include "ps2_runtime_calls.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fmt/format.h>
 #include <sstream>
 #include <utility>
@@ -224,9 +225,39 @@ namespace ps2recomp
         return true;
     }
 
+    namespace
+    {
+        // JAL and JALR call PS2Runtime::callGuestFunction(Indirect), the lean path of the same dispatch (after
+        // Vnnc1/gow-native-pc's patches 28 / 29, GPL-3.0). PS2X_STATIC_CALLS=dispatch in the recompiler's
+        // environment: the full dispatchGuestBranch, as before.
+        bool callsUseFullDispatch()
+        {
+            static const bool full = []
+            {
+                const char *mode = std::getenv("PS2X_STATIC_CALLS");
+                return mode != nullptr && std::string_view(mode) == "dispatch";
+            }();
+            return full;
+        }
+    }
+
+    void ControlFlowEmitter::emitGuestCall(std::string_view targetExpression, bool indirect, std::string_view indent)
+    {
+        m_ss << fmt::format("{}if (!runtime->{}(rdram, ctx, {}, 0x{:X}u, 0x{:X}u)) {{\n", indent,
+                            indirect ? "callGuestFunctionIndirect" : "callGuestFunction", targetExpression, branchPc(),
+                            fallthroughPc());
+        m_ss << fmt::format("{}    return;\n", indent);
+        m_ss << fmt::format("{}}}\n", indent);
+    }
+
     void ControlFlowEmitter::emitExternalJumpDispatch(uint32_t target, StaticBranchKind kind, std::string_view indent)
     {
         const bool isCall = kind == StaticBranchKind::Call;
+        if (isCall && !callsUseFullDispatch())
+        {
+            emitGuestCall(fmt::format("0x{:X}u", target), false, indent);
+            return;
+        }
         emitRuntimeBranchDispatch(fmt::format("0x{:X}u", target),
                                   branchPc(),
                                   isCall ? fallthroughPc() : 0u,
@@ -238,6 +269,11 @@ namespace ps2recomp
 
     void ControlFlowEmitter::emitExternalRegisterCallDispatch(std::string_view jumpTargetExpression, std::string_view indent)
     {
+        if (!callsUseFullDispatch())
+        {
+            emitGuestCall(jumpTargetExpression, true, indent);
+            return;
+        }
         emitRuntimeBranchDispatch(jumpTargetExpression,
                                   branchPc(),
                                   fallthroughPc(),

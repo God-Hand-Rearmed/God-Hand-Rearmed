@@ -321,6 +321,32 @@ namespace
                                     { return true; });
     }
 
+    // Raw GIF back end (pcsx2gs draws from the bytes): the front end follows the stream only for what the runtime
+    // itself needs (A+D writes: SIGNAL / FINISH / LABEL and the SIGNAL stall, the transfer registers, the draw state
+    // the debug panel shows; the PRIM / TEX0 / CLAMP descriptors) and steps over vertex data by its size instead of
+    // building vertices nobody draws. Same tags, continuations, back end calls and register state as the full parse;
+    // only the vertex being built (colour / ST / UV / XYZ / fog) is not kept. PS2X_GS_FULL_PARSE=1: the full parse.
+    bool gsFullParse()
+    {
+        static const bool enabled = [] { const char *v = std::getenv("PS2X_GS_FULL_PARSE"); return v && *v == '1'; }();
+        return enabled;
+    }
+
+    // Register descriptors (PACKED and REGLIST alike) whose only effect is the vertex being built: RGBAQ, ST, UV,
+    // XYZF2, XYZ2, FOG, XYZF3, XYZ3, NOP.
+    constexpr uint32_t kVertexOnlyDescriptors = (1u << 0x1) | (1u << 0x2) | (1u << 0x3) | (1u << 0x4) | (1u << 0x5) |
+                                                (1u << 0xA) | (1u << 0xC) | (1u << 0xD) | (1u << 0xF);
+
+    // Bit r set: register r of the tag has to be decoded.
+    inline uint32_t gifTagDecodeMask(const uint8_t *regs, uint32_t nreg)
+    {
+        uint32_t mask = 0u;
+        for (uint32_t i = 0; i < nreg; ++i)
+            if (((kVertexOnlyDescriptors >> regs[i]) & 1u) == 0u)
+                mask |= 1u << i;
+        return mask;
+    }
+
     std::atomic<uint32_t> s_debugGifPacketCount{0};
     std::atomic<uint32_t> s_debugGsRegisterCount{0};
     std::atomic<uint32_t> s_debugGsPackedVertexCount{0};
@@ -902,6 +928,7 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
         }
     });
 
+    const bool skim = m_rawGif && !gsFullParse();
     uint32_t offset = 0;
     while (offset + 16 <= sizeBytes)
     {
@@ -947,6 +974,28 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
         uint8_t regs[16];
         for (uint32_t i = 0; i < nreg; ++i)
             regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
+        // Skim (raw back end): registers to decode; a tag of vertex data only is stepped over as a whole.
+        const uint32_t decodeMask = skim ? gifTagDecodeMask(regs, nreg) : 0xFFFFu;
+
+        if ((flg == GIF_FMT_PACKED || flg == GIF_FMT_REGLIST) && decodeMask == 0u)
+        {
+            const uint32_t unitBytes = flg == GIF_FMT_PACKED ? 16u : 8u;
+            const uint32_t left = nloop * nreg - startReg; // registers left in the tag
+            const uint32_t avail = (sizeBytes - offset) / unitBytes;
+            if (left <= avail)
+            {
+                offset += left * unitBytes;
+                if (flg == GIF_FMT_REGLIST && regPadOdd)
+                    offset += 8;
+                continue;
+            }
+            // Cut inside the tag: resume where the full parse would.
+            const uint32_t at = startReg + avail;
+            saveGifContinuation(tagLo, tagHi, nloop - at / nreg, at % nreg, flg == GIF_FMT_REGLIST ? regPadOdd : false);
+            m_backend->RawGif(data, sizeBytes); // only the raw back end skims
+            m_backend->Flush();
+            return;
+        }
 
         if (flg == GIF_FMT_PACKED)
         {
@@ -961,6 +1010,11 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
                             m_backend->RawGif(data, sizeBytes);
                         m_backend->Flush();
                         return;
+                    }
+                    if (((decodeMask >> r) & 1u) == 0u)
+                    {
+                        offset += 16;
+                        continue;
                     }
                     uint64_t lo = loadLE64(data + offset);
                     uint64_t hi = loadLE64(data + offset + 8);
@@ -1050,7 +1104,8 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
                         m_backend->Flush();
                         return;
                     }
-                    writeRegisterUnlocked(regs[r], loadLE64(data + offset));
+                    if (((decodeMask >> r) & 1u) != 0u)
+                        writeRegisterUnlocked(regs[r], loadLE64(data + offset));
                     offset += 8;
                 }
             }

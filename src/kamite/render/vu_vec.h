@@ -30,6 +30,12 @@
 
 namespace kamite::render
 {
+    // The status register's sticky zero / sign / underflow / overflow bits (ZS SS US OS): a native run sets all four.
+    // No microprogram of the game reads them (no FSAND / FSOR / FSEQ / FSSET in any image) and the EE cannot read VU1's
+    // status, so tracking every FMAC's flags exactly would cost time for nothing; the AOT sets them too, only later
+    // (underflow / overflow need rare geometry: ~20 s into 1-1 in K's Nov 20 profile).
+    constexpr uint32_t kStatusStickyFlags = 0x3C0u;
+
 #if defined(KAMITE_VU_SSE)
     struct Vec4
     {

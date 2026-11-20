@@ -581,6 +581,18 @@ target_include_directories(ps2_runtime PUBLIC
 # out of the generated game code's compile lines, so toggling PS2X_ENABLE_FFMPEG does not rebuild ~8,000 files.
 target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ps2_iop)
 target_link_libraries(ps2_runtime PRIVATE ffmpeg)
+
+# libchdr (BSD-3, with its own lzma / miniz / zstd): CHD disc images (ps2_cd_image.cpp). Static, no tests.
+include(FetchContent)
+set(PS2X_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+set(CHDR_WANT_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(ps2x_libchdr
+    GIT_REPOSITORY https://github.com/rtissera/libchdr.git
+    GIT_TAG 47d794151b2b64f6aba60304e6480f4f5a2bc24b) # 2026-10-11
+FetchContent_MakeAvailable(ps2x_libchdr)
+set(BUILD_SHARED_LIBS ${PS2X_SHARED_LIBS_SAVED})
+target_link_libraries(ps2_runtime PRIVATE chdr-static)
 if(TARGET SDL3::SDL3-shared)
     target_link_libraries(ps2_runtime PRIVATE SDL3::SDL3-shared)
     target_compile_definitions(ps2_runtime PRIVATE PS2X_HAS_SDL3=1)

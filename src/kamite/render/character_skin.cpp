@@ -412,12 +412,6 @@ namespace kamite::render
             const uint32_t entryPc = st.pc;
             if (cyclesFor(entryPc, count, true) > r.budget)
                 return false;
-            // Declined until the status register's sticky zero / sign / underflow / overflow bits are all set (within
-            // the game's first 3D frame; they are never cleared again): the program's own multiplies would set them,
-            // and tracking every one of them exactly is not worth it.
-            if ((st.status & 0x3C0u) != 0x3C0u)
-                return false;
-
             const VuFloatEnv env;
 
             uint32_t clipFlags = st.clip & 0xFFFFFFu;
@@ -533,7 +527,8 @@ namespace kamite::render
                 uint32_t statusLow = 0u;
                 st.mac = maddFlags(clipAcc, k.toClip[3], splat(1.0f), statusLow);
                 const bool nextDivZero = lane<3>(placed.screenH) == 0.0f;
-                st.status = (st.status & 0xFC0u) | statusLow | (nextDivZero ? 0x20u : 0u) | (divideByZero ? 0x800u : 0u);
+                st.status = (st.status & 0xFC0u) | kStatusStickyFlags | statusLow | (nextDivZero ? 0x20u : 0u) |
+                            (divideByZero ? 0x800u : 0u);
             }
             st.pc = kEndPc;
 

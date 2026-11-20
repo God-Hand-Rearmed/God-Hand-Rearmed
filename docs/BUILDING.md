@@ -27,11 +27,10 @@ python -I build.py modules
 python -I build.py vu
 python -I build.py configure -DKAMITE_PCSX2_GS=ON -DKAMITE_SDL_INPUT=ON
 python -I build.py build
-python -I build.py characters
 ```
 
 - `generate` and the SNR2 steps turn the code from your disc into C++ and take a while; `vu` compiles the PS2's VU1
-  microcode ahead of time; `characters` builds the playable characters from your disc.
+  microcode ahead of time. The playable characters need no step: the game makes them from your disc when it starts.
 - `build` downloads a few libraries the first time and then compiles everything (expect 10+ minutes).
 
 ### Play
@@ -82,7 +81,7 @@ python3 -I build.py build
 python3 -I tools/linux/package.py --bin build/port/bin      # or: nix run .#package -- --bin build/port/bin
 ```
 
-`dist/` then holds `GHR-v<version>-linux-x86_64.tar.gz`, `GHR-v<version>-x86_64.AppImage` and
+`dist/` then holds `GHR-v<version>-Linux-x64.tar.gz`, `GHR-v<version>-Linux-x64.AppImage` and
 `GHR-v<version>.debug` (GHR's debug info, for reading crash addresses; not for players). The packer refuses a build
 that is not portable or that was made on the stand-in game code. What players see is `tools/linux/README-linux.txt`
 (shipped as README.txt).
@@ -124,9 +123,13 @@ In game: **F1** controls, **F2** the dev menu (display, graphics, gameplay, came
 
 A character is a folder `mods/characters/<id>/` next to the game with the disc files it replaces (`pl/pl00.dat` is
 Gene's model) and, optionally, `textures/` with full-resolution replacements in PCSX2's format. The port writes them
-over the game's files as the disc is read, so the game itself is never patched. Xavier is the example mod:
-`assets/characters/xavier/` is its source; `tools/models/` has the model and texture writers for the game's formats and the Blender pipeline
-that put Xavier onto Gene's skeleton (`tools/models/xavier/README.md`).
+over the game's files as the disc is read, so the game itself is never patched.
+
+Xavier is built in: `assets/characters/xavier/` (his own nodes, textures and painted layers, no game data) ships as
+`resources/characters/xavier/`, and the game merges it into Gene's files from your disc when it starts, keeping the
+result in `cache/characters/xavier/` until something changes (`src/kamite/builtin_characters.h`; `python -I build.py
+characters` is the same merge in Python). `tools/models/` has the model and texture writers for the game's formats and
+the Blender pipeline that put Xavier onto Gene's skeleton (`tools/models/xavier/README.md`).
 
 ### HD textures
 
@@ -190,13 +193,22 @@ options were on (60 FPS, aspect ratio, character).
   limit) and turns on the update check. It applies to GHR.exe's own code and the runtime only, so switching it doesn't
   rebuild the generated game code. Dev builds check for updates only with `[Launcher] UpdateTest=1`, and then treat any
   release as newer (to test the updater on a copy of a play folder).
-- **The zip:** a `God Hand Rearmed` folder holding GHR.exe, its DLLs, `resources/`, a fresh `GHR.ini` (the players'
-  values, no disc image set), `README.txt`, `LICENSE` and `docs/licenses/`; never saves, logs, caches, `mods/`, tools,
-  symbols or dumps. Characters are built from the player's disc, so none ship. The maintainer's builder packs it and
-  publishes it as a GitHub pre-release named after the tag, with the CHANGELOG lines since the last release as its
-  notes and the zip as its one asset (the updater installs the newest release's `.zip`).
-- **The Linux files:** `GHR-v<version>-linux-x86_64.tar.gz` and `GHR-v<version>-x86_64.AppImage`, made by
+- **The zip:** `GHR-v<version>-Windows-x64.zip` (RecompLauncher picks a release's file by its system and CPU words), a
+  `God Hand Rearmed` folder holding GHR.exe, its DLLs, `resources/`, `recomplauncher.json`, `README.txt`, `LICENSE` and
+  `docs/licenses/`; never `GHR.ini` or `controls.ini` (an update unpacked over the folder must not replace the player's:
+  GHR.exe writes its built-in defaults on the first start and adds new settings to an existing GHR.ini at every start
+  of a release build), saves, logs, caches, `mods/`, tools, symbols or dumps. Characters are built from the player's
+  disc, so none ship. The maintainer's builder packs it and publishes it as a GitHub release named after the tag (a full
+  release, not a pre-release: RecompLauncher installs only full releases), with the CHANGELOG lines since the last
+  release as its notes and the zip as its one asset (the updater installs the newest release's `.zip`).
+- **RecompLauncher:** `recomplauncher.json` (top level, copied next to GHR.exe by the build) is generated from the
+  settings table and the presets: after changing either, run `python -I tools/recomplauncher/gen_manifest.py`
+  (`--check` says when it's stale). Its setup step is `GHR.exe --prepare --iso <image>` (no window); started by
+  RecompLauncher, the launcher's own update offer stands down.
+- **The Linux files:** `GHR-v<version>-Linux-x64.tar.gz` and `GHR-v<version>-Linux-x64.AppImage`, made by
   `tools/linux/package.py` from a portable release build ([Linux and Steam Deck](#linux-and-steam-deck)) and attached
   to the same release next to the zip. The names are what each updater looks for: Windows takes only the `.zip`, a
-  Linux folder the `-linux-x86_64.tar.gz`, an AppImage the `-x86_64.AppImage` (`src/kamite/update_archive.cpp`,
-  `pickAsset`). The `.debug` file stays with the maintainer.
+  Linux folder the `-Linux-x64.tar.gz`, an AppImage the `-Linux-x64.AppImage` (`src/kamite/update_archive.cpp`,
+  `pickAsset`). Like the zip they carry no `GHR.ini` or
+  `controls.ini`, nor `recomplauncher.json` (its program is `GHR.exe`; RecompLauncher's Linux side is not set up yet).
+  The `.debug` file stays with the maintainer.

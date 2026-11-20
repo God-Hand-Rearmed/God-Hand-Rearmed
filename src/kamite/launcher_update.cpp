@@ -182,6 +182,14 @@ namespace kamite::launcher::update
                 checker.state.store(static_cast<int>(CheckState::UpToDate));
                 return;
             }
+            // Started by RecompLauncher (it sets RECOMPLAUNCHER=1 for every game it starts): it keeps this folder up to
+            // date itself, so ours stands down (K, Nov 20: one updater is enough). The newspaper still has its notes.
+            if (const char *launcher = std::getenv("RECOMPLAUNCHER"); launcher && *launcher && *launcher != '0')
+            {
+                KM_INFO(Boot, "update: " << target->tag << " is out; RecompLauncher installs it");
+                checker.state.store(static_cast<int>(CheckState::UpToDate));
+                return;
+            }
             Release &release = checker.release;
             release.tag = target->tag;
             release.zipUrl = target->url;
@@ -414,35 +422,7 @@ namespace kamite::launcher::update
             IniFile ini;
             if (!ini.load(mine))
                 return;
-            std::istringstream lines(std::string(theirs.begin(), theirs.end()));
-            std::string line, section;
-            int added = 0;
-            constexpr const char *kMissing = "\x01missing";
-            while (std::getline(lines, line))
-            {
-                if (!line.empty() && line.back() == '\r')
-                    line.pop_back();
-                const size_t first = line.find_first_not_of(" \t");
-                if (first == std::string::npos || line[first] == '#' || line[first] == ';')
-                    continue;
-                if (line[first] == '[')
-                {
-                    const size_t close = line.find(']', first);
-                    section = close == std::string::npos ? std::string() : line.substr(first + 1, close - first - 1);
-                    continue;
-                }
-                const size_t equals = line.find('=');
-                if (equals == std::string::npos)
-                    continue;
-                std::string key = line.substr(first, equals - first);
-                key.erase(key.find_last_not_of(" \t") + 1);
-                if (key.empty() || ini.get(section, key, kMissing) != kMissing)
-                    continue;
-                std::string value = line.substr(equals + 1);
-                value.erase(0, value.find_first_not_of(" \t"));
-                ini.set(section, key, value);
-                ++added;
-            }
+            const int added = ini.addMissing(std::string(theirs.begin(), theirs.end()));
             if (added > 0)
             {
                 ini.save();

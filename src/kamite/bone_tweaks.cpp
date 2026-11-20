@@ -357,10 +357,6 @@ namespace kamite::bone_tweaks
             Spring seat, breast[2]; // breast 0: her left (29), 1: her right (28)
             float dent = 0.0f, dentVel = 0.0f; // the slap's dent (m, into the cheeks)
             float envGame = 0.0f, envOurs = 0.0f; // recent peak of the game's bounce / our springs' pitch (radians)
-            // The player's stand-in for the game's bounce (gameBounce): its angle and step, the lagging point, the root
-            // at the last step, time toward the next 30 FPS step.
-            float bounce = 0.0f, bounceVel = 0.0f, bounceTime = 0.0f;
-            Vec lag{}, root{};
         };
         std::unordered_map<uint32_t, JigState> g_jigs; // game thread, by model
         std::vector<uint32_t> g_jigDone;               // the models placed this frame
@@ -385,44 +381,14 @@ namespace kamite::bone_tweaks
         Mat columns(const Vec &x, const Vec &y, const Vec &z) { return {x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]}; }
         Mat scaled(const Mat &m, float s) { Mat r = m; for (float &v : r) v *= s; return r; }
 
-        // The game's bust bounce (cObjSimple_MoveBust 0x2B6A40) runs on the enemies only (cObjSimple_Update); playable
-        // Olivia gets the same spring here, so her bust blends from it into our springs exactly as an enemy's does (K, Nov
-        // 19). Per 30 FPS step, as the game: a point 3 cm ahead of the bust (along its z) is carried along by the root's
-        // horizontal move; its angle above / below the bust's own horizontal plane kicks the bust's pitch (half of it,
-        // the angle clamped to 30 degrees); pitch += velocity, clamped to 30 degrees (velocity 0 there); velocity =
-        // 0.8 velocity - 0.5 pitch; then the point is put 3 cm ahead of the bust again.
-        void gameBounce(JigState &st, const Vec &root, const Mat &bustRot, const Vec &bustPos, float dt, bool reset)
-        {
-            constexpr float kMax = 0.5236f, kStep = 1.0f / 30.0f;
-            const auto ahead = [&](float a) { return add(bustPos, applyRot(mul(bustRot, rotX(a)), Vec{0.0f, 0.0f, 0.03f})); };
-            if (reset)
-            {
-                st.bounce = st.bounceVel = st.bounceTime = 0.0f;
-                st.root = root;
-                st.lag = ahead(0.0f);
-                return;
-            }
-            st.bounceTime += dt;
-            while (st.bounceTime >= kStep - 1e-4f)
-            {
-                st.bounceTime -= kStep;
-                const Vec d = sub(root, st.root);
-                st.root = root;
-                st.lag = add(st.lag, Vec{d[0], 0.0f, d[2]});
-                const Mat r = mul(bustRot, rotX(st.bounce));
-                const Vec local = applyRot(transpose(columns(unit(Vec{r[0], r[3], r[6]}), unit(Vec{r[1], r[4], r[7]}), unit(Vec{r[2], r[5], r[8]}))),
-                                           sub(st.lag, bustPos));
-                const float angle = std::atan2(local[1], std::sqrt(local[0] * local[0] + local[2] * local[2]));
-                st.bounce += std::clamp(-angle, -kMax, kMax) * 0.5f + st.bounceVel;
-                if (std::fabs(st.bounce) > kMax)
-                {
-                    st.bounce = std::clamp(st.bounce, -kMax, kMax);
-                    st.bounceVel = 0.0f;
-                }
-                st.bounceVel = st.bounceVel * 0.8f - st.bounce * 0.5f;
-                st.lag = ahead(st.bounce);
-            }
-        }
+        // Playable Olivia's bust (the player's model; K, Nov 20: it moved as at 130% at every size, even 85%). The
+        // game's bounce (cObjSimple_MoveBust, enemies only) emulated on her and the springs with their response kept at
+        // 130%'s size both ran into the 30 / 20 degree limits in Gene's moves (offline, his run: the same peaks at 85 and
+        // 130%). Hers is the springs alone, sized by Money: the strength runs from the firm 0.45 at 100% to K's 1.0 at
+        // 130% with no rate compensation (a firmer bust lags less), x Money squared below 100%, and the limits are soft
+        // (tanh), so a bigger bust always moves more and a hard move doesn't flatten the sizes. Run: about 18 / 31
+        // degrees of pitch at 100 / 130%, idle 4 / 11.
+        float softLimit(float v, float limit) { return limit * std::tanh(v / limit); }
 
         void placeJiggle(uint8_t *rdram, uint32_t model)
         {
@@ -451,7 +417,7 @@ namespace kamite::bone_tweaks
             // (the parent's axes tipped by the droop, scaled; placeMoney's frame without any bounce).
             const Bone pelvis = readBone(rdram, parts[kPelvisBone]), bust = readBone(rdram, parts[kBustBone]);
             const Bone parent = readBone(rdram, parts[kBustParent]);
-            // The player's model (playable Olivia, olivia_player.h) has no bounce of the game's: gameBounce stands in.
+            // The player's model (playable Olivia, olivia_player.h): no bounce of the game's; her springs (softLimit).
             const bool own = model == rd32(rdram, GameWork::address(GameWork::kPlayerObj));
             Bone gameBust = bust; // bone 29 before placeMoney's scale and droop
             for (const Saved &sv : g_moneySaved)
@@ -482,16 +448,12 @@ namespace kamite::bone_tweaks
                 st.dent = st.dentVel = 0.0f;
                 st.live = true;
                 st.frame = frame;
-                if (own)
-                    gameBounce(st, readBone(rdram, parts[0]).pos(), gameBust.rot(), gameBust.pos(), 0.0f, true);
             }
             float stepDt = 0.0f; // > 0 when the springs stepped this draw
             if (st.frame != frame && elapsed > 0)
             {
                 const float dt = static_cast<float>(elapsed) / (fps60() ? 60.0f : 30.0f);
                 stepDt = dt;
-                if (own)
-                    gameBounce(st, readBone(rdram, parts[0]).pos(), gameBust.rot(), gameBust.pos(), dt, false);
                 const float spread = jig(kSpread, money); // left x (1 + spread), right x (1 - spread), as K tuned it
                 if (const float slap = punish_fit::seatSlap(rdram, model); slap > 0.0f && cash > kOn && (jg.flags & 1))
                 {
@@ -537,7 +499,7 @@ namespace kamite::bone_tweaks
             }
             if (!(jg.flags & 2))
                 return;
-            // The player's bust (gameBounce's) takes the springs' path at 100% too (K, Nov 19: as at 101%).
+            // The player's bust takes the springs' path at every size (softLimit).
             if (money <= kOn && !own)
             {
                 // 28 as 29 (the game's bounce, or Money's scale below 100% / the chest grab's hold as placeMoney left it).
@@ -557,10 +519,11 @@ namespace kamite::bone_tweaks
             const float hold = std::clamp(punish_fit::bustHold(rdram, model), 0.0f, 1.0f);
             const float t = bustU(std::max(money, 1.0f)); // the blend weight (u, see bustU)
             const float rate = (kBustFirmHz + (kJigFull[kHz] - kBustFirmHz) * t) / kJigFull[kHz];
-            const float gain = kJigFull[kGain] * rate * rate;
+            const float minSize = std::min(money, 1.0f);
+            const float gain = own ? jig(kGain, money) * minSize * minSize : kJigFull[kGain] * rate * rate;
             const float side = 1.0f + (kJigFull[kSide] - 1.0f) * t;
             const Vec gy = row(gameBust, 1);
-            const float game = own ? st.bounce : std::atan2(dot(gy, pz), dot(gy, py));
+            const float game = std::atan2(dot(gy, pz), dot(gy, py));
             float pitchOurs[2], yawOurs[2];
             for (int i = 0; i < 2; ++i)
             {
@@ -579,9 +542,11 @@ namespace kamite::bone_tweaks
             const int bones[2] = {kBustBone, kRightBone};
             for (int i = 0; i < 2; ++i)
             {
-                const float pitch = std::clamp(((1.0f - t) * game + t * pitchOurs[i]) * (1.0f - hold), -kPitchMax * kRad,
-                                               kPitchMax * kRad);
-                const float yaw = std::clamp(yawWeight * yawOurs[i] * (1.0f - hold), -kYawMax * kRad, kYawMax * kRad);
+                const float pitch = own ? softLimit(pitchOurs[i] * (1.0f - hold), kPitchMax * kRad)
+                                        : std::clamp(((1.0f - t) * game + t * pitchOurs[i]) * (1.0f - hold),
+                                                     -kPitchMax * kRad, kPitchMax * kRad);
+                const float yaw = own ? softLimit(yawOurs[i] * (1.0f - hold), kYawMax * kRad)
+                                      : std::clamp(yawWeight * yawOurs[i] * (1.0f - hold), -kYawMax * kRad, kYawMax * kRad);
                 const Mat q = mul(rotY(yaw), rotX(pitch));
                 const Vec bind = i == 0 ? bBust : Vec{0, 0, 0};
                 const Vec local = add(applyRot(q, sub(sub(bind, bBust), base[i])), base[i]);

@@ -1,0 +1,1808 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "God Hand: Rearmed",
+  "repo": "God-Hand-Rearmed/God-Hand-Rearmed",
+  "game": {
+    "kind": "iso",
+    "label": "Your disc image (.iso) of God Hand for PlayStation 2, the USA release (serial SLUS-21503).",
+    "check": {
+      "iso9660": "SLUS_215.03"
+    },
+    "dumps": [
+      {
+        "name": "USA",
+        "size": 1567686656,
+        "crc32": "07220ad2"
+      }
+    ]
+  },
+  "start": {
+    "program": [
+      "GHR.exe"
+    ],
+    "args": []
+  },
+  "prepare": {
+    "program": [
+      "GHR.exe"
+    ],
+    "args": [
+      "--prepare",
+      "--iso",
+      "{game}"
+    ],
+    "label": "Checking your disc and writing the default settings",
+    "timeout": 120
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [
+        {
+          "path": "{install}/GHR.ini"
+        }
+      ],
+      "game_path": "Game/Iso"
+    }
+  ],
+  "saves": [
+    "{install}/memcards",
+    "{install}/GHR.ini",
+    "{install}/controls.ini"
+  ],
+  "folders": {
+    "saves": [
+      {
+        "path": "{install}/memcards"
+      }
+    ],
+    "states": [
+      {
+        "path": "{install}/states"
+      }
+    ],
+    "logs": [
+      {
+        "path": "{install}/logs"
+      }
+    ]
+  },
+  "actions": [
+    {
+      "id": "saves",
+      "label": "Memory card",
+      "help": "Your saved games.",
+      "open": "saves"
+    },
+    {
+      "id": "states",
+      "label": "Save states",
+      "help": "The save states you made in game.",
+      "open": "states"
+    },
+    {
+      "id": "logs",
+      "label": "Logs",
+      "help": "What to attach to a bug report.",
+      "open": "logs"
+    }
+  ],
+  "exit_codes": {
+    "2": "No disc image was given. Pick your copy of God Hand again on the game's page.",
+    "3": "That disc image isn't the USA release of God Hand (SLUS-21503), the one God Hand: Rearmed is built from. Pick that one on the game's page.",
+    "4": "Your processor is too old for God Hand: Rearmed (it needs SSE4.1)."
+  },
+  "looks": {
+    "allowed": false,
+    "reason": "God Hand: Rearmed has its own picture options (Anti-Aliasing, Texture Filtering, Post Effects)."
+  },
+  "settings": [
+    {
+      "id": "Start",
+      "label": "Start",
+      "group": "Start",
+      "in": "args",
+      "help": "Straight into the game, or through God Hand: Rearmed's own launcher first (its Play starts the game).",
+      "choices": [
+        {
+          "label": "Straight into the game",
+          "args": [
+            "--iso",
+            "{game}"
+          ]
+        },
+        {
+          "label": "God Hand: Rearmed's launcher",
+          "args": []
+        }
+      ]
+    },
+    {
+      "id": "Preset",
+      "label": "Preset",
+      "group": "Presets",
+      "help": "Classic: Clover's Vanilla Thrilla | Remastered: Spitshine Edition | Rearmed: That's the Spice! | Sleazy Mode: ...is Now Selectable! For the girl who just wants to have fun.",
+      "choices": [
+        {
+          "label": "Classic",
+          "set": {
+            "Video/CameraPreset": "ps2",
+            "Video/FieldOfView": "100",
+            "Video/FightFieldOfView": "100",
+            "Video/CameraZoomOut": "0",
+            "Video/CameraTilt": "0",
+            "Video/SeeThrough": "0",
+            "Video/AspectRatio": "4:3",
+            "Game/SwayBar": "0",
+            "Game/Fps60": "0",
+            "Game/ControlStyle": "classic",
+            "Game/KbmControlStyle": "classic",
+            "Game/L3Dash": "0",
+            "Game/SprintTraversal": "0",
+            "Game/StyleSwitching": "0",
+            "Game/BuckBreaker": "0",
+            "Game/BallBusterWomen": "0",
+            "Game/TensionPlacable": "0",
+            "Game/LiftChairs": "0",
+            "Game/RouletteTargetCycle": "0",
+            "Game/RouletteNoOrbs": "0",
+            "Game/SkipIntro": "0",
+            "Game/UnlockHard": "0",
+            "Game/NpcPoses": "0",
+            "Game/Cash": "100",
+            "Game/Money": "100",
+            "Sound/RouletteRatchet": "0"
+          }
+        },
+        {
+          "label": "Remastered",
+          "set": {
+            "Video/CameraPreset": "wider",
+            "Video/FieldOfView": "125",
+            "Video/FightFieldOfView": "100",
+            "Video/CameraZoomOut": "0",
+            "Video/CameraTilt": "0",
+            "Video/SeeThrough": "0",
+            "Video/AspectRatio": "auto",
+            "Video/HudLayout": "16:9",
+            "Game/SwayBar": "0",
+            "Game/Fps60": "1",
+            "Game/ControlStyle": "hold",
+            "Game/ModernAuto": "1",
+            "Game/KbmControlStyle": "modern",
+            "Game/KbmModernAuto": "0",
+            "Game/L3Dash": "1",
+            "Game/SprintTraversal": "0",
+            "Game/StyleSwitching": "0",
+            "Game/BuckBreaker": "0",
+            "Game/BallBusterWomen": "0",
+            "Game/TensionPlacable": "0",
+            "Game/LiftChairs": "0",
+            "Game/RouletteTargetCycle": "0",
+            "Game/RouletteNoOrbs": "0",
+            "Game/SkipIntro": "1",
+            "Game/UnlockHard": "1",
+            "Game/NpcPoses": "0",
+            "Game/Cash": "100",
+            "Game/Money": "100",
+            "Sound/RouletteRatchet": "1"
+          }
+        },
+        {
+          "label": "Rearmed",
+          "set": {
+            "Video/CameraPreset": "action",
+            "Video/FieldOfView": "153",
+            "Video/FightFieldOfView": "117",
+            "Video/CameraZoomOut": "54.9",
+            "Video/CameraTilt": "14.88",
+            "Video/SeeThrough": "1",
+            "Video/AspectRatio": "auto",
+            "Video/HudLayout": "16:9",
+            "Game/SwayBar": "1",
+            "Game/Fps60": "1",
+            "Game/ControlStyle": "hold",
+            "Game/ModernAuto": "1",
+            "Game/KbmControlStyle": "modern",
+            "Game/KbmModernAuto": "0",
+            "Game/L3Dash": "1",
+            "Game/SprintTraversal": "1",
+            "Game/StyleSwitching": "1",
+            "Game/StyleSignal": "1",
+            "Game/BuckBreaker": "1",
+            "Game/BallBusterWomen": "0",
+            "Game/TensionPlacable": "0",
+            "Game/LiftChairs": "0",
+            "Game/RouletteTargetCycle": "1",
+            "Game/RouletteNoOrbs": "1",
+            "Game/SkipIntro": "1",
+            "Game/UnlockHard": "1",
+            "Game/NpcPoses": "1",
+            "Game/Cash": "115",
+            "Game/Money": "115",
+            "Sound/RouletteRatchet": "1"
+          }
+        },
+        {
+          "label": "Sleazy Mode",
+          "set": {
+            "Video/CameraPreset": "action",
+            "Video/FieldOfView": "153",
+            "Video/FightFieldOfView": "117",
+            "Video/CameraZoomOut": "54.9",
+            "Video/CameraTilt": "14.88",
+            "Video/SeeThrough": "1",
+            "Video/AspectRatio": "auto",
+            "Video/HudLayout": "16:9",
+            "Game/SwayBar": "1",
+            "Game/Fps60": "1",
+            "Game/ControlStyle": "hold",
+            "Game/ModernAuto": "1",
+            "Game/KbmControlStyle": "modern",
+            "Game/KbmModernAuto": "0",
+            "Game/L3Dash": "1",
+            "Game/SprintTraversal": "1",
+            "Game/StyleSwitching": "1",
+            "Game/StyleSignal": "1",
+            "Game/BuckBreaker": "1",
+            "Game/BallBusterWomen": "1",
+            "Game/TensionPlacable": "1",
+            "Game/OffTheCuff": "1",
+            "Game/LiftChairs": "1",
+            "Game/RouletteTargetCycle": "1",
+            "Game/RouletteNoOrbs": "1",
+            "Game/SkipIntro": "1",
+            "Game/UnlockHard": "1",
+            "Game/NpcPoses": "1",
+            "Game/Cash": "115",
+            "Game/Money": "115",
+            "Sound/RouletteRatchet": "1"
+          }
+        },
+        {
+          "label": "Custom",
+          "set": {}
+        }
+      ]
+    },
+    {
+      "id": "CameraPreset",
+      "label": "Camera & FOV",
+      "help": "How far you see to the side. Works with Aspect Ratio; enemies adapt.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "As on the PS2",
+          "set": {
+            "Video/CameraPreset": "ps2",
+            "Video/FieldOfView": "100",
+            "Video/FightFieldOfView": "100",
+            "Video/CameraZoomOut": "0",
+            "Video/CameraTilt": "0"
+          }
+        },
+        {
+          "label": "Wider",
+          "set": {
+            "Video/CameraPreset": "wider",
+            "Video/FieldOfView": "125",
+            "Video/FightFieldOfView": "100",
+            "Video/CameraZoomOut": "0",
+            "Video/CameraTilt": "0"
+          }
+        },
+        {
+          "label": "Widest",
+          "set": {
+            "Video/CameraPreset": "widest",
+            "Video/FieldOfView": "150",
+            "Video/FightFieldOfView": "110",
+            "Video/CameraZoomOut": "0",
+            "Video/CameraTilt": "5"
+          }
+        },
+        {
+          "label": "Action",
+          "set": {
+            "Video/CameraPreset": "action",
+            "Video/FieldOfView": "153",
+            "Video/FightFieldOfView": "117",
+            "Video/CameraZoomOut": "54.9",
+            "Video/CameraTilt": "14.88"
+          }
+        },
+        {
+          "label": "Custom",
+          "set": {
+            "Video/CameraPreset": "custom"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/CameraPreset": "ps2",
+        "Video/FieldOfView": "100",
+        "Video/FightFieldOfView": "100",
+        "Video/CameraZoomOut": "0",
+        "Video/CameraTilt": "0"
+      }
+    },
+    {
+      "id": "FieldOfView",
+      "label": "Field of View",
+      "help": "How much the camera shows, both ways, outside fights.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "100%: as on the PS2",
+          "set": {
+            "Video/FieldOfView": "100"
+          }
+        },
+        {
+          "label": "110%",
+          "set": {
+            "Video/FieldOfView": "110"
+          }
+        },
+        {
+          "label": "120%",
+          "set": {
+            "Video/FieldOfView": "120"
+          }
+        },
+        {
+          "label": "130%",
+          "set": {
+            "Video/FieldOfView": "130"
+          }
+        },
+        {
+          "label": "140%",
+          "set": {
+            "Video/FieldOfView": "140"
+          }
+        },
+        {
+          "label": "150%",
+          "set": {
+            "Video/FieldOfView": "150"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/FieldOfView": "100"
+      },
+      "when": {
+        "Video/CameraPreset": "custom"
+      }
+    },
+    {
+      "id": "FightFieldOfView",
+      "label": "Field of View in Fights",
+      "help": "The same while the game's battle camera is on (Gene has an enemy targeted). 100% frames fights as on the PS2.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "100%: as on the PS2",
+          "set": {
+            "Video/FightFieldOfView": "100"
+          }
+        },
+        {
+          "label": "110%",
+          "set": {
+            "Video/FightFieldOfView": "110"
+          }
+        },
+        {
+          "label": "120%",
+          "set": {
+            "Video/FightFieldOfView": "120"
+          }
+        },
+        {
+          "label": "130%",
+          "set": {
+            "Video/FightFieldOfView": "130"
+          }
+        },
+        {
+          "label": "140%",
+          "set": {
+            "Video/FightFieldOfView": "140"
+          }
+        },
+        {
+          "label": "150%",
+          "set": {
+            "Video/FightFieldOfView": "150"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/FightFieldOfView": "100"
+      },
+      "when": {
+        "Video/CameraPreset": "custom"
+      }
+    },
+    {
+      "id": "CameraZoomOut",
+      "label": "Camera Distance",
+      "help": "At a wider field of view, how far back the camera stays. 0% keeps Gene the size he is at 100%; 100% shows more round him.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "0%: Gene keeps his size",
+          "set": {
+            "Video/CameraZoomOut": "0"
+          }
+        },
+        {
+          "label": "50%: halfway out",
+          "set": {
+            "Video/CameraZoomOut": "50"
+          }
+        },
+        {
+          "label": "100%: wider view looks zoomed out",
+          "set": {
+            "Video/CameraZoomOut": "100"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/CameraZoomOut": "0"
+      },
+      "when": {
+        "Video/CameraPreset": "custom"
+      }
+    },
+    {
+      "id": "CameraTilt",
+      "label": "Camera Tilt",
+      "help": "At a wider field of view, the camera also rises and looks down at Gene by this much: more of the floor ahead, less sky.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "None",
+          "set": {
+            "Video/CameraTilt": "0"
+          }
+        },
+        {
+          "label": "5 degrees",
+          "set": {
+            "Video/CameraTilt": "5"
+          }
+        },
+        {
+          "label": "10 degrees",
+          "set": {
+            "Video/CameraTilt": "10"
+          }
+        },
+        {
+          "label": "15 degrees",
+          "set": {
+            "Video/CameraTilt": "15"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/CameraTilt": "0"
+      },
+      "when": {
+        "Video/CameraPreset": "custom"
+      }
+    },
+    {
+      "id": "SteadyIdleCamera",
+      "label": "Steady Idle Cam",
+      "help": "Whether the camera bobs with Gene.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Video/SteadyIdleCamera": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Video/SteadyIdleCamera": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/SteadyIdleCamera": "0"
+      }
+    },
+    {
+      "id": "SeeThrough",
+      "label": "See Through",
+      "help": "Instead of removing walls, the camera sees through them around Gene and enemies.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Video/SeeThrough": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Video/SeeThrough": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/SeeThrough": "1"
+      }
+    },
+    {
+      "id": "Vibration",
+      "label": "Vibration",
+      "help": "Controller rumble. Girls know what it's for.",
+      "group": "Controller",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/Vibration": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/Vibration": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/Vibration": "1"
+      }
+    },
+    {
+      "id": "MenuButtons",
+      "label": "Menu Controls",
+      "help": "Western: bottom button confirms; right cancels. Japanese: right button confirms; bottom cancels.",
+      "group": "Controller",
+      "choices": [
+        {
+          "label": "Western",
+          "set": {
+            "Game/MenuButtons": "western"
+          }
+        },
+        {
+          "label": "Japanese",
+          "set": {
+            "Game/MenuButtons": "japanese"
+          }
+        },
+        {
+          "label": "Classic",
+          "set": {
+            "Game/MenuButtons": "classic"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/MenuButtons": "western"
+      }
+    },
+    {
+      "id": "DisplayMode",
+      "label": "Display Mode",
+      "help": "Window, max window, or borderless fullscreen. You can also use F11, if you're into that.",
+      "group": "Game Window",
+      "choices": [
+        {
+          "label": "Fullscreen (Borderless)",
+          "set": {
+            "Video/StartFullscreen": "1",
+            "Video/StartMaximized": "0"
+          }
+        },
+        {
+          "label": "Maximized Window",
+          "set": {
+            "Video/StartFullscreen": "0",
+            "Video/StartMaximized": "1"
+          }
+        },
+        {
+          "label": "Window",
+          "set": {
+            "Video/StartFullscreen": "0",
+            "Video/StartMaximized": "0"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/StartFullscreen": "1",
+        "Video/StartMaximized": "0"
+      }
+    },
+    {
+      "id": "WindowSize",
+      "label": "Window Size",
+      "help": "The window's size when it opens (not maximized or fullscreen).",
+      "group": "Game Window",
+      "choices": [
+        {
+          "label": "Automatic (follows internal resolution)",
+          "set": {
+            "Video/WindowSize": "auto"
+          }
+        },
+        {
+          "label": "PS2 size",
+          "set": {
+            "Video/WindowSize": "native"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/WindowSize": "auto"
+      },
+      "when": {
+        "Video/StartFullscreen": "0",
+        "Video/StartMaximized": "0"
+      }
+    },
+    {
+      "id": "AspectRatio",
+      "label": "Aspect Ratio",
+      "help": "Screen width from 4:3 to wider than yo momma!",
+      "group": "Game Window",
+      "choices": [
+        {
+          "label": "4:3 (the PS2's)",
+          "set": {
+            "Video/AspectRatio": "4:3"
+          }
+        },
+        {
+          "label": "16:9",
+          "set": {
+            "Video/AspectRatio": "16:9"
+          }
+        },
+        {
+          "label": "16:10",
+          "set": {
+            "Video/AspectRatio": "16:10"
+          }
+        },
+        {
+          "label": "21:9",
+          "set": {
+            "Video/AspectRatio": "21:9"
+          }
+        },
+        {
+          "label": "32:9",
+          "set": {
+            "Video/AspectRatio": "32:9"
+          }
+        },
+        {
+          "label": "Match the screen",
+          "set": {
+            "Video/AspectRatio": "auto"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/AspectRatio": "16:9"
+      }
+    },
+    {
+      "id": "VSync",
+      "label": "VSync",
+      "help": "On: no screen tearing. Off: for G-Sync | FreeSync. The rest get torn up.",
+      "group": "Game Window",
+      "choices": [
+        {
+          "label": "On",
+          "set": {
+            "Video/VSync": "2"
+          }
+        },
+        {
+          "label": "Off",
+          "set": {
+            "Video/VSync": "0"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/VSync": "2"
+      }
+    },
+    {
+      "id": "GraphicsAPI",
+      "label": "Graphics API",
+      "help": "Default: Vulkan | Fallback: DX11",
+      "group": "Renderer",
+      "choices": [
+        {
+          "label": "Vulkan",
+          "set": {
+            "Video/GraphicsAPI": "vulkan"
+          }
+        },
+        {
+          "label": "Direct3D 11",
+          "set": {
+            "Video/GraphicsAPI": "dx11"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/GraphicsAPI": "vulkan"
+      }
+    },
+    {
+      "id": "InternalResolution",
+      "label": "Internal Resolution",
+      "help": "1x: 448p | 2x: 896p | 3x: 1344p | 4x: 1792p",
+      "group": "Renderer",
+      "choices": [
+        {
+          "label": "1x  native (512x448)",
+          "set": {
+            "Video/InternalResolution": "1"
+          }
+        },
+        {
+          "label": "2x  1024x896",
+          "set": {
+            "Video/InternalResolution": "2"
+          }
+        },
+        {
+          "label": "3x  1536x1344",
+          "set": {
+            "Video/InternalResolution": "3"
+          }
+        },
+        {
+          "label": "4x  2048x1792",
+          "set": {
+            "Video/InternalResolution": "4"
+          }
+        },
+        {
+          "label": "5x  2560x2240",
+          "set": {
+            "Video/InternalResolution": "5"
+          }
+        },
+        {
+          "label": "6x  3072x2688",
+          "set": {
+            "Video/InternalResolution": "6"
+          }
+        },
+        {
+          "label": "8x  4096x3584",
+          "set": {
+            "Video/InternalResolution": "8"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/InternalResolution": "3"
+      }
+    },
+    {
+      "id": "TextureFiltering",
+      "label": "Texture Filtering",
+      "help": "PS2: the game's original texture smoothing. Crunchy: unfiltered 3D. | Dangerously Crunchy: the UI too.",
+      "group": "Textures",
+      "choices": [
+        {
+          "label": "PS2 (Bilinear)",
+          "set": {
+            "Video/TextureFiltering": "0"
+          }
+        },
+        {
+          "label": "Crunchy (Unfiltered 3D)",
+          "set": {
+            "Video/TextureFiltering": "1"
+          }
+        },
+        {
+          "label": "Dangerously Crunchy (3D+UI)",
+          "set": {
+            "Video/TextureFiltering": "2"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/TextureFiltering": "0"
+      }
+    },
+    {
+      "id": "TrilinearFiltering",
+      "label": "Trilinear Filtering",
+      "help": "PS2: the game's original texture smoothing. Forced: textures blend smoothly into the distance.",
+      "group": "Textures",
+      "choices": [
+        {
+          "label": "PS2",
+          "set": {
+            "Video/TrilinearFiltering": "-1"
+          }
+        },
+        {
+          "label": "Forced",
+          "set": {
+            "Video/TrilinearFiltering": "2"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/TrilinearFiltering": "-1"
+      }
+    },
+    {
+      "id": "AnisotropicFiltering",
+      "label": "Anisotropic Filtering",
+      "help": "Keeps floors and walls sharp at a slant. Costs next to nothing. Max it out.",
+      "group": "Textures",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Video/AnisotropicFiltering": "0"
+          }
+        },
+        {
+          "label": "2x",
+          "set": {
+            "Video/AnisotropicFiltering": "2"
+          }
+        },
+        {
+          "label": "4x",
+          "set": {
+            "Video/AnisotropicFiltering": "4"
+          }
+        },
+        {
+          "label": "8x",
+          "set": {
+            "Video/AnisotropicFiltering": "8"
+          }
+        },
+        {
+          "label": "16x",
+          "set": {
+            "Video/AnisotropicFiltering": "16"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/AnisotropicFiltering": "16"
+      }
+    },
+    {
+      "id": "AntiAliasing",
+      "label": "Anti-Aliasing",
+      "help": "FXAA smooths jagged edges. Makes the picture a little softer. Like you.",
+      "group": "Effects",
+      "choices": [
+        {
+          "label": "FXAA",
+          "set": {
+            "Video/AntiAliasing": "1"
+          }
+        },
+        {
+          "label": "Off",
+          "set": {
+            "Video/AntiAliasing": "0"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/AntiAliasing": "1"
+      }
+    },
+    {
+      "id": "Brightness",
+      "label": "Brightness",
+      "help": "100% is the game as it was. Turn it up if you can't see who's kicking you.",
+      "group": "Effects",
+      "slider": {
+        "key": "Video/Brightness",
+        "min": 50,
+        "max": 150,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Video/Brightness": "100"
+      }
+    },
+    {
+      "id": "PostEffects",
+      "label": "Post Effects",
+      "help": "The blur effects (depth of field, heat haze) are drawn from small copies of the frame. PS2 resolution keeps them aligned but grainy at high internal resolutions; Upscaled draws them sharp.",
+      "group": "Effects",
+      "choices": [
+        {
+          "label": "PS2 resolution (PCSX2's fix)",
+          "set": {
+            "Video/PostEffects": "ps2"
+          }
+        },
+        {
+          "label": "Upscaled",
+          "set": {
+            "Video/PostEffects": "upscaled"
+          }
+        },
+        {
+          "label": "No fix",
+          "set": {
+            "Video/PostEffects": "off"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/PostEffects": "upscaled"
+      }
+    },
+    {
+      "id": "DepthOfField",
+      "label": "Depth of Field",
+      "help": "Blur in the distance. It can't hurt you.",
+      "group": "Effects",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Video/DepthOfField": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Video/DepthOfField": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/DepthOfField": "1"
+      }
+    },
+    {
+      "id": "HudLayout",
+      "label": "HUD Layout",
+      "help": "Where the health bar, radar, and the rest of the in-game HUD go on a wide screen. Wider than 16:9 keeps them at the edges of a 16:9 area.",
+      "group": "HUD",
+      "choices": [
+        {
+          "label": "16:9: HUD at the screen edges",
+          "set": {
+            "Video/HudLayout": "16:9"
+          }
+        },
+        {
+          "label": "4:3: HUD where the PS2 had it",
+          "set": {
+            "Video/HudLayout": "4:3"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/HudLayout": "16:9"
+      }
+    },
+    {
+      "id": "EnemyLifeGauge",
+      "label": "Enemy Life Gauge",
+      "help": "Select whether to display an enemy's life gauge.",
+      "group": "HUD",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/EnemyLifeGauge": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/EnemyLifeGauge": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/EnemyLifeGauge": "1"
+      }
+    },
+    {
+      "id": "SwayBar",
+      "label": "Sway Bar",
+      "help": "Stun gauge for enemies and bosses. Fills up till they're stunned, then drains.",
+      "group": "HUD",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/SwayBar": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/SwayBar": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/SwayBar": "0"
+      }
+    },
+    {
+      "id": "MenuLayout",
+      "label": "Menu Width",
+      "help": "Menus and screens (pause, options, roulette setup) are drawn for 4:3: shown 4:3 with side bars, or stretched to the screen.",
+      "group": "Menus & Prompts",
+      "choices": [
+        {
+          "label": "4:3: as on the PS2, with side bars",
+          "set": {
+            "Video/MenuLayout": "4:3"
+          }
+        },
+        {
+          "label": "Stretched to the screen",
+          "set": {
+            "Video/MenuLayout": "stretch"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/MenuLayout": "4:3"
+      }
+    },
+    {
+      "id": "ButtonPrompts",
+      "label": "Button Prompts",
+      "help": "Controller button hint style. This choice reflects your value as a person.",
+      "group": "Menus & Prompts",
+      "choices": [
+        {
+          "label": "Automatic (follows your controller)",
+          "set": {
+            "Game/ButtonPrompts": "auto"
+          }
+        },
+        {
+          "label": "Xbox",
+          "set": {
+            "Game/ButtonPrompts": "xbox"
+          }
+        },
+        {
+          "label": "PlayStation (the game's own)",
+          "set": {
+            "Game/ButtonPrompts": "playstation"
+          }
+        },
+        {
+          "label": "Nintendo Switch",
+          "set": {
+            "Game/ButtonPrompts": "nintendo"
+          }
+        },
+        {
+          "label": "Steam",
+          "set": {
+            "Game/ButtonPrompts": "steam"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/ButtonPrompts": "auto"
+      }
+    },
+    {
+      "id": "FpsCounter",
+      "label": "FPS Counter",
+      "help": "Framerate and game speed statistics.",
+      "group": "Overlays",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Video/FpsCounter": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Video/FpsCounter": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Video/FpsCounter": "0"
+      }
+    },
+    {
+      "id": "Fps60",
+      "label": "60 FPS",
+      "help": "Play at a smooth sexy silky 60FPS. Leave OFF if you want the OG experience.",
+      "group": "Speed & Feed",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/Fps60": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/Fps60": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/Fps60": "0"
+      }
+    },
+    {
+      "id": "ControlStyle",
+      "label": "Control Style: Pad",
+      "help": "Classic: PS2's OG fixed facing brawling. Modern (rebindable): Toggle Brawl (R3) | Hold to Brawl (L1).",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Classic",
+          "set": {
+            "Game/ControlStyle": "classic"
+          }
+        },
+        {
+          "label": "Modern: Toggle",
+          "set": {
+            "Game/ControlStyle": "modern"
+          }
+        },
+        {
+          "label": "Modern: Hold",
+          "set": {
+            "Game/ControlStyle": "hold"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/ControlStyle": "classic"
+      }
+    },
+    {
+      "id": "ModernAuto",
+      "label": "Modern: Auto",
+      "help": "Brawling starts when dealing or taking damage. Press the stick (rebindable) to go back to freecam.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/ModernAuto": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/ModernAuto": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/ModernAuto": "1"
+      },
+      "when": {
+        "Game/ControlStyle": "modern"
+      }
+    },
+    {
+      "id": "ModernAutoHold",
+      "label": "Modern: Auto",
+      "help": "Brawling starts when dealing or taking damage. It stops once no enemy is near.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/ModernAuto": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/ModernAuto": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/ModernAuto": "1"
+      },
+      "when": {
+        "Game/ControlStyle": "hold"
+      }
+    },
+    {
+      "id": "KbmControlStyle",
+      "label": "Control Style: KBM",
+      "help": "Keyboard & mouse. Classic: PS2's OG brawling. Modern: mouse freecam.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Classic",
+          "set": {
+            "Game/KbmControlStyle": "classic"
+          }
+        },
+        {
+          "label": "Modern: Toggle",
+          "set": {
+            "Game/KbmControlStyle": "modern"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/KbmControlStyle": "modern"
+      }
+    },
+    {
+      "id": "KbmModernAuto",
+      "label": "Modern: Auto",
+      "help": "Brawling starts when dealing or taking damage. Middle-click (rebindable) to go back to freecam.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/KbmModernAuto": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/KbmModernAuto": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/KbmModernAuto": "0"
+      },
+      "when": {
+        "Game/KbmControlStyle": "modern"
+      }
+    },
+    {
+      "id": "MouseCamera",
+      "label": "Modern: Mouse Look",
+      "help": "Freak...",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/MouseCamera": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/MouseCamera": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/MouseCamera": "1"
+      },
+      "when": {
+        "Game/KbmControlStyle": "modern"
+      }
+    },
+    {
+      "id": "L3Dash",
+      "label": "Click-Stick Dash",
+      "help": "Press and hold the stick to dash. Rebindable in Controls.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/L3Dash": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/L3Dash": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/L3Dash": "0"
+      }
+    },
+    {
+      "id": "SprintTraversal",
+      "label": "Busta-Chan Jive",
+      "help": "Sprint attacks go through 99% of obstacles. Slide right through, swooce right over.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/SprintTraversal": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/SprintTraversal": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/SprintTraversal": "0"
+      }
+    },
+    {
+      "id": "StyleSwitching",
+      "label": "Moveset Presets",
+      "help": "Configure up to 4 styles; switch with the d-pad. Letters around the radar show your sweet sexy styles.",
+      "group": "Style Shuffle",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/StyleSwitching": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/StyleSwitching": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/StyleSwitching": "0"
+      }
+    },
+    {
+      "id": "StyleSignal",
+      "label": "Signal Style Switch",
+      "help": "Gene calls out each style as you switch to it, and his God Hand flashes.",
+      "group": "Style Shuffle",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/StyleSignal": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/StyleSignal": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/StyleSignal": "1"
+      },
+      "when": {
+        "Game/StyleSwitching": "1"
+      }
+    },
+    {
+      "id": "BuckBreaker",
+      "label": "Buck Breaker",
+      "help": "Pick how to punish stunned enemies. Works with Moveset Presets. Some restrictions apply.",
+      "group": "Style Shuffle",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/BuckBreaker": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/BuckBreaker": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/BuckBreaker": "0"
+      }
+    },
+    {
+      "id": "BallBusterWomen",
+      "label": "Cunt Punter",
+      "help": "Ball Buster works on women. Name changes on target. This also works IRL, though your mileage may vary.",
+      "group": "Fightin' Excitement",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/BallBusterWomen": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/BallBusterWomen": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/BallBusterWomen": "0"
+      }
+    },
+    {
+      "id": "TensionPlacable",
+      "label": "Tension is Placable",
+      "help": "After unleashing the God Hand, pull the trigger again to leash it early and keep your remaining Tension.",
+      "group": "Fightin' Excitement",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/TensionPlacable": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/TensionPlacable": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/TensionPlacable": "0"
+      }
+    },
+    {
+      "id": "OffTheCuff",
+      "label": "Off the Cuff",
+      "help": "Unleash the God Hand with any Tension, not just full. Gene is invulnerable only when unleashing at full Tension.",
+      "group": "Fightin' Excitement",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/OffTheCuff": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/OffTheCuff": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/OffTheCuff": "0"
+      },
+      "when": {
+        "Game/TensionPlacable": "1"
+      }
+    },
+    {
+      "id": "LiftChairs",
+      "label": "Wild Curry Funk",
+      "help": "Carry and throw more types of objects. Mostly chairs. If it's not obvious, this makes the game easier.",
+      "group": "Fightin' Excitement",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/LiftChairs": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/LiftChairs": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/LiftChairs": "0"
+      }
+    },
+    {
+      "id": "RouletteTimer",
+      "label": "Roulette Timer",
+      "help": "Time limit to select a move after opening the Roulette. Techniques fire off automatically at the end of the timer.",
+      "group": "Roulette Charrette",
+      "choices": [
+        {
+          "label": "Normal",
+          "set": {
+            "Game/RouletteTimer": "normal"
+          }
+        },
+        {
+          "label": "Double time",
+          "set": {
+            "Game/RouletteTimer": "double"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/RouletteTimer": "normal"
+      }
+    },
+    {
+      "id": "RouletteTargetCycle",
+      "label": "Target Select",
+      "help": "Switch Roulette targets with the right stick and the d-pad. HINT: You can also use the d-pad to cycle Roulette moves.",
+      "group": "Roulette Charrette",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/RouletteTargetCycle": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/RouletteTargetCycle": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/RouletteTargetCycle": "0"
+      }
+    },
+    {
+      "id": "RouletteNoOrbs",
+      "label": "Dry Spinning",
+      "help": "You can open the Roulette even when you don't have balls. HINT: You can use the Roulette camera for targeting.",
+      "group": "Roulette Charrette",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/RouletteNoOrbs": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/RouletteNoOrbs": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/RouletteNoOrbs": "0"
+      }
+    },
+    {
+      "id": "SkipIntro",
+      "label": "Intro Skipper",
+      "help": "Start at the main menu: no Capcom and Clover logos and no \"Press Start\" screen.",
+      "group": "Skip Poker",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/SkipIntro": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/SkipIntro": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/SkipIntro": "0"
+      }
+    },
+    {
+      "id": "UnlockHard",
+      "label": "Hard-On",
+      "help": "Hard can be picked from the start instead of after a clear. Your save is not changed.",
+      "group": "Skip Poker",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/UnlockHard": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/UnlockHard": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/UnlockHard": "0"
+      }
+    },
+    {
+      "id": "NpcPoses",
+      "label": "Better Shop & Casino Poses",
+      "help": "Give the shop and casino people better poses. Not sure what else you were expecting...",
+      "group": "Misqué & Risqué",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/NpcPoses": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/NpcPoses": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/NpcPoses": "0"
+      }
+    },
+    {
+      "id": "Cash",
+      "label": "Cash",
+      "help": "Recommended: 115%",
+      "group": "Misqué & Risqué",
+      "slider": {
+        "key": "Game/Cash",
+        "min": 100,
+        "max": 130,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Game/Cash": "100"
+      }
+    },
+    {
+      "id": "Money",
+      "label": "Money",
+      "help": "Recommended: 115%",
+      "group": "Misqué & Risqué",
+      "slider": {
+        "key": "Game/Money",
+        "min": 85,
+        "max": 130,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Game/Money": "100"
+      }
+    },
+    {
+      "id": "Mode",
+      "label": "Mode",
+      "help": "Select between monaural, stereo, or surround sound.",
+      "group": "Sound",
+      "choices": [
+        {
+          "label": "Mono",
+          "set": {
+            "Sound/Mode": "mono"
+          }
+        },
+        {
+          "label": "Stereo",
+          "set": {
+            "Sound/Mode": "stereo"
+          }
+        },
+        {
+          "label": "Dolby Pro Logic II",
+          "set": {
+            "Sound/Mode": "prologic2"
+          }
+        }
+      ],
+      "defaults": {
+        "Sound/Mode": "stereo"
+      }
+    },
+    {
+      "id": "RouletteRatchet",
+      "label": "Roulette Ratchet",
+      "help": "When you flick, it clicks.",
+      "group": "Sound",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Sound/RouletteRatchet": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Sound/RouletteRatchet": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Sound/RouletteRatchet": "0"
+      }
+    },
+    {
+      "id": "MusicVolume",
+      "label": "Music",
+      "help": "Set stage, boss, menu, and minigame music volume.",
+      "group": "Volume",
+      "slider": {
+        "key": "Sound/MusicVolume",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Sound/MusicVolume": "100"
+      }
+    },
+    {
+      "id": "EffectsVolume",
+      "label": "Sound Effects",
+      "help": "Set the volume of ingame sound effects.",
+      "group": "Volume",
+      "slider": {
+        "key": "Sound/EffectsVolume",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Sound/EffectsVolume": "100"
+      }
+    },
+    {
+      "id": "VoicesVolume",
+      "label": "Voices",
+      "help": "Set the volume of ingame voice lines. Cutscene music and voices are one track.",
+      "group": "Volume",
+      "slider": {
+        "key": "Sound/VoicesVolume",
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Sound/VoicesVolume": "100"
+      }
+    }
+  ]
+}

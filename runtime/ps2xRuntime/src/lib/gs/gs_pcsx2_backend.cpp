@@ -852,6 +852,10 @@ bool GSPcsx2Backend::EnsureOpen()
     // sets it for [Mods] Character); used with or without a texture pack.
     if (const char *extra = std::getenv("PS2X_PCSX2_TEXTURE_EXTRA"); extra && *extra)
         options += std::string("texture_extra=") + extra + ";";
+    // PS2X_PCSX2_TEXTURE_FIRST: folders searched before the texture pack ('|' between, the winner first): the enabled
+    // mods' textures/ (kamite mods.cpp), so a mod's image wins over the pack's of the same name.
+    if (const char *first = std::getenv("PS2X_PCSX2_TEXTURE_FIRST"); first && *first)
+        options += std::string("texture_first=") + first + ";";
     params.options = options.c_str();
     m_open = g_api->open(&params) != 0;
     m_failed = !m_open;

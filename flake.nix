@@ -18,7 +18,7 @@
         root = ./.;
         fileset = lib.fileset.unions [
           ./CMakeLists.txt ./GHR.ini ./LICENSE ./cmake ./src ./runtime ./thirdparty ./resources ./tests
-          ./tools/linux ./tools/readme ./docs/licenses
+          ./tools/linux ./tools/readme ./docs/licenses ./assets/characters ./recomplauncher.json
         ];
       };
 
@@ -71,7 +71,7 @@
             nativeBuildInputs = [ pkgs.python3 pkgs.patchelf pkgs.xorg-server pkgs.xwd ];
           } ''
             mkdir -p work $out && cd work
-            tar xzf ${linuxStub}/GHR-v${version}-stub-linux-x86_64.tar.gz
+            tar xzf ${linuxStub}/GHR-v${version}-stub-Linux-x64.tar.gz
             cd "God Hand Rearmed"
             chmod u+w . GHR
             patchelf --set-interpreter ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 GHR

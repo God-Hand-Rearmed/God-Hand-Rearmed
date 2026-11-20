@@ -1,6 +1,8 @@
 #include "runtime/ps2_cd_image.h"
 #include "ps2_runtime.h"
 
+#include <libchdr/chd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -30,6 +32,240 @@ namespace
                fseeko(file, static_cast<off_t>(offset), SEEK_SET) == 0;
 #endif
     }
+
+    std::FILE *openForReading(const std::filesystem::path &path)
+    {
+#if defined(_WIN32)
+        return ::_wfopen(path.c_str(), L"rb");
+#else
+        return std::fopen(path.string().c_str(), "rb");
+#endif
+    }
+
+    constexpr uint32_t kCdFrameBytes = 2448u; // a CD CHD's frame: 2352 bytes of sector + 96 of subcode
+
+    // A number after key in CHD track metadata ("TRACK:1 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:1234 PREGAP:0 ..."), -1 if none.
+    long metadataNumber(const std::string &text, const char *key)
+    {
+        const size_t at = text.find(key);
+        if (at == std::string::npos)
+            return -1;
+        return std::strtol(text.c_str() + at + std::strlen(key), nullptr, 10);
+    }
+}
+
+struct PS2DiscImageFile::Chd
+{
+    chd_file *file = nullptr;
+    uint32_t hunkBytes = 0;
+    bool cd = false;          // createcd: 2448-byte frames; otherwise (createdvd) the disc's bytes as they are
+    uint32_t framesPerHunk = 0;
+    uint32_t firstFrame = 0;  // cd: the data track's first frame (a pregap stored in the file comes before it)
+    uint32_t dataOffset = 0;  // cd: a sector's 2048 bytes in its frame (0 cooked, 16 MODE1 raw, 24 MODE2 raw)
+    std::vector<uint8_t> hunk;
+    uint32_t hunkIndex = std::numeric_limits<uint32_t>::max();
+    bool reported = false;
+
+    ~Chd()
+    {
+        if (file)
+            chd_close(file);
+    }
+
+    const uint8_t *load(uint64_t index)
+    {
+        if (index == hunkIndex)
+            return hunk.data();
+        hunkIndex = std::numeric_limits<uint32_t>::max();
+        const chd_error result = index < chd_get_header(file)->totalhunks
+                                     ? chd_read(file, static_cast<uint32_t>(index), hunk.data())
+                                     : CHDERR_HUNK_OUT_OF_RANGE;
+        if (result != CHDERR_NONE)
+        {
+            if (!reported)
+                std::cerr << "[CDIMAGE] CHD hunk " << index << ": " << chd_error_string(result) << std::endl;
+            reported = true;
+            return nullptr;
+        }
+        hunkIndex = static_cast<uint32_t>(index);
+        return hunk.data();
+    }
+
+    // Where a byte of the disc's data lies: its hunk, the offset in it, and how many bytes follow it there.
+    void locate(uint64_t offset, uint64_t &index, size_t &at, size_t &run) const
+    {
+        if (!cd)
+        {
+            index = offset / hunkBytes;
+            at = static_cast<size_t>(offset % hunkBytes);
+            run = hunkBytes - at;
+            return;
+        }
+        const uint64_t frame = firstFrame + offset / PS2CdImage::kSectorSize;
+        const size_t within = static_cast<size_t>(offset % PS2CdImage::kSectorSize);
+        index = frame / framesPerHunk;
+        at = static_cast<size_t>(frame % framesPerHunk) * kCdFrameBytes + dataOffset + within;
+        run = PS2CdImage::kSectorSize - within;
+    }
+};
+
+PS2DiscImageFile::PS2DiscImageFile() = default;
+
+PS2DiscImageFile::~PS2DiscImageFile()
+{
+    close();
+}
+
+bool PS2DiscImageFile::hasImageExtension(const std::filesystem::path &path)
+{
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".iso" || extension == ".chd";
+}
+
+bool PS2DiscImageFile::open(const std::filesystem::path &path, std::string &error)
+{
+    close();
+    m_file = openForReading(path);
+    if (!m_file)
+    {
+        error = "the file can't be opened";
+        return false;
+    }
+    char magic[8]{};
+    if (std::fread(magic, 1u, sizeof(magic), m_file) != sizeof(magic) || std::memcmp(magic, "MComprHD", sizeof(magic)) != 0)
+    {
+        std::error_code sizeError;
+        m_size = std::filesystem::file_size(path, sizeError);
+        if (sizeError)
+        {
+            error = "the file's size can't be read";
+            close();
+            return false;
+        }
+        return true;
+    }
+
+    auto chd = std::make_unique<Chd>();
+    const chd_error opened = chd_open_file(m_file, CHD_OPEN_READ, nullptr, &chd->file); // the FILE stays ours
+    if (opened != CHDERR_NONE)
+    {
+        chd->file = nullptr;
+        error = opened == CHDERR_REQUIRES_PARENT ? std::string("the CHD needs its parent CHD (make it without one)")
+                                                 : std::string("the CHD can't be read (") + chd_error_string(opened) + ")";
+        close();
+        return false;
+    }
+    const chd_header &header = *chd_get_header(chd->file);
+    chd->hunkBytes = header.hunkbytes;
+    chd->hunk.resize(header.hunkbytes);
+    chd->cd = header.unitbytes == kCdFrameBytes;
+    if (!chd->cd)
+    {
+        m_size = header.logicalbytes;
+    }
+    else
+    {
+        chd->framesPerHunk = header.hunkbytes / kCdFrameBytes;
+        uint64_t frames = header.logicalbytes / kCdFrameBytes;
+        uint32_t pregap = 0;
+        // Track 1 (the data track): its frames, and a pregap stored in the file before them (PGTYPE:V...).
+        char text[256]{};
+        uint32_t length = 0;
+        if (chd_get_metadata(chd->file, CDROM_TRACK_METADATA2_TAG, 0, text, sizeof(text) - 1u, &length, nullptr, nullptr) == CHDERR_NONE ||
+            chd_get_metadata(chd->file, CDROM_TRACK_METADATA_TAG, 0, text, sizeof(text) - 1u, &length, nullptr, nullptr) == CHDERR_NONE)
+        {
+            const std::string meta(text, std::min<size_t>(length, sizeof(text) - 1u));
+            if (const long count = metadataNumber(meta, "FRAMES:"); count > 0)
+                frames = static_cast<uint64_t>(count);
+            const size_t pgtype = meta.find("PGTYPE:");
+            if (const long gap = metadataNumber(meta, "PREGAP:"); gap > 0 && pgtype != std::string::npos && meta[pgtype + 7] == 'V')
+                pregap = static_cast<uint32_t>(gap);
+        }
+        // The data's place in a frame: where sector 16 (the volume descriptor) reads "\1CD001".
+        bool found = false;
+        for (const uint32_t first : {pregap, 0u})
+        {
+            for (const uint32_t offset : {0u, 24u, 16u})
+            {
+                chd->firstFrame = first;
+                chd->dataOffset = offset;
+                uint64_t index = 0;
+                size_t at = 0, run = 0;
+                chd->locate(16u * PS2CdImage::kSectorSize, index, at, run);
+                const uint8_t *data = chd->framesPerHunk != 0u && header.hunkbytes % kCdFrameBytes == 0u ? chd->load(index) : nullptr;
+                if (data && data[at] == 1u && std::memcmp(data + at + 1, "CD001", 5) == 0)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+                break;
+        }
+        if (!found)
+        {
+            error = "the CHD's CD holds no ISO9660 data track";
+            close();
+            return false;
+        }
+        m_size = (frames > chd->firstFrame ? frames - chd->firstFrame : 0u) * PS2CdImage::kSectorSize;
+    }
+    m_chd = std::move(chd);
+    return true;
+}
+
+void PS2DiscImageFile::close()
+{
+    m_chd.reset(); // before the FILE it reads
+    if (m_file)
+    {
+        std::fclose(m_file);
+        m_file = nullptr;
+    }
+    m_size = 0;
+}
+
+bool PS2DiscImageFile::isOpen() const
+{
+    return m_file != nullptr;
+}
+
+bool PS2DiscImageFile::isChd() const
+{
+    return m_chd != nullptr;
+}
+
+uint64_t PS2DiscImageFile::sizeBytes() const
+{
+    return m_size;
+}
+
+bool PS2DiscImageFile::read(uint64_t offset, void *destination, size_t size)
+{
+    if (!m_file)
+        return false;
+    if (!m_chd)
+        return seekFile(m_file, offset) && std::fread(destination, 1u, size, m_file) == size;
+    if (offset > m_size || size > m_size - offset)
+        return false;
+    uint8_t *out = static_cast<uint8_t *>(destination);
+    while (size != 0u)
+    {
+        uint64_t index = 0;
+        size_t at = 0, run = 0;
+        m_chd->locate(offset, index, at, run);
+        const uint8_t *data = m_chd->load(index);
+        if (!data)
+            return false;
+        const size_t count = std::min(size, run);
+        std::memcpy(out, data + at, count);
+        out += count;
+        offset += count;
+        size -= count;
+    }
+    return true;
 }
 
 PS2CdImage &PS2CdImage::instance()
@@ -76,24 +312,14 @@ bool PS2CdImage::open(const std::filesystem::path &imagePath)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_openAttempted = true;
-    if (m_file)
-    {
-        std::fclose(m_file);
-        m_file = nullptr;
-    }
     m_entries.clear();
-#if defined(_WIN32)
-    m_file = ::_wfopen(imagePath.c_str(), L"rb");
-#else
-    m_file = std::fopen(imagePath.string().c_str(), "rb");
-#endif
-    if (!m_file)
+    std::string error;
+    if (!m_image.open(imagePath, error))
     {
-        std::cerr << "[CDIMAGE] cannot open " << imagePath.string() << std::endl;
+        std::cerr << "[CDIMAGE] cannot open " << imagePath.string() << ": " << error << std::endl;
         return false;
     }
-    std::error_code error;
-    m_size = std::filesystem::file_size(imagePath, error);
+    m_size = m_image.sizeBytes();
     m_path = imagePath;
 
     std::vector<uint8_t> sector(kSectorSize);
@@ -104,8 +330,7 @@ bool PS2CdImage::open(const std::filesystem::path &imagePath)
             std::memcmp(sector.data() + 1, "CD001", 5) != 0 || sector[0] == 255)
         {
             std::cerr << "[CDIMAGE] " << imagePath.string() << " is not an ISO9660 image" << std::endl;
-            std::fclose(m_file);
-            m_file = nullptr;
+            m_image.close();
             return false;
         }
         if (sector[0] == 1)
@@ -116,12 +341,12 @@ bool PS2CdImage::open(const std::filesystem::path &imagePath)
     const uint8_t *root = sector.data() + 156;
     if (!parseDirectory(le32(root + 2), le32(root + 10), std::string(), 0))
     {
-        std::fclose(m_file);
-        m_file = nullptr;
+        m_image.close();
         m_entries.clear();
         return false;
     }
-    std::cout << "[CDIMAGE] mounted " << imagePath.string() << " (" << m_entries.size() << " entries)" << std::endl;
+    std::cout << "[CDIMAGE] mounted " << imagePath.string() << " (" << m_entries.size() << " entries"
+              << (m_image.isChd() ? ", CHD" : "") << ")" << std::endl;
     return true;
 }
 
@@ -173,11 +398,7 @@ bool PS2CdImage::parseDirectory(uint32_t lba, uint32_t size, const std::string &
 void PS2CdImage::close()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_file)
-    {
-        std::fclose(m_file);
-        m_file = nullptr;
-    }
+    m_image.close();
     m_entries.clear();
     m_openAttempted = false;
 }
@@ -185,14 +406,14 @@ void PS2CdImage::close()
 bool PS2CdImage::isOpen() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_file != nullptr;
+    return m_image.isOpen();
 }
 
 bool PS2CdImage::ensureOpenFromIoPaths()
 {
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_file)
+        if (m_image.isOpen())
         {
             return true;
         }
@@ -227,7 +448,7 @@ bool PS2CdImage::find(std::string_view ps2Path, Entry &out) const
 {
     const std::string key = normalizeKey(ps2Path);
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_file)
+    if (!m_image.isOpen())
     {
         return false;
     }
@@ -242,7 +463,7 @@ bool PS2CdImage::find(std::string_view ps2Path, Entry &out) const
 
 bool PS2CdImage::readUnlocked(uint64_t offset, void *destination, size_t size) const
 {
-    if (!m_file)
+    if (!m_image.isOpen())
     {
         return false;
     }
@@ -250,7 +471,7 @@ bool PS2CdImage::readUnlocked(uint64_t offset, void *destination, size_t size) c
     {
         return true;
     }
-    if (!seekFile(m_file, offset) || std::fread(destination, 1u, size, m_file) != size)
+    if (!m_image.read(offset, destination, size))
     {
         return false;
     }

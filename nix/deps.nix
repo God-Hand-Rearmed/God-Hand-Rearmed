@@ -4,6 +4,7 @@
 #   raylib, imgui, rlImGui      runtime/ps2xRuntime/CMakeLists.txt
 #   dav1d, libavif              src/CMakeLists.txt (the launcher's saloon)
 #   SDL3                        runtime/ps2xRuntime/CMakeLists.txt (controllers; a release tarball, fetchzip)
+#   libchdr                     runtime/ps2xRuntime/CMakeLists.txt (CHD disc images)
 #   shaderc, glslang, SPIRV-*   thirdparty/pcsx2-gs/shaderc.cmake (the Vulkan renderer's shader compiler; zips)
 # stb_image.h is no FetchContent: thirdparty/pcsx2-gs/CMakeLists.txt downloads it into KAMITE_STB_DIR (stbDir below).
 # A changed revision there and here together; the hash comes from
@@ -33,6 +34,9 @@ in
     # branch Raylib_5_5
     RLIMGUI = gh "raylib-extras" "rlImGui" "118221c8a532501a3c2c236b62950877cbefc2b4"
       "1bp841l243qpz4gvvfh3xaw9p153wdwq3ncjs4hd410d0aj5qjgp";
+    # 2026-10-11 (CHD disc images; runtime/ps2xRuntime/CMakeLists.txt)
+    PS2X_LIBCHDR = gh "rtissera" "libchdr" "47d794151b2b64f6aba60304e6480f4f5a2bc24b"
+      "1d4bnlrb6hp2dmjv25kgsnyffc3z10ih3j733yipv68wmgvcz7rl";
     # 1.2.1-SDL
     KAMITE_DAV1D = gh "libsdl-org" "dav1d" "a6b395b472c2b1911a49936840e18535b071c1bd"
       "0qb68dabqgk7sgdc1m56d0nl2jika15623hp6fj7win5az4hvpsd";

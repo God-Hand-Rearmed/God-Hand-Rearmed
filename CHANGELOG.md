@@ -2,6 +2,29 @@
 
 Newest first, one line per change; the code comments say how.
 
+## November 20, 2026
+
+- Mods: a mod is a folder in mods\ (a mod.ini, game files under their disc paths, textures\ ahead of your texture pack, patches\*.pnach), loaded in the Mods tab's order: the lower mod wins a file both replace.
+- Launcher: the Mods tab lists your mods: tick them on or off, move them up or down (the marks by the number, LT / RT, Z / C), see what each one overrides; a new mod comes in on, at the bottom; Install from Zip and Open Mods Folder.
+- Save states remember the mods they were made with: loading one with other mods on says what differs, then loads.
+- Disc images: GHR also plays from a .chd (chdman's compressed format, createdvd or createcd), not only an .iso.
+- Updates keep your GHR.ini: a release ships none, and new options are added to yours when the game starts.
+- A disc image that can't be used says why (the European, Japanese or Korean release, another game, a patched copy).
+- Logs: one per session (logs\kamite.log), the last five kept.
+- GHR.exe --game <path> works like --iso.
+- RecompLauncher: setup checks for Redump's verified USA disc; started from it, the launcher leaves updates to it.
+- Mods: Xavier comes with the game: GHR makes him from your own disc the first time it starts (again after an update), in every one of Gene's costumes.
+- RecompLauncher support: a recomplauncher.json for its one-click setup, Play and settings page, and GHR.exe --prepare (a windowless disc check).
+- Moveset Presets: with a keyboard at 4:3 the style letters sit over the level meter again (they jumped to the right edge).
+- Mods: Xavier's snake head is back at full detail and his back hair has no holes from behind (he no longer has to fit the size of Gene's file).
+- Money: playable Olivia's bust moves less the smaller it is (it moved as at 130% at every size).
+- Cash: Olivia's waistband no longer flickers against her dress above 120% (in play and in cutscenes).
+- Performance: the game no longer keeps the CPU busy while it waits for the next frame.
+- Performance: the game's recompiled code calls its functions more directly.
+- Performance: busy scenes take less CPU on the way to the renderer (the graphics data is no longer read twice).
+- Test cases: a replay running in the background no longer reacts to save-state and other shortcut keys pressed while playing.
+- Performance: the native drawing of characters and scenery works from the first 3D frame (it used to start only after a while).
+
 ## November 19, 2026
 
 - Linux and Steam Deck: God Hand: Rearmed runs natively on Linux (no Proton), as an AppImage or a tar.gz folder, on any x86-64 distro with glibc 2.31 or newer (SteamOS included).

@@ -1,5 +1,10 @@
 """Build the playable character mods from your own disc: assets/characters/<id>/ -> <out>/mods/characters/<id>/.
 
+GHR itself makes the characters in assets/characters at boot (src/kamite/character_build.cpp, the C++ port of
+merge_file / overlay_hd, gamemodel.merge_model, strip.py and paint.py: the same bytes), from resources/characters next to
+the exe, and leaves a mods/characters folder of the same name alone. This script stays the reference: a change to the
+merge goes into both, then check_character_build.py compares the two byte for byte on your disc's files.
+
     python -I tools/models/build_characters.py --iso <disc image .iso> --out <folder holding GHR.exe> [--texture-pack <dir>] [id ...]
 
 Each assets/characters/<id>/character.json lists the disc files it replaces:

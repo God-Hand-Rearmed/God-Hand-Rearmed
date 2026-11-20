@@ -1,4 +1,5 @@
 // Stubs: everything launcher.cpp calls outside the launcher's own modules (a Linux harness only).
+#include <cstdlib>
 #include "kamite/character_mods.h"
 #include "kamite/disc_files.h"
 #include "kamite/game_disc.h"
@@ -100,7 +101,7 @@ std::string versionLabel() { return "v0.6.9 Beta (dev abc1234)"; }
 std::string editionName() { return "DEV EDITION"; }
 std::string devCommit() { return std::getenv("LH_RELEASE") ? "" : "abc1234"; }
 // LH_UPDATE: v0.7.0 is out; LH_OFFLINE: the list could not be read; else up to date (this version's notes).
-void startCheck(Checker &c, bool) {
+void startCheck(Checker &c, bool, bool) {
   const char *notes = "- Restored the alpha's Hold to Brawl control scheme: Control Style Modern: Hold (hold L1 to brawl, double-tap for a 180\xC2\xB0 turn); the old Modern is now Modern: Toggle.\n"
                       "- Modern: Hold: Auto's brawl mode ends by itself once no enemy is near.\n"
                       "- Button Mapping: with Modern: Hold, R3 can take a single-press 180\xC2\xB0 turn (off by default).\n"
@@ -129,6 +130,8 @@ void cleanup(const std::filesystem::path &) {}
 }
 namespace launcher::platform {
 std::filesystem::path pick(void *, bool) { return {}; }
+// LH_ZIP: the zip "picked" for Install from zip.
+std::filesystem::path pickZip(void *) { const char *z = std::getenv("LH_ZIP"); return z ? std::filesystem::path(z) : std::filesystem::path(); }
 void open(const std::filesystem::path &) {}
 bool shiftHeld() { return false; }
 bool relaunch(const std::filesystem::path &) { return false; }

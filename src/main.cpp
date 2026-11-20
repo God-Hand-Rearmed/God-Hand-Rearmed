@@ -49,10 +49,13 @@
 #include "kamite/host_window.h"
 #include "kamite/log.h"
 #include "kamite/movie_watchdog.h"
+#include "kamite/frame_wait.h"
 #include "kamite/frame_patches.h"
 #include "kamite/test_mode.h"
 #include "kamite/game_options.h"
 #include "kamite/body_detail.h"
+#include "kamite/builtin_characters.h"
+#include "kamite/mods.h"
 #include "kamite/character_mods.h"
 #include "kamite/file_layer.h"
 #include "kamite/widescreen.h"
@@ -422,6 +425,8 @@ namespace
         {"game", "cash", "KAMITE_CASH"},
         {"mods", "character", "KAMITE_CHARACTER"},
         {"mods", "costume", "KAMITE_COSTUME"},
+        {"mods", "loadorder", "KAMITE_MOD_ORDER"},
+        {"mods", "disabled", "KAMITE_MODS_DISABLED"},
         {"run", "headless", "KAMITE_HEADLESS"},
         {"run", "timelimitseconds", "KAMITE_TIME_LIMIT_SECONDS"},
         {"run", "dumpontimelimit", "KAMITE_DUMP_ON_TIME_LIMIT"},
@@ -578,6 +583,18 @@ namespace
                                                               : std::string(kamite::kDefaultIni));
             notes.push_back("wrote the default " + iniPath.string() + (deck ? " (Steam Deck: full screen, AspectRatio=auto)" : ""));
         }
+#if defined(KAMITE_RELEASE)
+        // A release zip carries no GHR.ini, so an update unpacked over the folder (RecompLauncher's, or by hand) never
+        // replaces the player's: the settings added since theirs was written come from the built-in defaults instead.
+        // Release builds only: a developer build's built-in GHR.ini has the hidden test runs' values (Headless=1).
+        else
+        {
+            kamite::IniFile ini;
+            if (const int added = ini.load(iniPath) ? ini.addMissing(kamite::kDefaultIni) : 0; added > 0)
+                notes.push_back(ini.save() ? std::to_string(added) + " new setting(s) added to " + iniPath.filename().string()
+                                           : "could not add the new settings to " + iniPath.string());
+        }
+#endif
         std::ifstream file(iniPath);
         if (!file)
         {
@@ -643,12 +660,31 @@ namespace
     }
 
     // KAMITE_LOG_FILE=<file>: stdout and stderr appended to that file (one handle, so the lines stay in order).
+    // One log per run (K, Nov 20; the Recomp Standards): the last run's log becomes <name>.1.log, older ones move up
+    // to <name>.4.log and the oldest goes, so a log holds one session and the last five are kept. Hidden runs (test-case
+    // replays, scripted tests) append as before: a replay batch stays in one file (Replay-Cases.cmd reads it after).
+    void rotateLog(const fs::path &path)
+    {
+        constexpr int kKept = 4;
+        std::error_code error;
+        if (!fs::exists(path, error))
+            return;
+        const auto older = [&](int n)
+        { return path.parent_path() / (path.stem().string() + "." + std::to_string(n) + path.extension().string()); };
+        fs::remove(older(kKept), error);
+        for (int n = kKept - 1; n >= 1; --n)
+            fs::rename(older(n), older(n + 1), error); // a missing one fails quietly
+        fs::rename(path, older(1), error);             // still open elsewhere: this run appends to it instead
+    }
+
     void redirectOutput()
     {
 #if defined(_WIN32)
         const char *path = std::getenv("KAMITE_LOG_FILE");
         if (!path || !*path)
             return;
+        if (!envFlag("KAMITE_HEADLESS", false))
+            rotateLog(fs::path(path));
         if (!std::freopen(path, "a", stdout))
             return;
         _dup2(_fileno(stdout), _fileno(stderr));
@@ -663,6 +699,8 @@ namespace
         const char *path = std::getenv("KAMITE_LOG_FILE");
         if (!path || !*path)
             return;
+        if (!envFlag("KAMITE_HEADLESS", false))
+            rotateLog(fs::path(path));
         if (!std::freopen(path, "a", stdout))
             return;
         ::dup2(::fileno(stdout), STDERR_FILENO);
@@ -763,11 +801,45 @@ namespace
 
     void printUsage()
     {
-        std::cout << "usage: kamite [--iso <path-to-" << kamite::kSerial << ".iso>] [--headless|--window] [--time-limit <seconds>]\n"
+        std::cout << "usage: kamite [--iso|--game <path-to-" << kamite::kSerial << ".iso|.chd>] [--headless|--window] [--time-limit <seconds>]\n"
                   << "               [--replay-case <file.case> [--fps60 0|1]] [--test <script>] [--write-settings]\n"
+                  << "       kamite --prepare --iso <path>   check the disc image and get it ready, no window (RecompLauncher)\n"
                   << "settings: GHR.ini next to GHR.exe (environment variables of the same name win)\n"
                   << "exit codes: 0 ok, 1 init failed, 2 no disc, 3 wrong disc, 4 CPU, 5 missing function (stop), 6 crash, 7 test failed,\n"
                   << "            124 time limit\n";
+    }
+
+    // --prepare (RecompLauncher's setup step, recomplauncher.json "prepare"): no window, nothing else started. GHR.ini
+    // has been written if it was missing (as --write-settings); the disc image is checked as at boot and its boot ELF
+    // written to game_data, so a wrong image is reported on the setup screen instead of at Play. Progress goes to
+    // stdout as "progress <0..1> <text>" lines. Exit 0, 2 (no image) or 3 (not the USA disc). Without --prepare nothing
+    // here runs.
+    int prepareOnly(const fs::path &exeDir, fs::path iso)
+    {
+        const auto line = [](const std::string &text)
+        {
+            std::fputs((text + "\n").c_str(), stdout);
+            std::fflush(stdout);
+        };
+        line("progress 0.1 Settings ready");
+        if (iso.empty())
+            if (const char *env = std::getenv("KAMITE_ISO"); env && *env)
+                iso = env;
+        if (iso.empty())
+        {
+            line(std::string("error: no disc image given. Pass --iso <path> to your ") + kamite::kGameTitle + " (" +
+                 kamite::kSerial + ") disc image.");
+            return kExitNoDisc;
+        }
+        line("progress 0.3 Checking your disc");
+        const kamite::DiscCheckResult disc = kamite::verifyDiscAndPrepare(iso, exeDir / "game_data");
+        if (!disc.ok)
+        {
+            line("error: " + disc.error);
+            return kExitBadDisc;
+        }
+        line("progress 1 Ready to play");
+        return kExitOk;
     }
 }
 
@@ -808,10 +880,11 @@ int main(int argc, char *argv[])
     // Command line first: it wins over the environment, which wins over GHR.ini.
     fs::path iso;
     bool writeSettingsOnly = false;
+    bool prepare = false;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
-        if ((arg == "--iso" || arg == "-iso") && i + 1 < argc)
+        if ((arg == "--iso" || arg == "-iso" || arg == "--game") && i + 1 < argc)
             iso = argv[++i];
         else if (arg == "--headless")
             setEnv("KAMITE_HEADLESS", "1");
@@ -827,6 +900,8 @@ int main(int argc, char *argv[])
             setEnv("KAMITE_REPLAY_FPS60", argv[++i]);
         else if (arg == "--write-settings")
             writeSettingsOnly = true;
+        else if (arg == "--prepare")
+            prepare = true;
         else if (arg == "--help" || arg == "-h")
         {
             printUsage();
@@ -861,6 +936,8 @@ int main(int argc, char *argv[])
     kamite::setCameraIniPath(exeDir / "GHR.ini"); // the F2 menu's Camera tab saves there
     if (writeSettingsOnly)
         return kExitOk;
+    if (prepare)
+        return prepareOnly(exeDir, iso);
     redirectOutput();
     const bool headless = envFlag("KAMITE_HEADLESS", false);
 
@@ -1110,11 +1187,16 @@ int main(int argc, char *argv[])
         }
         KM_INFO(Boot, "ELF loaded, entry 0x" << std::hex << runtime.cpu().pc);
         // PS2X_PNACH=<file>[;<file>...]: PCSX2 patches, patch=0 lines now (patch=1 lines at every vblank). Off by default.
-        if (ps2x::pnach::loadFromEnvironment() != 0u)
+        // The mods (mods/<name>, GHR.ini [Mods] LoadOrder / Disabled): their patches/*.pnach after these, textures/ ahead
+        // of the texture pack.
+        const size_t patchLines = ps2x::pnach::loadFromEnvironment();
+        if (patchLines + kamite::mods::prepare(exeDir) != 0u)
             ps2x::pnach::applyOnce(runtime.memory().getRDRAM());
         PS2Runtime::setIoPaths(paths);
+        kamite::mods::installFiles(); // the mods' game files (before the characters: the Character row's pick wins its files)
         kamite::characters::install(exeDir); // [Mods] Character: a replacement model for Gene
         kamite::hd_textures::install(exeDir); // the texture pack's names, and the port's own full-resolution images
+        kamite::builtin_characters::install(exeDir); // Xavier: built from the disc into cache/characters when stale
 
         runtime.setMissingFunctionPolicy(missingFunctionPolicy());
         KM_INFO(Boot, "missing-function policy: " << (std::getenv("KAMITE_MISSING_FUNCTION") ? std::getenv("KAMITE_MISSING_FUNCTION") : "stop")
@@ -1149,6 +1231,7 @@ int main(int argc, char *argv[])
         kamite::debug_tools::install(runtime); // F2: Debug (the game's display switches, room jump; dev-only)
         kamite::hitbox_overlay::install();     // F2: Debug > Hitboxes (dev-only)
         kamite::installMovieWatchdog(runtime); // sweep R3: ending/movie-list movie polls cannot spin forever
+        kamite::installFrameWait(); // the main loop waits for the next frame without spinning (KAMITE_FRAME_WAIT=0: spins)
         // 60 FPS mode, L3 dash, and the game-frame count for the F3 overlay (a hook at the top of the main loop).
         kamite::installFramePatches(runtime);
         kamite::test_mode::install(runtime, exeDir); // the case recorder (R3), --replay-case and --test runs (dev-only)

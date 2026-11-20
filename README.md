@@ -22,7 +22,7 @@ screen, with as much or as little of our own nonsense as you want.
     * The launcher updates the game in place and Windows won't let it write there.
 3. Run **GHR.exe**. 
     * Windows SmartScreen may complain about an unknown publisher: **More info > Run anyway**.
-4. Point the launcher at your disc image (.iso) once, and it checks it for you.
+4. Point the launcher at your disc image (.iso or .chd) once, and it checks it for you.
 5. Pick a preset and hit "**Play**"! 
     * Beat thugs™, demons™, women™!
 
@@ -30,7 +30,7 @@ The first start compiles shaders for your GPU, so the screen may stay black befo
 
 ### Linux and Steam Deck
 
-1. Grab `GHR-v…-x86_64.AppImage` (one file) or `GHR-v…-linux-x86_64.tar.gz` (a folder) from
+1. Grab `GHR-v…-Linux-x64.AppImage` (one file) or `GHR-v…-Linux-x64.tar.gz` (a folder) from
    [Releases](https://github.com/God-Hand-Rearmed/God-Hand-Rearmed/releases).
 2. AppImage: make it executable (file manager > Properties > Is executable, or `chmod +x`) and run it. Settings and
    saves go to `~/.local/share/GodHandRearmed` (or into a `GHR-data` folder you make next to the AppImage).
@@ -91,7 +91,7 @@ Set up Moveset Presets in the Techniques screen, switch with the d-pad in gamepl
 
 For the Buck Breakers out there, you can also pick your pummel per style. <!-- tag:BuckBreaker --> `Rearmed+`
 
-<!-- MEDIA: assets/readme/styles.gif — switching styles mid-fight -->
+![God Hand: Rearmed](assets/moveset_presets.webp)
 
 ---
 
@@ -100,15 +100,12 @@ For the Buck Breakers out there, you can also pick your pummel per style. <!-- t
 Customizable controls with button prompts for Xbox, PlayStation, Nintendo, Steam, and keyboard and mouse (for the
 freaks who want to play God Hand at their desks).
 
-<!-- MEDIA: assets/readme/controls-collage.png — the controls screens as a collage -->
-
+![God Hand: Rearmed](assets/controls-collage.webp)
 ---
 
 ### Just Liek... Play Game!
 
 Too many choices? How about just one? Pick a preset and get to playing right away.
-
-<!-- MEDIA: assets/readme/presets.png — the first-run wanted posters -->
 
 > **NOTE:** Everything that changes Clover's original gameplay is opt-in, so no bitchin!
 
@@ -344,6 +341,10 @@ Every option, with the same help text you'll see in the launcher and in game.
 <details>
 <summary><b>Mods</b></summary>
 
+**Character**
+
+- **Character:** Who you play as. Currently, other characters use Gene's moves and his God Hand.
+
 **Texture Packs**
 
 - **Replacement Textures:** HD texture packs in PCSX2's format.
@@ -415,6 +416,9 @@ and testing from the boys.
   the [Urban Reign port](https://github.com/thiagordsfx/urban-reign-recomp) by thiagordsfx (runtime, VU1 compiler,
   sound, PCSX2 graphics bridge).
 - [PCSX2](https://github.com/PCSX2/pcsx2): the hardware renderer and the game's GameIndex fixes.
+- [gow-native-pc](https://github.com/Vnnc1/gow-native-pc) by Vnnc1, after the
+  [Killzone port](https://github.com/drakolordx7/KillzoneRecomp) by drakolordx7: the recompiler's register-locals code
+  and the lean guest calls (GPL-3.0).
 - [Ace Combat 5 static recompilation](https://github.com/sal063/Ace-Combat-5-Static-recompilation): the movie decoder
   (Apache-2.0).
 

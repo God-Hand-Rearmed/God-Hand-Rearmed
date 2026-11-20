@@ -46,7 +46,7 @@ namespace kamite
         std::filesystem::path bootElfPath;
     };
 
-    // The first *.iso in the search roots whose SYSTEM.CNF boots cdrom0:\SLUS_215.03;1 (empty path if none).
+    // The first *.iso / *.chd in the search roots whose SYSTEM.CNF boots cdrom0:\SLUS_215.03;1 (empty path if none).
     std::filesystem::path findDiscImage(const std::vector<std::filesystem::path> &searchRoots);
     // Mounts the image (PS2CdImage singleton), checks SYSTEM.CNF, the disc files above and the boot ELF's SHA-256, and
     // writes the boot ELF to cacheDir/SLUS_215.03 for PS2Runtime::loadELF.

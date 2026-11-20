@@ -12,8 +12,8 @@ namespace kamite::launcher::update::archive
     enum class Package
     {
         WindowsZip,    // GHR-v<ver>.zip
-        LinuxFolder,   // GHR-v<ver>-linux-x86_64.tar.gz (a writable folder, like the zip)
-        LinuxAppImage, // GHR-v<ver>-x86_64.AppImage (one file, replaced whole)
+        LinuxFolder,   // GHR-v<ver>-Linux-x64.tar.gz (a writable folder, like the zip)
+        LinuxAppImage, // GHR-v<ver>-Linux-x64.AppImage (one file, replaced whole)
     };
     // Windows: the zip. Linux: the AppImage when $APPIMAGE is set (the AppImage runtime sets it), else the tar.gz.
     Package current();

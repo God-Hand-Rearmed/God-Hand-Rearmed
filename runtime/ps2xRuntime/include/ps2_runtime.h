@@ -398,6 +398,15 @@ public:
     const EeScheduler &eeScheduler() const;
     void postEeEvent(EeEvent event);
     bool eeCheckpointDue(uint32_t cycles = 32u) noexcept;
+    // The two halves of eeCheckpointDue for the register-locals generated code (ps2_cg.h), which writes its registers
+    // back to ctx only when the full checkpoint runs: eeCheckpointDue(c) == !eeCheckpointQuiet(c) && eeCheckpointFull(c).
+    bool eeCheckpointQuiet(uint32_t cycles = 32u) noexcept;
+    bool eeCheckpointFull(uint32_t cycles = 32u) noexcept;
+    // The generated code's JAL (callGuestFunction) and JALR (callGuestFunctionIndirect): the result of
+    // dispatchGuestBranch(..., DirectCall / IndirectCall) without its per-call diagnostics (ps2_runtime.cpp).
+    bool callGuestFunction(uint8_t *rdram, R5900Context *ctx, uint32_t targetPc, uint32_t sourcePc, uint32_t fallthroughPc);
+    bool callGuestFunctionIndirect(uint8_t *rdram, R5900Context *ctx, uint32_t targetPc, uint32_t sourcePc,
+                                   uint32_t fallthroughPc);
     [[noreturn]] void eeWaitVSyncTicks(uint32_t ticks, uint32_t resumePc);
 
     struct EeExitHandlerRegistration

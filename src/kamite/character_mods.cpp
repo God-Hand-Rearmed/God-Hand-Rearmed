@@ -1,6 +1,7 @@
 // Character model replacements (see character_mods.h). The files are served by the file layer (file_layer.h): any
 // size, the disc image untouched.
 #include "kamite/character_mods.h"
+#include "kamite/builtin_characters.h"
 #include "kamite/file_layer.h"
 #include "kamite/ini_file.h"
 #include "kamite/log.h"
@@ -30,21 +31,21 @@ namespace kamite::characters
             const std::u8string s = p.generic_u8string();
             return std::string(s.begin(), s.end());
         }
+    }
 
-        Character describe(const fs::path &folder)
+    Character describe(const fs::path &folder)
+    {
+        Character c;
+        c.id = utf8(folder.filename());
+        IniFile ini;
+        if (ini.load(folder / "character.ini"))
         {
-            Character c;
-            c.id = utf8(folder.filename());
-            IniFile ini;
-            if (ini.load(folder / "character.ini"))
-            {
-                c.name = ini.get("Character", "Name");
-                c.credit = ini.get("Character", "Credit");
-            }
-            if (c.name.empty())
-                c.name = c.id;
-            return c;
+            c.name = ini.get("Character", "Name");
+            c.credit = ini.get("Character", "Credit");
         }
+        if (c.name.empty())
+            c.name = c.id;
+        return c;
     }
 
     std::vector<Character> list(const fs::path &exeDir)
@@ -54,6 +55,9 @@ namespace kamite::characters
         // Built from the disc at boot (olivia_player.h); testers only until K names her.
         out.push_back({"olivia", "Olivia", "Pre-Alpha", {{"dress", "Dress"}, {"bunny", "Bunny Suit"}}});
 #endif
+        // Built from the disc at boot (builtin_characters.h): Xavier.
+        for (const fs::path &folder : builtin_characters::folders(exeDir))
+            out.push_back(describe(folder));
         std::error_code error;
         const fs::path root = exeDir / "mods" / "characters";
         std::vector<fs::path> folders;
@@ -62,7 +66,8 @@ namespace kamite::characters
                 folders.push_back(entry.path());
         std::sort(folders.begin(), folders.end());
         for (const fs::path &folder : folders)
-            if (const std::string id = lower(utf8(folder.filename())); id != "gene" && id != "olivia")
+            if (const std::string id = lower(utf8(folder.filename()));
+                id != "gene" && id != "olivia" && !builtin_characters::isBuiltIn(exeDir, id))
                 out.push_back(describe(folder));
         return out;
     }
@@ -83,6 +88,10 @@ namespace kamite::characters
                 if (entry.is_directory(error) && fs::is_directory(entry.path() / "textures", error))
                     all.push_back(entry.path() / "textures");
             std::sort(all.begin(), all.end());
+            // The built-in characters' own images (their painted textures' images: builtin_characters.cpp adds those).
+            for (const fs::path &folder : builtin_characters::folders(exeDir))
+                if (fs::is_directory(folder / "textures", error))
+                    all.push_back(folder / "textures");
             for (const fs::path &textures : all)
             {
                 const std::u8string native = fs::path(textures).lexically_normal().make_preferred().u8string();
@@ -141,6 +150,8 @@ namespace kamite::characters
 
     const Hair &hair() { return g_hair; }
 
+    void useHair(const fs::path &folder) { readHair(folder); }
+
     void install(const fs::path &exeDir)
     {
         registerTextures(exeDir);
@@ -150,6 +161,12 @@ namespace kamite::characters
             return;
         const fs::path folder = exeDir / "mods" / "characters" / id;
         std::error_code error;
+        if (builtin_characters::isBuiltIn(exeDir, id)) // built from the disc and served by builtin_characters.h
+        {
+            if (fs::is_directory(folder, error))
+                KM_INFO(Boot, "character '" << id << "': " << utf8(folder) << " is left alone: the built-in " << id << " wins");
+            return;
+        }
         if (!fs::is_directory(folder, error))
         {
             KM_WARN(Boot, "character '" << id << "': no folder " << utf8(folder) << "; playing as Gene");

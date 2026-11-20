@@ -423,20 +423,36 @@ void pcsx2gs::SetTextureFolder(const std::string &folder)
 namespace
 {
     std::vector<std::string> g_extraTextureFolders; // AddExtraTextureFolder
+    std::vector<std::string> g_firstTextureFolders; // AddFirstTextureFolder
+
+    void addTextureFolder(std::vector<std::string> &list, const std::string &folder)
+    {
+        std::string path = folder;
+        while (!path.empty() && (path.back() == '/' || path.back() == '\\'))
+            path.pop_back();
+        if (!path.empty() && std::find(list.begin(), list.end(), path) == list.end())
+            list.push_back(path);
+    }
 }
 
 void pcsx2gs::AddExtraTextureFolder(const std::string &folder)
 {
-    std::string path = folder;
-    while (!path.empty() && (path.back() == '/' || path.back() == '\\'))
-        path.pop_back();
-    if (!path.empty() && std::find(g_extraTextureFolders.begin(), g_extraTextureFolders.end(), path) == g_extraTextureFolders.end())
-        g_extraTextureFolders.push_back(path);
+    addTextureFolder(g_extraTextureFolders, folder);
 }
 
 const std::vector<std::string> &pcsx2gs::ExtraTextureFolders()
 {
     return g_extraTextureFolders;
+}
+
+void pcsx2gs::AddFirstTextureFolder(const std::string &folder)
+{
+    addTextureFolder(g_firstTextureFolders, folder);
+}
+
+const std::vector<std::string> &pcsx2gs::FirstTextureFolders()
+{
+    return g_firstTextureFolders;
 }
 
 void pcsx2gs::SetVerticalFrequency(double hz)

@@ -41,8 +41,11 @@ set(KAMITE_HOST_SOURCES
     kamite/call_trace.cpp
     kamite/movie_watchdog.cpp
     kamite/frame_patches.cpp
+    kamite/frame_wait.cpp
     kamite/game_options.cpp
     kamite/character_mods.cpp
+    kamite/builtin_characters.cpp
+    kamite/character_build.cpp
     kamite/disc_files.cpp
     kamite/file_layer.cpp
     kamite/xram_heap.cpp
@@ -70,6 +73,8 @@ set(KAMITE_HOST_SOURCES
     kamite/npc_tools.cpp
     kamite/hitbox_overlay.cpp
     kamite/menu_buttons.cpp
+    kamite/mod_list.cpp
+    kamite/mods.cpp
     kamite/modern_controls.cpp
     kamite/near_geometry.cpp
     kamite/render/character_skin.cpp
@@ -237,6 +242,7 @@ else()
         "${KAMITE_GENERATED_DIR}/ps2_recompiled_stubs.h"
         "${KAMITE_RUNTIME_INCLUDE}/ps2_syscalls.h"
         "${KAMITE_RUNTIME_INCLUDE}/ps2_stubs.h"
+        "${KAMITE_RUNTIME_INCLUDE}/ps2_cg.h" # register-locals generated code (build.py recomp_env)
     )
     if(MSVC)
         # No /GL here, ever: whole-program optimization over ~10k generated files blew up link time and memory (Urban
@@ -291,6 +297,7 @@ if(KAMITE_MODULE_SOURCES)
         "${KAMITE_RUNTIME_INCLUDE}/ps2_runtime.h"
         "${KAMITE_RUNTIME_INCLUDE}/ps2_syscalls.h"
         "${KAMITE_RUNTIME_INCLUDE}/ps2_stubs.h"
+        "${KAMITE_RUNTIME_INCLUDE}/ps2_cg.h" # register-locals generated code (build.py recomp_env)
     )
     if(MSVC)
         # Same flags as kamite_game_code (no /GL).
@@ -354,8 +361,14 @@ endif()
 # merged into the resources/ folder pcsx2gs.dll also fills (shaders, OSD font). A target of its own that runs at every
 # build of kamite (the build script builds --target kamite): as a POST_BUILD step it ran only when GHR.exe was
 # linked again, so a change to resources/ alone never reached the build (Oct 26: the counter idle takes).
+# The built-in characters' own work (assets/characters/<id>: their nodes, textures, painted layers, character.ini) goes
+# to resources/characters: GHR makes their player files from the player's disc at boot (builtin_characters.h).
+# recomplauncher.json (tools/recomplauncher/gen_manifest.py) goes next to GHR.exe: a release zip carries it at the top,
+# where RecompLauncher looks for it.
 add_custom_target(kamite_resources
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/resources" "$<TARGET_FILE_DIR:kamite>/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets/characters" "$<TARGET_FILE_DIR:kamite>/resources/characters"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/recomplauncher.json" "$<TARGET_FILE_DIR:kamite>/recomplauncher.json"
     COMMENT "Copying the port's resources")
 add_dependencies(kamite kamite_resources)
 # A build on the stand-in game code (tools/linux/stub_game_code.py: CI, packaging tests) says so next to the binary,
@@ -441,7 +454,7 @@ if(KAMITE_DEBUG_UI AND TARGET rlImGui)
     target_compile_definitions(kamite PRIVATE PS2X_ENABLE_DEBUG_UI=1)
     # The launcher (src/kamite/launcher.cpp) draws with the same Dear ImGui.
     target_sources(kamite PRIVATE kamite/launcher.cpp kamite/launcher_bark.cpp kamite/launcher_book.cpp kamite/launcher_platform.cpp
-                                  kamite/launcher_update.cpp kamite/update_archive.cpp)
+                                  kamite/launcher_update.cpp kamite/update_archive.cpp kamite/mod_zip.cpp)
     target_compile_definitions(kamite PRIVATE KAMITE_HAS_LAUNCHER=1)
     if(WIN32)
         target_link_libraries(kamite PRIVATE winhttp) # downloads: updates, Add to Steam's art

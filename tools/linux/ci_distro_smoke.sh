@@ -3,7 +3,7 @@
 # and 24.04, Fedora, Arch and the Steam Runtime's sniper containers): the proof that the AppImage and the tar.gz start
 # on systems that were not the build machine.
 #
-#   tools/linux/ci_distro_smoke.sh <folder holding GHR-v*-linux-x86_64.tar.gz and GHR-v*-x86_64.AppImage> <results dir>
+#   tools/linux/ci_distro_smoke.sh <folder holding GHR-v*-Linux-x64.tar.gz and GHR-v*-Linux-x64.AppImage> <results dir>
 #
 # For each form: "GHR --help" must exit 0, then (when a virtual screen can be installed) the launcher must come up and
 # draw (tools/linux/smoke_launcher.py). The AppImage runs with APPIMAGE_EXTRACT_AND_RUN=1 (containers have no FUSE)
@@ -38,8 +38,8 @@ esac
 command -v python3 >/dev/null && command -v Xvfb >/dev/null && command -v xwd >/dev/null || screen=0
 [ "$screen" = 1 ] || echo "   (no virtual screen here: --help only)"
 
-TAR=$(ls "$DIST"/GHR-v*-linux-x86_64.tar.gz | head -1)
-APPIMAGE=$(ls "$DIST"/GHR-v*-x86_64.AppImage | head -1)
+TAR=$(ls "$DIST"/GHR-v*-Linux-x64.tar.gz | head -1)
+APPIMAGE=$(ls "$DIST"/GHR-v*-Linux-x64.AppImage | head -1)
 WORK=$(mktemp -d)
 
 echo "-- tar.gz: $(basename "$TAR")"
