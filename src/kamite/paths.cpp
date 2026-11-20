@@ -56,7 +56,13 @@ namespace kamite::paths
                 Folders out;
                 out.program = findProgramDir();
                 std::error_code error;
+#if defined(_WIN32)
+                // Windows keeps everything next to GHR.exe, as it always has: KAMITE_HOME is the Linux AppImage's
+                // (its AppRun sets it), and a narrow getenv would mangle a non-ANSI path there anyway.
+                out.home = resolveHome(nullptr, out.program, fs::current_path(error), out.note);
+#else
                 out.home = resolveHome(std::getenv("KAMITE_HOME"), out.program, fs::current_path(error), out.note);
+#endif
                 out.resources = out.program / "resources";
                 return out;
             }();

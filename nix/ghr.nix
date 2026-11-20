@@ -8,7 +8,8 @@
 # else (runtime, launcher, renderer, platform layer) compiles, links and starts on Linux.
 { pkgs, lib, src, deps, portable ? true, buildTests ? false, buildInputs, nativeBuildInputs }:
 let
-  fetchContentFlags = lib.mapAttrsToList (name: path: "-DFETCHCONTENT_SOURCE_DIR_${name}=${path}") deps;
+  fetchContentFlags = lib.mapAttrsToList (name: path: "-DFETCHCONTENT_SOURCE_DIR_${name}=${path}") deps.fetchContent
+    ++ [ "-DKAMITE_STB_DIR=${deps.stbDir}" ];
 in
 pkgs.stdenv.mkDerivation {
   pname = if portable then "ghr-portable-stub" else "ghr-native-stub";
@@ -23,6 +24,7 @@ pkgs.stdenv.mkDerivation {
 
   configurePhase = ''
     runHook preConfigure
+    patchShebangs thirdparty/pcsx2-gs/test tools/linux
     export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-cache
     python3 -I tools/linux/stub_game_code.py $TMPDIR/generated
     mkdir -p $TMPDIR/no-modules
@@ -41,8 +43,16 @@ pkgs.stdenv.mkDerivation {
   '';
 
   doCheck = buildTests;
+  # The renderer's tests (pcsx2_gs_smoke, gs_pcsx2_backend_test) open an X11 window and render with Vulkan: a fresh
+  # Xvfb and Mesa's lavapipe (software Vulkan), with the X / GL / Vulkan libraries GLFW and the loader dlopen.
+  nativeCheckInputs = lib.optionals buildTests [ pkgs.xvfb-run ];
   checkPhase = ''
     runHook preCheck
+    export HOME=$TMPDIR KAMITE_SMOKE_XVFB=1
+    export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
+    export VK_ICD_FILENAMES=$VK_DRIVER_FILES __GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
+    export LD_LIBRARY_PATH=${lib.makeLibraryPath (with pkgs; [ vulkan-loader libglvnd mesa libx11 libxext libxrandr
+      libxinerama libxcursor libxi libxrender libxfixes libxcb ])}
     ctest --test-dir build --output-on-failure
     runHook postCheck
   '';

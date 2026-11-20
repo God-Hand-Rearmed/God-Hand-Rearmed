@@ -105,15 +105,16 @@ namespace
     }
 
     // KAMITE_HOME: the writable play folder when set (the executable's folder may then be read-only, as in an
-    // AppImage); empty when not set.
+    // AppImage); empty when not set. Linux only, like src/kamite/paths.cpp: on Windows the play folder is always the
+    // exe's, so the shader cache stays beside GHR.ini whatever the environment holds.
     std::filesystem::path playFolder()
     {
 #if defined(_WIN32)
-        const wchar_t *value = _wgetenv(L"KAMITE_HOME");
+        return {};
 #else
         const char *value = std::getenv("KAMITE_HOME");
-#endif
         return (value && *value) ? std::filesystem::path(value) : std::filesystem::path();
+#endif
     }
 
     std::string utf8(const std::filesystem::path &path)

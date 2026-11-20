@@ -195,3 +195,8 @@ options were on (60 FPS, aspect ratio, character).
   symbols or dumps. Characters are built from the player's disc, so none ship. The maintainer's builder packs it and
   publishes it as a GitHub pre-release named after the tag, with the CHANGELOG lines since the last release as its
   notes and the zip as its one asset (the updater installs the newest release's `.zip`).
+- **The Linux files:** `GHR-v<version>-linux-x86_64.tar.gz` and `GHR-v<version>-x86_64.AppImage`, made by
+  `tools/linux/package.py` from a portable release build ([Linux and Steam Deck](#linux-and-steam-deck)) and attached
+  to the same release next to the zip. The names are what each updater looks for: Windows takes only the `.zip`, a
+  Linux folder the `-linux-x86_64.tar.gz`, an AppImage the `-x86_64.AppImage` (`src/kamite/update_archive.cpp`,
+  `pickAsset`). The `.debug` file stays with the maintainer.
