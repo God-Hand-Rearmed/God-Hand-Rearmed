@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the packaged Linux build on a stock distribution (.github/workflows/linux.yml runs it in Debian 11, Ubuntu 20.04
+# Runs the packaged Linux build on a stock distribution (.github/workflows/ci.yml runs it in Debian 11, Ubuntu 20.04
 # and 24.04, Fedora, Arch and the Steam Runtime's sniper containers): the proof that the AppImage and the tar.gz start
 # on systems that were not the build machine.
 #

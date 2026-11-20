@@ -21,3 +21,6 @@ out/
 *.planes
 __pycache__/
 *.pyc
+# nix build output links
+result
+result-*

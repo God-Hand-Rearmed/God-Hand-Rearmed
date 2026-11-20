@@ -1176,6 +1176,14 @@ static void shapeWindowToAspect()
 extern "C" int glfwInit(void);
 using Ps2xGlfwErrorFn = void (*)(int, const char *);
 extern "C" Ps2xGlfwErrorFn glfwSetErrorCallback(Ps2xGlfwErrorFn callback);
+// The window probe below (glfw3.h's values; raylib does not expose GLFW's header).
+struct GLFWwindow;
+extern "C" void glfwDefaultWindowHints(void);
+extern "C" void glfwWindowHint(int hint, int value);
+extern "C" GLFWwindow *glfwCreateWindow(int width, int height, const char *title, void *monitor, GLFWwindow *share);
+extern "C" void glfwDestroyWindow(GLFWwindow *window);
+constexpr int kGlfwVisible = 0x00020004, kGlfwContextMajor = 0x00022002, kGlfwContextMinor = 0x00022003,
+              kGlfwForwardCompat = 0x00022006, kGlfwProfile = 0x00022008, kGlfwCoreProfile = 0x00032001;
 #endif
 
 void ps2_host_display::openHostWindow(const char *title)
@@ -1234,6 +1242,28 @@ void ps2_host_display::openHostWindow(const char *title)
             std::fflush(stderr);
             std::_Exit(1);
         }
+        // GLFW up, but can it make raylib's window? raylib 5.5 does not stop when glfwCreateWindow fails: InitPlatform
+        // goes on to GetCurrentMonitor with no window and crashes inside GLFW. A hidden window with the context raylib
+        // asks for (rcore_desktop_glfw.c: OpenGL 3.3 core, no forward compatibility) is made and dropped first; no GLX
+        // on the X server, or no OpenGL 3.3 driver, then ends in a plain message and exit code 1.
+        glfwDefaultWindowHints();
+        glfwWindowHint(kGlfwVisible, 0);
+        glfwWindowHint(kGlfwContextMajor, 3);
+        glfwWindowHint(kGlfwContextMinor, 3);
+        glfwWindowHint(kGlfwProfile, kGlfwCoreProfile);
+        glfwWindowHint(kGlfwForwardCompat, 0);
+        GLFWwindow *probe = glfwCreateWindow(64, 64, "GHR", nullptr, nullptr);
+        glfwDefaultWindowHints();
+        if (probe == nullptr)
+        {
+            std::cerr << "[window] error: could not create the game window: the system gave no OpenGL 3.3 context "
+                         "(no GLX on the X server, or no OpenGL driver installed; the GLFW error above says which)."
+                      << std::endl;
+            std::fflush(stdout);
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        glfwDestroyWindow(probe);
 #endif
         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
     }

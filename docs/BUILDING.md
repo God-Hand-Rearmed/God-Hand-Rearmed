@@ -88,7 +88,7 @@ that is not portable or that was made on the stand-in game code. What players se
 
 #### Linux CI
 
-`.github/workflows/linux.yml` runs `nix flake check` on every push and pull request, then starts the packaged AppImage
+`.github/workflows/ci.yml` runs `nix flake check` on every push and pull request, then starts the packaged AppImage
 and tar.gz on Debian 11, Ubuntu 20.04 and 24.04, Fedora, Arch and the Steam Runtime's sniper. CI has no disc, so
 its builds use a stand-in for the recompiled game code (`tools/linux/stub_game_code.py`): everything else (runtime,
 launcher, renderer, platform code) is compiled, linked and started, and the artifacts are named `-stub`. The checks:
@@ -100,8 +100,14 @@ launcher, renderer, platform code) is compiled, linked and started, and the arti
 | `linux-stub` | `tools/linux/package.py` makes the AppImage and the tar.gz from that build (reproducible: same input, same bytes) |
 | `packaging-tests` | `tools/linux/test_*.py`: the packer, the AppRun play-folder rules, the desktop entry, the stand-in |
 | `launcher-smoke` | the tar.gz's GHR opens its launcher on a 1280x800 virtual screen and draws it (`tools/linux/smoke_launcher.py`) |
+| `launcher-glibc-2-31` | the same on a 2020 userland (nixos-20.09: glibc 2.31, its X11 and Mesa 20.1), the oldest system the package claims |
+| `window-errors` | no display, and an X server without GLX: GHR ends with exit code 1 and says why, instead of crashing |
 
 Run them all locally with `nix flake check -L`, one with `nix build .#checks.x86_64-linux.<name> -L`.
+
+The same workflow's `windows` job builds GHR.exe with MSVC (Visual Studio 2022 on GitHub's Windows image) through
+`build.py`, on the same stand-in game code, as a release build with the unit tests, runs them and starts `GHR.exe
+--help`. Nix cannot host MSVC, and the port builds with MSVC only, so this job runs outside the flake.
 
 ### Options
 

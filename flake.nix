@@ -2,13 +2,16 @@
   description = "God Hand: Rearmed - Linux build environment, checks and packaging";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  # A 2020 userland (glibc 2.31, its X11, glvnd and Mesa 20.1: Debian 11 / Ubuntu 20.04 / the Steam Runtime's sniper
+  # era) for the launcher-glibc-2-31 check: the packaged GHR must start on the oldest system it claims to support.
+  inputs.nixpkgs-2020.url = "github:NixOS/nixpkgs/nixos-20.09";
 
   # nix develop                      the dev shell: build.py, the portable toolchain, packaging tools
-  # nix flake check -L               every gate below (CI runs exactly this: .github/workflows/linux.yml)
+  # nix flake check -L               every gate below (CI runs exactly this: .github/workflows/ci.yml)
   # nix build .#linux-stub           the AppImage + tar.gz of a build on the stand-in game code (CI artifacts; they
   #                                  start the launcher but cannot play: real releases need your disc, docs/BUILDING.md)
   # nix run .#package -- --bin DIR   tools/linux/package.py with mksquashfs, objcopy and the AppImage runtime supplied
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nixpkgs-2020 }:
     let
       systems = [ "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
@@ -64,23 +67,75 @@
               --objcopy ${pkgs.binutils}/bin/objcopy
           '';
 
-          # The launcher from the packaged tar.gz, on a virtual 1280x800 screen with Mesa's software OpenGL. GHR is
-          # copied with its interpreter pointed at this glibc (the sandbox has no /lib64 loader); everything else is
-          # the shipped folder as a player gets it.
-          launcherSmoke = pkgs.runCommand "ghr-launcher-smoke" {
+          # The launcher from the packaged tar.gz, on a virtual 1280x800 screen with Mesa's software OpenGL, on a given
+          # userland (glibc + the libraries GLFW, SDL and the GL driver load). GHR is copied with its interpreter set to
+          # that glibc's loader (the sandbox has no /lib64 loader) and started through a wrapper that alone carries the
+          # userland's library path, so the check's own tools (python, Xvfb, xwd) keep theirs. Everything else is the
+          # shipped folder as a player gets it.
+          smokeOn = name: u: pkgs.runCommand "ghr-${name}" {
             nativeBuildInputs = [ pkgs.python3 pkgs.patchelf pkgs.xorg-server pkgs.xwd ];
           } ''
             mkdir -p work $out && cd work
             tar xzf ${linuxStub}/GHR-v${version}-stub-Linux-x64.tar.gz
             cd "God Hand Rearmed"
             chmod u+w . GHR
-            patchelf --set-interpreter ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 GHR
+            patchelf --set-interpreter ${u.glibc}/lib/ld-linux-x86-64.so.2 GHR
+            cat > run.sh <<WRAP
+            #!/bin/sh
+            export LD_LIBRARY_PATH=${u.glibc}/lib:${u.dri}/lib:${lib.makeLibraryPath u.libs}
+            export __GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_DRIVERS_PATH=${u.dri}/lib/dri LIBGL_DEBUG=verbose
+            exec "\''${0%/*}/GHR" "\$@"
+            WRAP
+            sed -i 's/^ *//' run.sh && chmod +x run.sh
             export HOME=$TMPDIR
-            export LD_LIBRARY_PATH=${lib.makeLibraryPath (with pkgs; [ libx11 libxrandr libxinerama libxcursor libxi
-              libxext libxrender libxfixes libxcb libxau libxdmcp libglvnd libxkbcommon mesa alsa-lib ])}
-            export __GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
-            python3 -I ${src}/tools/linux/smoke_launcher.py --out $out/launcher.png --seconds 90 --log logs/kamite.log -- ./GHR
+            # The virtual screen's own GLX needs Mesa's drivers (the check's Mesa; GHR's come from its userland above).
+            export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
+            ./run.sh --help | tee $out/help.txt | head -1
+            grep -q "^usage:" $out/help.txt
+            python3 -I ${src}/tools/linux/smoke_launcher.py --out $out/launcher.png --seconds 90 --log logs/kamite.log -- ./run.sh
+            grep -m3 -E "Renderer:|Version:" logs/kamite.log | tee $out/gl.txt
           '';
+
+          launcherSmoke = smokeOn "launcher-smoke" {
+            glibc = pkgs.glibc;
+            dri = pkgs.mesa;
+            libs = with pkgs; [ libx11 libxrandr libxinerama libxcursor libxi libxext libxrender libxfixes libxcb libxau
+              libxdmcp libglvnd libxkbcommon mesa alsa-lib ];
+          };
+
+          # GHR without a usable window: no display at all, and an X server without GLX (no OpenGL). Both must end with
+          # exit code 1 and a message saying why, not a crash (raylib's InitWindow carries on after either failure).
+          windowErrors = pkgs.runCommand "ghr-window-errors" { nativeBuildInputs = [ pkgs.patchelf pkgs.xorg-server ]; } ''
+            mkdir -p work $out && cd work
+            tar xzf ${linuxStub}/GHR-v${version}-stub-Linux-x64.tar.gz
+            cd "God Hand Rearmed"
+            chmod u+w . GHR
+            patchelf --set-interpreter ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 GHR
+            export HOME=$TMPDIR LD_LIBRARY_PATH=${lib.makeLibraryPath (with pkgs; [ libx11 libxrandr libxinerama
+              libxcursor libxi libxext libxrender libxfixes libxcb libxau libxdmcp libglvnd libxkbcommon mesa ])}
+            expect_exit_1() { # <what> <message> <command...>
+              what=$1 message=$2; shift 2
+              set +e; "$@" > run.txt 2>&1; code=$?; set -e
+              cat run.txt logs/*.log 2>/dev/null > all.txt || true
+              echo "$what: exit $code" | tee -a $out/result.txt
+              [ $code -eq 1 ] || { tail -30 all.txt; exit 1; }
+              grep -q "$message" all.txt || { echo "no '$message' in the output"; tail -30 all.txt; exit 1; }
+            }
+            expect_exit_1 "no display" "could not open the game window" env -u DISPLAY -u WAYLAND_DISPLAY ./GHR
+            Xvfb :77 -screen 0 1280x800x24 -nolisten tcp -extension GLX & xvfb=$!
+            for i in $(seq 50); do [ -e /tmp/.X11-unix/X77 ] && break; sleep 0.1; done
+            expect_exit_1 "X server without GLX" "could not create the game window" env DISPLAY=:77 ./GHR
+            kill $xvfb
+          '';
+
+          old = nixpkgs-2020.legacyPackages.${pkgs.stdenv.hostPlatform.system};
+          launcherGlibc231 = smokeOn "launcher-glibc-2-31" {
+            glibc = old.glibc;
+            dri = old.mesa.drivers;
+            libs = with old; [ xorg.libX11 xorg.libXrandr xorg.libXinerama xorg.libXcursor xorg.libXi xorg.libXext
+              xorg.libXrender xorg.libXfixes xorg.libxcb xorg.libXau xorg.libXdmcp libglvnd mesa.drivers libxkbcommon
+              alsaLib expat zlib libdrm libffi wayland xorg.libxshmfence xorg.libXxf86vm ];
+          };
 
           packagingTests = pkgs.runCommand "ghr-packaging-tests" {
             nativeBuildInputs = packagingTools ++ [ pkgs.gcc ];
@@ -112,6 +167,8 @@
             inherit native;  # gcc build + unit tests (ctest)
             linux-stub = linuxStub;
             launcher-smoke = launcherSmoke;
+            launcher-glibc-2-31 = launcherGlibc231;
+            window-errors = windowErrors;
             packaging-tests = packagingTests;
             portable-binary = portableCheck;
           };

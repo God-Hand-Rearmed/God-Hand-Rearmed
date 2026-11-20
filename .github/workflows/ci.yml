@@ -1,0 +1,122 @@
+# CI. Linux and Steam Deck: every gate runs through Nix (flake.nix), then the packaged AppImage and tar.gz are started
+# on stock distributions. Windows: GHR.exe built with MSVC (Visual Studio 2022) through build.py, as the release is,
+# plus the unit tests. The game itself needs the player's own disc, which CI never has: every build here uses the
+# stand-in game code (tools/linux/stub_game_code.py) and is named "-stub"; it starts the launcher and nothing more.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nix:
+    name: nix flake check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = false
+      - name: Gates (unit + renderer tests, packaging tests, portable binary, launcher smoke, glibc 2.31, window errors)
+        run: nix flake check -L
+      - name: Package (AppImage + tar.gz on the stand-in game code)
+        run: |
+          nix build .#linux-stub -L -o linux-stub
+          nix build .#checks.x86_64-linux.launcher-smoke -o launcher-smoke
+          nix build .#checks.x86_64-linux.launcher-glibc-2-31 -o launcher-glibc
+          mkdir -p artifacts
+          cp linux-stub/*.AppImage linux-stub/*.tar.gz artifacts/
+          cp launcher-smoke/launcher.png artifacts/launcher-nix.png
+          cp launcher-glibc/launcher.png artifacts/launcher-glibc-2-31.png
+          ls -la artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-stub
+          path: artifacts/
+          if-no-files-found: error
+
+  distro:
+    name: run on ${{ matrix.name }}
+    needs: nix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Debian 11 (glibc 2.31), image: "debian:11" }
+          - { name: Ubuntu 20.04, image: "ubuntu:20.04" }
+          - { name: Ubuntu 24.04, image: "ubuntu:24.04" }
+          - { name: Fedora, image: "fedora:latest" }
+          - { name: Arch (SteamOS base), image: "archlinux:latest" }
+          - { name: Steam Runtime 3 sniper, image: "registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest" }
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-stub
+          path: dist
+      - name: Start the AppImage and the tar.gz
+        run: sh tools/linux/ci_distro_smoke.sh dist results
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ strategy.job-index }}
+          path: results/
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows (MSVC)
+    # Nix cannot host MSVC, and the port builds with MSVC only (clang-cl takes code MSVC rejects, so it would not catch
+    # what this job is for): GitHub's Windows image with Visual Studio 2022, through build.py as on a developer's PC.
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      KAMITE_ALLOW_DOWNLOADS: "1" # the first configure fetches raylib, SDL3, imgui, shaderc, libchdr... (build.py)
+      KAMITE_JOBS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Stand-in game code
+        run: python -I tools/linux/stub_game_code.py generated
+      - name: Configure (MSVC, Ninja, release build, tests)
+        run: python -I build.py configure -DKAMITE_RELEASE=ON -DKAMITE_BUILD_TESTS=ON
+      - name: Build GHR.exe
+        run: python -I build.py build
+      - name: Build and run the unit tests
+        shell: cmd
+        run: |
+          python -I build.py build ghr_unit_tests || exit /b 1
+          rem The test program needs no Visual Studio environment; the image has CMake's ctest on PATH.
+          ctest --test-dir build\port -R ghr_unit_tests --output-on-failure
+      - name: The program folder, and GHR.exe starting
+        shell: pwsh
+        run: |
+          $bin = "build/port/bin"
+          foreach ($f in "GHR.exe", "pcsx2gs.dll", "SDL3.dll", "STUB-GAME-CODE.txt", "resources") {
+            if (-not (Test-Path "$bin/$f")) { Write-Error "missing: $bin/$f"; exit 1 }
+          }
+          Get-ChildItem $bin -File | Format-Table Name, Length
+          $p = Start-Process -FilePath "$bin/GHR.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Write-Error "GHR.exe --help exited $($p.ExitCode)"; exit 1 }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-log
+          path: build/port/last_build.log
+          if-no-files-found: ignore
