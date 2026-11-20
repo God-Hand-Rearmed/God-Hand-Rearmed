@@ -1204,6 +1204,9 @@ void ps2_host_display::openHostWindow(const char *title)
     if (!IsWindowReady())
     {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (ps2_host_display::vsyncEnabled() ? FLAG_VSYNC_HINT : 0u));
+#if !defined(_WIN32)
+        GSPcsx2Backend::BeforeHostWindow(); // Linux: GLFW on X11 for PCSX2's GS (its child window is an X11 one)
+#endif
         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
     }
     else if (!showWhenShaped)
