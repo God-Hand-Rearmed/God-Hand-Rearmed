@@ -196,7 +196,7 @@ namespace
         CHECK_EQ(archive::pickAsset(all, Package::LinuxFolder), 1);
         CHECK_EQ(archive::pickAsset(all, Package::LinuxAppImage), 2);
         // Case does not matter.
-        CHECK_EQ(archive::pickAsset({"ghr-V0.7.0-LINUX-X86_64.TAR.GZ"}, Package::LinuxFolder), 0);
+        CHECK_EQ(archive::pickAsset({"ghr-V0.7.0-LINUX-X64.TAR.GZ"}, Package::LinuxFolder), 0);
         CHECK_EQ(archive::pickAsset({"GHR-V0.7.0.ZIP"}, Package::WindowsZip), 0);
         // Windows never takes a Linux download, whatever it is packed in.
         const std::vector<std::string> linuxOnly = {"GHR-v0.7.0-Linux-x64.tar.gz", "GHR-v0.7.0-Linux-x64.AppImage",
