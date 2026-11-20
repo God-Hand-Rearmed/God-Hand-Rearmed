@@ -1171,6 +1171,13 @@ static void shapeWindowToAspect()
 // The game window (raylib): made once, by the port's launcher or by PS2Runtime::initialize; a second call keeps the
 // window (except a launcher's borderless one on Windows, below) and applies the size and fullscreen settings again if
 // they changed.
+#if defined(__linux__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA)
+// GLFW, built into raylib (rglfw.c): started before InitWindow to tell a missing display from a working one.
+extern "C" int glfwInit(void);
+using Ps2xGlfwErrorFn = void (*)(int, const char *);
+extern "C" Ps2xGlfwErrorFn glfwSetErrorCallback(Ps2xGlfwErrorFn callback);
+#endif
+
 void ps2_host_display::openHostWindow(const char *title)
 {
 #if defined(PLATFORM_VITA)
@@ -1204,6 +1211,27 @@ void ps2_host_display::openHostWindow(const char *title)
     if (!IsWindowReady())
     {
         SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | (ps2_host_display::vsyncEnabled() ? FLAG_VSYNC_HINT : 0u));
+#if defined(__linux__) && !defined(__ANDROID__)
+        // raylib 5.5's InitWindow logs "Failed to initialize GLFW" and goes on regardless: rlglInit then calls GL
+        // through null pointers and the process dies inside InitWindow. GLFW is started here first (raylib's own
+        // glfwInit then returns at once): without a desktop session (DISPLAY / WAYLAND_DISPLAY unset) or with libX11 /
+        // libwayland missing, a plain message and exit code 1 (initialisation failed) instead of a segfault.
+        glfwSetErrorCallback([](int code, const char *description)
+                             { std::cerr << "[window] GLFW error " << code << ": " << (description ? description : "") << std::endl; });
+        if (glfwInit() == 0)
+        {
+            const char *x11 = std::getenv("DISPLAY");
+            const char *wayland = std::getenv("WAYLAND_DISPLAY");
+            std::cerr << "[window] error: could not open the game window (GLFW could not start; DISPLAY="
+                      << (x11 && *x11 ? x11 : "(unset)") << ", WAYLAND_DISPLAY=" << (wayland && *wayland ? wayland : "(unset)")
+                      << "). GHR needs a desktop session with X11 or Wayland and the system's libX11 / libwayland-client "
+                         "and an OpenGL driver."
+                      << std::endl;
+            std::fflush(stdout);
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+#endif
         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
     }
     else if (!showWhenShaped)

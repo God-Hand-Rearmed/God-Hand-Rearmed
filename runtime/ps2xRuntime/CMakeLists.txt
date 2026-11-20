@@ -105,7 +105,9 @@ else()
     # controllers without Steam/DS4Windows); the window stays raylib's. Built as SDL3.dll next to the executable, which
     # a launcher can also load to list the controllers. PS2X_SDL_INPUT=0 at run time reads GLFW's gamepads instead.
     option(PS2X_ENABLE_SDL_INPUT "Read controllers through SDL3" ON)
-    if(PS2X_ENABLE_SDL_INPUT AND WIN32)
+    # Linux desktop too (the Steam Deck included): libSDL3.so.0 next to GHR (its RPATH is $ORIGIN, src/CMakeLists.txt).
+    # SDL3 opens udev, hidapi's hidraw and evdev itself at run time, so nothing more is linked.
+    if(PS2X_ENABLE_SDL_INPUT AND (WIN32 OR (UNIX AND NOT APPLE AND NOT PS2X_IS_ANDROID)))
         set(SDL_SHARED ON CACHE BOOL "" FORCE)
         set(SDL_STATIC OFF CACHE BOOL "" FORCE)
         set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
@@ -115,6 +117,13 @@ else()
         foreach(subsystem AUDIO GPU RENDER CAMERA DIALOG TRAY POWER)
             set(SDL_${subsystem} OFF CACHE BOOL "" FORCE)
         endforeach()
+        if(NOT WIN32)
+            # Only SDL_INIT_GAMEPAD is used (ps2_host_gamepads.cpp); the window is raylib's. Without its video
+            # subsystem SDL3 needs none of X11 / Wayland, and it keeps the joystick, gamepad, haptic, hidapi and
+            # events pieces the controllers use. Windows keeps its video subsystem as before.
+            set(SDL_VIDEO OFF CACHE BOOL "" FORCE)
+            set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
+        endif()
         FetchContent_Declare(
             SDL3
             URL "https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz"
@@ -123,6 +132,9 @@ else()
         )
         FetchContent_MakeAvailable(SDL3)
         set_target_properties(SDL3-shared PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+        if(NOT WIN32)
+            set_target_properties(SDL3-shared PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin") # a .so is a LIBRARY output
+        endif()
     endif()
 
     if(PS2X_ENABLE_DEBUG_UI AND NOT PS2X_IS_ANDROID)

@@ -6,6 +6,9 @@
 // removed at the next start) and starts the game again. Never touched: GHR.ini and controls.ini (only keys they lack
 // are added), memory cards, save states, cases, logs, texture packs, mods, the disc image.
 // Release builds check; a dev build (testers build main) only with [Launcher] UpdateTest=1, as version 0.0.0.
+// Linux (update_archive.h picks the download): a tar.gz folder is updated as the zip is (same kept folders, same
+// settings merge, the files' x bits kept); an AppImage ($APPIMAGE set) is downloaded next to itself and renamed over
+// itself. The settings files are the play folder's (paths.h), the rest the program folder's.
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -34,7 +37,7 @@ namespace kamite::launcher::update
     {
         std::string tag;   // "v0.7.0"
         std::string notes; // every newer release's notes, newest first: "# v0.7.0" then its body's lines
-        std::string zipUrl;
+        std::string zipUrl;   // the download this build installs: the zip, the tar.gz or the AppImage
         uint64_t zipSize = 0;
         std::vector<Edition> editions; // every release newer than ours, newest first
     };
@@ -78,6 +81,7 @@ namespace kamite::launcher::update
         std::string error;
         std::thread worker;
     };
+    // exeDir: the program folder (paths::programDir()).
     void startInstall(Installer &installer, const Release &release, const std::filesystem::path &exeDir);
 
     // The launcher's start: removes the old program files a finished update renamed aside (on a thread: the old

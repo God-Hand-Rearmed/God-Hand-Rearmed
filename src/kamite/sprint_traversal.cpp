@@ -19,6 +19,7 @@
 // sprint + X / Y within a marked window's width and 1 m of its wall (of either face, with a depth), so the push-out
 // does nothing.
 #include "kamite/sprint_traversal.h"
+#include "kamite/paths.h"
 #include "kamite/debug_tools.h"
 #include "kamite/game_layout.h"
 #include "kamite/ini_file.h"
@@ -574,7 +575,7 @@ namespace kamite::sprint_traversal
     void install(PS2Runtime &, const fs::path &exeDir)
     {
         g_file = exeDir / "sprint_traversal.txt";
-        g_shipped = exeDir / "resources" / "sprint_traversal.txt";
+        g_shipped = kamite::paths::resources() / "sprint_traversal.txt";
         if (const char *on = std::getenv("KAMITE_SPRINT_TRAVERSAL"))
             g_enabled = *on && *on != '0';
         {

@@ -64,6 +64,9 @@
 #endif
 #include "kamite/pc_sampler.h"
 #include "kamite/thread_policy.h"
+#include "kamite/paths.h"
+#include "kamite/steam_deck.h"
+#include "kamite/crash_posix.h"
 
 #if defined(PS2X_ENABLE_DEBUG_UI)
 #include "ps2_debug_panel.h"
@@ -98,6 +101,8 @@
 #include <io.h>
 #include <csignal>
 #include <cwchar>
+#else
+#include <unistd.h>
 #endif
 
 #if KAMITE_HAS_VU1_PROGRAMS
@@ -365,17 +370,6 @@ namespace
     }
 #endif
 
-    fs::path executableDirectory()
-    {
-#if defined(_WIN32)
-        wchar_t buffer[MAX_PATH];
-        const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-        if (length > 0 && length < MAX_PATH)
-            return fs::path(buffer).parent_path();
-#endif
-        return fs::current_path();
-    }
-
     // The EE FPU truncates and flushes denormals; PCSX2's default EE rounding mode is also Chop. GENERIC.
     void applyEeFloatingPointMode()
     {
@@ -576,8 +570,12 @@ namespace
         std::vector<std::string> notes;
         if (!fs::exists(iniPath))
         {
-            std::ofstream(iniPath, std::ios::binary) << kamite::kDefaultIni;
-            notes.push_back("wrote the default " + iniPath.string());
+            // A Steam Deck starts in borderless full screen with the picture matching its 16:10 screen; only a fresh
+            // file gets that, so a player's own choice is never overwritten.
+            const bool deck = kamite::steam_deck::detected();
+            std::ofstream(iniPath, std::ios::binary) << (deck ? kamite::steam_deck::withDeckDefaults(kamite::kDefaultIni)
+                                                              : std::string(kamite::kDefaultIni));
+            notes.push_back("wrote the default " + iniPath.string() + (deck ? " (Steam Deck: full screen, AspectRatio=auto)" : ""));
         }
         std::ifstream file(iniPath);
         if (!file)
@@ -659,8 +657,39 @@ namespace
         std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
         std::fprintf(stdout, "\n===== GHR.exe run %s (pid %lu) =====\n", stamp, static_cast<unsigned long>(GetCurrentProcessId()));
         std::fflush(stdout);
+#else
+        // The same on Linux: descriptor 2 becomes the log file too, so the crash handler's write(2) calls land there.
+        const char *path = std::getenv("KAMITE_LOG_FILE");
+        if (!path || !*path)
+            return;
+        if (!std::freopen(path, "a", stdout))
+            return;
+        ::dup2(::fileno(stdout), STDERR_FILENO);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        const std::time_t now = std::time(nullptr);
+        char stamp[64] = {};
+        std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        std::fprintf(stdout, "\n===== GHR run %s (pid %ld) =====\n", stamp, static_cast<long>(::getpid()));
+        std::fflush(stdout);
 #endif
     }
+
+#if !defined(_WIN32)
+    std::atomic<PS2Runtime *> g_crashRuntime{nullptr};
+
+    // The crash report's guest line (crash_posix.h): the EE's registers, read without locks or allocation.
+    bool crashGuestRegisters(uint32_t &pc, uint32_t &ra, uint32_t &sp)
+    {
+        PS2Runtime *runtime = g_crashRuntime.load();
+        const R5900Context *ctx = runtime ? runtime->eeScheduler().currentContext() : nullptr;
+        if (!ctx)
+            return false;
+        pc = ctx->pc;
+        ra = static_cast<uint32_t>(_mm_cvtsi128_si32(ctx->r[31]));
+        sp = static_cast<uint32_t>(_mm_cvtsi128_si32(ctx->r[29]));
+        return true;
+    }
+#endif
 
     // ---- run time limit ---------------------------------------------------------------------------------------------
     std::atomic<PS2Runtime *> g_capRuntime{nullptr};
@@ -756,7 +785,9 @@ namespace kamite
 
 int main(int argc, char *argv[])
 {
-    const fs::path exeDir = executableDirectory();
+    // exeDir: the play folder (paths.h), where GHR.ini, the saves and everything else GHR writes live. It is the
+    // executable's folder (as it always was) unless KAMITE_HOME names another one (the Linux AppImage's AppRun does).
+    const fs::path exeDir = kamite::paths::home();
 
     // Command line first: it wins over the environment, which wins over GHR.ini.
     fs::path iso;
@@ -788,6 +819,21 @@ int main(int argc, char *argv[])
         else if (iso.empty() && arg.rfind("-", 0) != 0)
             iso = arg;
     }
+#if !defined(_WIN32)
+    // Linux: the play folder becomes the current folder, as a Windows shortcut or Steam's StartDir makes the exe's
+    // folder. The runtime and the GS write a few files by relative name (Shift+F8's hang_ram.bin, ps2_log.txt), and
+    // a desktop entry or the AppImage may start GHR anywhere, "/" included. A relative --iso is taken first.
+    {
+        std::error_code cwdError;
+        if (!iso.empty())
+            iso = fs::absolute(iso, cwdError);
+        fs::current_path(exeDir, cwdError);
+    }
+    // A Deck detected by its board (sysfs) is announced the way Steam does, so the controller code sees it too
+    // (ps2_host_gamepads.cpp: Steam Input's virtual pad there is the Deck's own controls).
+    if (kamite::steam_deck::detected())
+        setDefaultEnv("SteamDeck", "1");
+#endif
 
     std::vector<std::pair<std::string, std::string>> padLayout;
     const std::string migrationNote = migrateOldSettings(exeDir);
@@ -809,8 +855,17 @@ int main(int argc, char *argv[])
         return kExitCpu;
     installCrashReporter();
     kamite::installFatalExceptionLog();
+#else
+    kamite::crash_posix::install(headless, kExitCrash, &crashGuestRegisters);
 #endif
     kamite::log::configureFromEnvironment();
+#if !defined(_WIN32)
+    KM_INFO(Boot, "play folder: " << exeDir.string() << "; program folder: " << kamite::paths::programDir().string());
+#endif
+    if (!kamite::paths::homeNote().empty()) // KAMITE_HOME set but not usable (never in a plain Windows install)
+        KM_WARN(Boot, kamite::paths::homeNote());
+    if (kamite::steam_deck::detected())
+        KM_INFO(Boot, "Steam Deck detected: a fresh GHR.ini starts in borderless full screen with AspectRatio=auto");
     if (!headless)
     {
         kamite::reportPreviousCrashes();
@@ -843,9 +898,18 @@ int main(int argc, char *argv[])
             return iso;
         if (const char *env = std::getenv("KAMITE_ISO"); env && *env)
             return fs::path(env);
-        return kamite::findDiscImage({exeDir / "game", exeDir.parent_path() / "game", exeDir.parent_path().parent_path() / "game",
-                                       exeDir.parent_path().parent_path().parent_path() / "game", fs::current_path() / "game",
-                                       fs::current_path()});
+        std::vector<fs::path> roots{exeDir / "game", exeDir.parent_path() / "game", exeDir.parent_path().parent_path() / "game",
+                                    exeDir.parent_path().parent_path().parent_path() / "game", fs::current_path() / "game",
+                                    fs::current_path()};
+#if !defined(_WIN32)
+        // Linux and the Steam Deck, where a file dialog may not be at hand (Game Mode): the folders a disc image
+        // usually lands in, and the top of each removable drive (SD cards mount at /run/media/<user>/<card> or, on
+        // older SteamOS, /run/media/<card>). One level each: findDiscImage reads only the SYSTEM.CNF of the .iso
+        // files it lists, and verifyDiscAndPrepare still checks the boot ELF's hash.
+        for (const fs::path &root : kamite::paths::discSearchFolders(std::getenv("HOME"), std::getenv("USER"), "/run/media"))
+            roots.push_back(root);
+#endif
+        return kamite::findDiscImage(roots);
     };
     iso = resolveIso();
 #if KAMITE_HAS_LAUNCHER
@@ -994,9 +1058,7 @@ int main(int argc, char *argv[])
         // Never destroyed: the process ends (endProcess) while it is alive, so the time-limit thread can always use it.
         PS2Runtime &runtime = *new PS2Runtime();
         g_capRuntime.store(&runtime);
-#if defined(_WIN32)
-        g_crashRuntime.store(&runtime);
-#endif
+        g_crashRuntime.store(&runtime); // the crash report's guest line (Windows' crashLogFilter, crash_posix on Linux)
 #if defined(PS2X_ENABLE_DEBUG_UI)
         // ImGui runtime debugger from PS2Recomp: F12 toggles it; KAMITE_DEBUG_UI=1 opens it at start-up.
         static PS2DebugPanel debugPanel;

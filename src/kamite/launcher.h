@@ -11,7 +11,7 @@ namespace kamite::launcher
 {
     struct Context
     {
-        std::filesystem::path exeDir;
+        std::filesystem::path exeDir;   // the play folder (paths.h: the exe's folder unless KAMITE_HOME names another)
         std::filesystem::path iniPath;  // GHR.ini
         std::filesystem::path cacheDir; // game_data (the checked boot ELF is written there)
         std::filesystem::path iso;      // the disc image found so far (may be empty or unusable)

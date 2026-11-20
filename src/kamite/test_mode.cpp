@@ -22,6 +22,7 @@
 // played at 30 merges each pair of samples (a button pressed in either counts, the sticks take the later), so no tap
 // is lost.
 #include "kamite/test_mode.h"
+#include "kamite/paths.h"
 #include "kamite/widescreen.h"
 #include "kamite/frame_patches.h"
 #include "kamite/debug_tools.h"
@@ -1510,7 +1511,11 @@ namespace kamite::test_mode
             // live log where a fix changed the game, and the report says so.
             {
                 std::error_code buildError;
-                const fs::path exe = g_exeDir / "GHR.exe";
+#if defined(_WIN32)
+                const fs::path exe = kamite::paths::programDir() / "GHR.exe";
+#else
+                const fs::path exe = kamite::paths::programDir() / "GHR";
+#endif
                 const auto size = fs::file_size(exe, buildError);
                 const auto time = fs::last_write_time(exe, buildError);
                 if (!buildError)

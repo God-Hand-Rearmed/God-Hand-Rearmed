@@ -317,6 +317,8 @@ namespace kamite::threadpolicy
         std::thread(governor).detach();
     }
 #else
+    // Linux: no-op. The governor places the named threads on cores (ideal processor, affinity, priority) through
+    // Windows' thread APIs; the Linux scheduler spreads them by itself, so PS2X_THREAD_POLICY does nothing here.
     void startFromEnvironment() {}
 #endif
 }

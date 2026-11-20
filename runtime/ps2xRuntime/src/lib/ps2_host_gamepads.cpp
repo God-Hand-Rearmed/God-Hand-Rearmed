@@ -75,6 +75,16 @@ namespace ps2_host_gamepads
                 return Style::Nintendo;
             // Steam Input's virtual pad ("Steam Virtual Gamepad") stands for whatever controller Steam is reading: Xbox
             // letters unless SDL could tell the type (above). A Steam Controller or Steam Deck by name: Steam's art.
+#if !defined(_WIN32)
+            // On a Steam Deck (SteamDeck=1: Steam sets it, and GHR does when the board says so) Steam Input's virtual pad
+            // is the Deck's own controls unless SDL named another controller: Steam's art.
+            if (has("steam virtual") || has("steam deck"))
+            {
+                const char *deck = std::getenv("SteamDeck");
+                if (has("steam deck") || (deck && deck[0] == '1' && deck[1] == '\0'))
+                    return Style::Steam;
+            }
+#endif
             if (has("steam virtual") || has("xbox") || has("x-box") || has("xinput"))
                 return Style::Xbox;
             if (has("steam"))
@@ -125,7 +135,17 @@ namespace ps2_host_gamepads
             // decides for the rest.
             // Valve's own hardware (vendor 0x28DE) is a Steam Deck or Steam Controller, except Steam Input's virtual pad
             // (product 0x11FF), which SDL reports as the controller it stands for when Steam says so.
+#if defined(_WIN32)
             const bool valveHardware = SDL_GetGamepadVendor(gamepad) == 0x28DE && SDL_GetGamepadProduct(gamepad) != 0x11FF;
+#else
+            // On a Steam Deck the virtual pad SDL could not name after another controller (it reads as an Xbox 360
+            // pad called "Steam Virtual Gamepad") is the Deck's own controls: Steam's art too.
+            const char *deck = std::getenv("SteamDeck");
+            const bool deckVirtual = deck && std::strcmp(deck, "1") == 0 && SDL_GetGamepadVendor(gamepad) == 0x28DE &&
+                                     SDL_GetGamepadProduct(gamepad) == 0x11FF && styleFromName(device.name) == Style::Steam;
+            const bool valveHardware =
+                deckVirtual || (SDL_GetGamepadVendor(gamepad) == 0x28DE && SDL_GetGamepadProduct(gamepad) != 0x11FF);
+#endif
             switch (valveHardware ? SDL_GAMEPAD_TYPE_UNKNOWN : SDL_GetGamepadType(gamepad))
             {
             case SDL_GAMEPAD_TYPE_XBOX360:

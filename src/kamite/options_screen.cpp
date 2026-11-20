@@ -28,6 +28,7 @@
 // name it writes the full image (the wall at 6x, the strip from the texture pack's image of the original texture when
 // there is one, else the disc's scaled up) into cache/hd-options (kept between runs) and hands it to the GS.
 #include "kamite/options_screen.h"
+#include "kamite/paths.h"
 
 #include "kamite/bone_tweaks.h"
 #include "kamite/buck_breaker.h"
@@ -623,7 +624,7 @@ namespace kamite::options_screen
             std::lock_guard<std::mutex> one(g_prepareMutex);
             if (generation != g_wallGeneration.load(std::memory_order_relaxed))
                 return; // a newer shape is waiting
-            const fs::path source = exeDir / "resources" / "options" / "wall.jpg";
+            const fs::path source = kamite::paths::resources() / "options" / "wall.jpg";
             std::ifstream in(source, std::ios::binary);
             std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             ::Image wall = bytes.empty() ? ::Image{} : LoadImageFromMemory(".jpg", bytes.data(), static_cast<int>(bytes.size()));
@@ -1457,7 +1458,7 @@ namespace kamite::options_screen
         void buildMapping(const Screen &s)
         {
             const std::string folder = mappingSetFolder(), pad = mapping_page::padFor(folder);
-            const fs::path artDir = g_exeDir / "resources" / "options" / "mapping";
+            const fs::path artDir = kamite::paths::resources() / "options" / "mapping";
             auto found = g_padArt.find(pad);
             if (found == g_padArt.end())
             {
@@ -1468,7 +1469,7 @@ namespace kamite::options_screen
                     KM_WARN(Game, "options screen: button mapping art not loaded: " << error);
             }
             const mapping_page::Options options = mappingOptions();
-            const std::u8string dir = artDir.u8string(), root = g_exeDir.u8string();
+            const std::u8string dir = artDir.u8string(), root = kamite::paths::programDir().u8string(); // the folder resources/ is in
             g_mappingState = mappingState();
             mapping_page::build(g_mapping, found->second, std::string(dir.begin(), dir.end()), std::string(root.begin(), root.end()),
                                 folder, g_mappingState, options, s.mapCursor, s.mapEdit);
@@ -1500,7 +1501,7 @@ namespace kamite::options_screen
                 const std::u8string path = prompt_hd::artFile(prompt_hd::Set::Keyboard, name).u8string();
                 return std::string(path.begin(), path.end());
             };
-            const std::u8string dir = (g_exeDir / "resources" / "options" / "mapping").u8string();
+            const std::u8string dir = (kamite::paths::resources() / "options" / "mapping").u8string();
             keys_page::build(g_keys, labels, art, std::string(dir.begin(), dir.end()), keys_page::optionsFrom(g_ini), s.keysCursor,
                              s.keysMode, art("Del"));
         }
@@ -2451,16 +2452,16 @@ namespace kamite::options_screen
             const std::u8string text = path.u8string();
             return std::string(reinterpret_cast<const char *>(text.data()), text.size());
         };
-        options_overlay::setAssets(utf8(exeDir / "resources" / "fonts" / "ArchivoNarrow-SemiBold.ttf"),
-                                   utf8(exeDir / "resources" / "fonts" / "DejaVuSans-Bold.ttf"),
-                                   utf8(exeDir / "resources" / "options"));
-        options_overlay::setScrollBar(utf8(exeDir / "resources" / "options" / "scroll_track.png"),
-                                      utf8(exeDir / "resources" / "options" / "scroll_thumb.png"));
-        options_overlay::setSliderFill(utf8(exeDir / "resources" / "options" / "slider_fill.png"));
+        options_overlay::setAssets(utf8(kamite::paths::resources() / "fonts" / "ArchivoNarrow-SemiBold.ttf"),
+                                   utf8(kamite::paths::resources() / "fonts" / "DejaVuSans-Bold.ttf"),
+                                   utf8(kamite::paths::resources() / "options"));
+        options_overlay::setScrollBar(utf8(kamite::paths::resources() / "options" / "scroll_track.png"),
+                                      utf8(kamite::paths::resources() / "options" / "scroll_thumb.png"));
+        options_overlay::setSliderFill(utf8(kamite::paths::resources() / "options" / "slider_fill.png"));
         // The titles' letters (their glow left out): where the L1 / R1 hints go beside them.
         for (const char *name : {"presets", "controls", "display", "graphics", "interface", "gameplay", "sound"})
         {
-            const std::string path = utf8(exeDir / "resources" / "options" / (std::string("title_") + name + ".png"));
+            const std::string path = utf8(kamite::paths::resources() / "options" / (std::string("title_") + name + ".png"));
             ::Image title = LoadImage(path.c_str());
             if (title.data)
             {

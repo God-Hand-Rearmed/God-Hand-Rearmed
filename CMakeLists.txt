@@ -56,6 +56,14 @@ endif()
 add_subdirectory(runtime EXCLUDE_FROM_ALL)
 add_subdirectory(src)
 
+# The unit tests (tests/unit): the pure logic of the operating-system layer, run with ctest. They also build on their
+# own without the game code (tests/unit/CMakeLists.txt says how).
+option(KAMITE_BUILD_TESTS "Build the unit tests (tests/unit)" OFF)
+if(KAMITE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests/unit)
+endif()
+
 # PCSX2's GS (hardware renderer) as pcsx2gs.dll (DX11), loaded at run time when [Video] Renderer=pcsx2 (the default).
 # ON by default: its wrapper carries the game's GameIndex fixes and serial (thirdparty/pcsx2-gs/compat/Bridge.cpp,
 # HostStubs.cpp). The runtime falls back to its own GS when the DLL is missing (gs_pcsx2_backend.cpp,
