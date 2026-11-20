@@ -24,7 +24,10 @@ On Linux `pcsx2-gs/` builds `libpcsx2gs.so` (Vulkan only, presenting into an X11
 | `pcsx2/common/Linux/LnxMisc.cpp` | its D-Bus screensaver inhibition and Xlib mouse functions are stubs under `PCSX2GS_LIBRARY` (marked `pcsx2gs (Kamite)`), so the library links neither libdbus nor libX11 |
 
 Every other PCSX2 file the Linux build compiles is the one the Windows build already has (their Linux code paths were
-in the trimmed copy). The PNG decoder for texture replacements and the port's screen images is
+in the trimmed copy). The library exports only the C interface (`pcsx2-gs/compat/pcsx2gs.map`) and links no libX11:
+GHR passes it the X11 connection (`pcsx2gs_set_display`) and an X11 child window of the game window. Both libraries
+get `pcsx2-gs/compat/dso_finalize.c`, which runs their static destructors when they are unloaded: zig's toolchain (the
+portable build) has no crtbegin to do it, and exit crashed once PCSX2 unloaded `libshaderc_shared.so.1`. The PNG decoder for texture replacements and the port's screen images is
 [stb_image](https://github.com/nothings/stb) v2.30 (commit `f58f558`, public domain / MIT), downloaded at configure
 time with its SHA-256 checked (`pcsx2-gs/compat/PngStb.inl`, where Windows has WIC in `PngWic.inl`).
 

@@ -187,11 +187,19 @@ if(NOT WIN32)
     set_target_properties(pcsx2gs shaderc_shared PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${PCSX2GS_OUTPUT_DIR}")
     set_target_properties(pcsx2_gs_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PCSX2GS_OUTPUT_DIR}")
 
-    # libpcsx2gs.so: no undefined symbol left for the loader (-z defs), none of the static libraries' symbols exported
-    # (--exclude-libs; cpuinfo and the C++ runtime's are compiled with default visibility), and $ORIGIN as its search
-    # path, so libshaderc_shared.so.1 is found next to it wherever the folder is moved (dyn_shaderc dlopens it by
-    # name, and dlopen searches the RUNPATH of the library that calls it).
-    target_link_options(pcsx2gs PRIVATE -Wl,-z,defs -Wl,--exclude-libs,ALL)
+    # libpcsx2gs.so: no undefined symbol left for the loader (-z defs); only the C interface exported, also of what
+    # static archives built with default visibility bring (the portable build's libc++): compat/pcsx2gs.map, which
+    # both GNU ld and zig's lld take (zig's driver refuses --exclude-libs, which GNU ld also gets); and $ORIGIN as its
+    # search path, so libshaderc_shared.so.1 is found next to it wherever the folder is moved (dyn_shaderc dlopens it
+    # by name, and dlopen searches the RUNPATH of the library that calls it).
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "-Wl,--exclude-libs,ALL" PCSX2GS_LINKER_EXCLUDE_LIBS)
+    target_link_options(pcsx2gs PRIVATE -Wl,-z,defs "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/compat/pcsx2gs.map"
+        $<$<BOOL:${PCSX2GS_LINKER_EXCLUDE_LIBS}>:-Wl,--exclude-libs,ALL>)
+    set_property(TARGET pcsx2gs APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/compat/pcsx2gs.map")
+    # Static destructors finalized when the library is unloaded, with any toolchain (compat/dso_finalize.c says why).
+    target_sources(pcsx2gs PRIVATE compat/dso_finalize.c)
+    target_sources(shaderc_shared PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/compat/dso_finalize.c")
     set_target_properties(pcsx2gs PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
 
     # The smoke test: libpcsx2gs.so loaded and driven through its C interface as GHR does, on an X11 window, the
