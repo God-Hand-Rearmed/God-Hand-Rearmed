@@ -144,10 +144,13 @@ class Program(unittest.TestCase):
         (bin_dir / "libSDL3.so.0.4.10").write_bytes(b"x")
         os.symlink("libSDL3.so.0.4.10", bin_dir / "libSDL3.so.0")
         names = [p.name for p in package.program_files(bin_dir)]
-        self.assertEqual(names, ["GHR", "resources", "libSDL3.so.0", "libSDL3.so.0.4.10"])
+        # The symlink's name ships, as a regular file with the target's bytes; the versioned file does not.
+        self.assertEqual(names, ["GHR", "resources", "libSDL3.so.0"])
         dest = self.tmp / "out"
         package.stage_program(bin_dir, dest)
-        self.assertTrue((dest / "libSDL3.so.0").is_symlink())
+        self.assertFalse((dest / "libSDL3.so.0").is_symlink())
+        self.assertEqual((dest / "libSDL3.so.0").read_bytes(), b"x")
+        self.assertFalse((dest / "libSDL3.so.0.4.10").exists())
         self.assertFalse((dest / "GHR.ini").exists())
         self.assertFalse((dest / "logs").exists())
 

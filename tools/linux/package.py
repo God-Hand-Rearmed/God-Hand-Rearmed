@@ -254,7 +254,12 @@ def program_files(bin_dir: Path) -> list[Path]:
     if not (bin_dir / "resources").is_dir():
         raise PackageError(f"{bin_dir / 'resources'} is missing")
     files = [exe, bin_dir / "resources"]
-    files += sorted(p for p in bin_dir.iterdir() if re.fullmatch(r"lib[^/]+\.so(\.\d+)*", p.name))
+    libraries = [p for p in bin_dir.iterdir() if re.fullmatch(r"lib[^/]+\.so(\.\d+)*", p.name)]
+    # A library ships once, under the name its users load (libSDL3.so.0), as a regular file: the build's symlink chain
+    # (libSDL3.so.0 -> libSDL3.so.0.4.10) is resolved here, because the launcher's updater (update_archive.cpp) only
+    # writes regular files and would drop a symlink, leaving an updated install without the library.
+    linked = {(bin_dir / os.readlink(p)).resolve() for p in libraries if p.is_symlink()}
+    files += sorted((p for p in libraries if p.is_symlink() or p.resolve() not in linked), key=lambda p: p.name)
     return files
 
 
@@ -279,7 +284,7 @@ def stage_program(bin_dir: Path, dest: Path) -> None:
         if path.is_dir():
             shutil.copytree(path, target, symlinks=True)
         elif path.is_symlink():
-            os.symlink(os.readlink(path), target)  # libSDL3.so.0 -> libSDL3.so.0.x.y, kept as a link
+            shutil.copy2(path.resolve(), target)  # libSDL3.so.0's contents under that name (program_files)
         else:
             shutil.copy2(path, target)
     # Copies from a read-only place (a Nix store path) keep its modes: made writable so stripping can rewrite them.

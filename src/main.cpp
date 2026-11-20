@@ -102,6 +102,7 @@
 #include <csignal>
 #include <cwchar>
 #else
+#include <pthread.h>
 #include <unistd.h>
 #endif
 
@@ -785,6 +786,21 @@ namespace kamite
 
 int main(int argc, char *argv[])
 {
+#if defined(__linux__)
+    // Every thread's stack as on Windows, where GHR.exe links with /STACK:16777216 (src/CMakeLists.txt) and every new
+    // thread takes that size: guest code runs on the runtime's GameThread (ps2_runtime.cpp), and its deep call chains
+    // need it. Linux threads otherwise get RLIMIT_STACK (often 8 MB, and only 2 MB when the limit is unlimited).
+    // Before any thread exists, so all of them get it.
+    {
+        pthread_attr_t attr;
+        if (pthread_attr_init(&attr) == 0)
+        {
+            if (pthread_attr_setstacksize(&attr, 16u << 20) != 0 || pthread_setattr_default_np(&attr) != 0)
+                std::fprintf(stderr, "[boot] could not set the 16 MB thread stack size; deep game calls may overflow\n");
+            pthread_attr_destroy(&attr);
+        }
+    }
+#endif
     // exeDir: the play folder (paths.h), where GHR.ini, the saves and everything else GHR writes live. It is the
     // executable's folder (as it always was) unless KAMITE_HOME names another one (the Linux AppImage's AppRun does).
     const fs::path exeDir = kamite::paths::home();

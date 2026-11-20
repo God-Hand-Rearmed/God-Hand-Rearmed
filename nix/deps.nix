@@ -3,6 +3,7 @@
 # build uses exactly these trees. Keep the revisions equal to the GIT_TAG / URL in the CMake files that declare them:
 #   raylib, imgui, rlImGui      runtime/ps2xRuntime/CMakeLists.txt
 #   dav1d, libavif              src/CMakeLists.txt (the launcher's saloon)
+#   SDL3                        runtime/ps2xRuntime/CMakeLists.txt (controllers; a release tarball, fetchzip)
 # A changed revision there and here together; the hash comes from
 #   nix-prefetch-url --unpack https://github.com/<owner>/<repo>/archive/<rev>.tar.gz
 { pkgs }:
@@ -22,6 +23,11 @@ in
   # 1.2.1-SDL
   KAMITE_DAV1D = gh "libsdl-org" "dav1d" "a6b395b472c2b1911a49936840e18535b071c1bd"
     "0qb68dabqgk7sgdc1m56d0nl2jika15623hp6fj7win5az4hvpsd";
+  # release-3.4.10 (the release tarball runtime/ps2xRuntime/CMakeLists.txt downloads; URL_HASH checks the archive)
+  SDL3 = pkgs.fetchzip {
+    url = "https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz";
+    sha256 = "0kf1kfw4k8a6j56lq4jygz971ljyhilqbv2wdsmzqh6zxysihg29";
+  };
   # v1.1.1-SDL
   KAMITE_LIBAVIF = gh "libsdl-org" "libavif" "ee829431ceaed31a34b7e1420f7f18180e7eae23"
     "1gd3z3d0w0hx97pmck1sjsc6afzs187kzwmbzmr0khjqna2gbyi8";
