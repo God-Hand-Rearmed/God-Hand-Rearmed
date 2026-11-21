@@ -87,6 +87,9 @@ set(KAMITE_HOST_SOURCES
     kamite/native/native.cpp
     kamite/native/shadow.cpp
     kamite/native/libvu0.cpp
+    kamite/native/packet.cpp
+    kamite/native/recording.cpp
+    kamite/native/chain_digest.cpp
     kamite/crash_history.cpp
     kamite/hud_layout.cpp
     kamite/hotkeys.cpp
@@ -333,7 +336,7 @@ add_executable(kamite ${KAMITE_HOST_SOURCES} "${KAMITE_MODULE_INDEX}")
 # own, as the VU / EE does: no contraction into FMA (MSVC's /fp:precise below does not contract).
 if(NOT MSVC)
     set_source_files_properties(kamite/render/character_skin.cpp kamite/render/clip_scenery.cpp kamite/render/scenery_strip.cpp
-                                kamite/native/libvu0.cpp
+                                kamite/native/libvu0.cpp kamite/native/packet.cpp
                                 PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 if(KAMITE_RELEASE) # CMakeLists.txt: GHR.exe's own code and the runtime, not the generated game code

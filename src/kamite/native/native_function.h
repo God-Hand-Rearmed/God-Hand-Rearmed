@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace kamite::native
 {
@@ -47,14 +48,47 @@ namespace kamite::native
         }
     };
 
-    // Where a native's env.ram points: the real RAM (RealEnv) or the shadow scratch (ShadowEnv). Both are the
-    // runtime's 128 MB backing: a guest address in plain RAM is ram + (address & PS2_RAM_MASK).
+    // A recorded footprint (a NativeFunction with footprint == nullptr; rung 3, K's pick): the harness runs the native
+    // on its scratch with every first touch of a byte filled from the real RAM and logged; the log is the call's
+    // footprint. Ranges are RAM offsets (address & PS2_RAM_MASK). A rerun (an early exit, or shadow_test rerun) starts
+    // from the saved bytes: a range it hadn't touched before is filled with zeros and marks it strayed.
+    struct Recording
+    {
+        std::vector<Footprint::Range> ranges;
+        std::vector<uint8_t> in;        // each range's bytes as filled (the call's input), in range order
+        const uint8_t *real = nullptr;  // the RAM to fill from; nullptr on a rerun
+        uint32_t maxBytes = 0;
+        uint32_t bytes = 0;
+        bool overflow = false;          // more than kMaxRecordedRanges ranges or maxBytes bytes: not checked
+        bool strayed = false;           // a rerun touched a byte the first run hadn't
+        static constexpr size_t kMaxRecordedRanges = 256;
+        void reset(const uint8_t *from, uint32_t limit)
+        {
+            ranges.clear();
+            in.clear();
+            real = from;
+            maxBytes = limit;
+            bytes = 0;
+            overflow = strayed = false;
+        }
+        // recording.cpp: fill [offset, offset + size) on first touch; mark / unmark the ranges' bytes as present (a
+        // rerun marks the saved ranges first; the harness unmarks them after every run).
+        void touch(uint8_t *scratch, uint32_t offset, uint32_t size);
+        void mark() const;
+        void unmark() const;
+    };
+
+    // Where a native's memory accesses go: the real RAM (RealEnv) or the shadow scratch (ShadowEnv). Both are the
+    // runtime's 128 MB backing: a guest address in plain RAM is ram + (address & PS2_RAM_MASK). New natives reach RAM
+    // through env.at(offset, size) (the bytes of one access, offset from plainRam): the real RAM's pointer, or the
+    // scratch's with a recorded footprint filled on first touch.
     struct RealEnv
     {
         uint8_t *ram;
         PS2Runtime *runtime;
         bool checkpoint(uint32_t cycles) { return runtime->eeCheckpointDue(cycles); }
         bool call() { return runtime->eeCheckpointDue(8u); } // EeScheduler::kGuestDispatchCycles
+        uint8_t *at(uint32_t offset, uint32_t) { return ram + offset; }
     };
 
     struct ShadowEnv
@@ -64,6 +98,13 @@ namespace kamite::native
         int checkpoints = 0;    // checkpoints charged so far
         uint64_t charged = 0;   // their EE cycles
         uint32_t loopCycles = 32u; // what a backward branch's 32 stands for (PS2X_EE_LOOP_CYCLES)
+        Recording *record = nullptr; // a recorded footprint: fill on first touch
+        uint8_t *at(uint32_t offset, uint32_t size)
+        {
+            if (record)
+                record->touch(ram, offset, size);
+            return ram + offset;
+        }
         bool due()
         {
             ++checkpoints;
@@ -97,11 +138,12 @@ namespace kamite::native
         bool checked;          // on by default (0 harness mismatches over all cases, replays identical, faster)
         bool (*runReal)(RealEnv &env, R5900Context *ctx);
         bool (*runShadow)(ShadowEnv &env, R5900Context *ctx);
-        void (*footprint)(const R5900Context *ctx, Footprint &fp);
+        void (*footprint)(const R5900Context *ctx, Footprint &fp); // nullptr: recorded (Recording; env.at only)
         uint32_t ulps = 0;     // 0 = bit-exact; else a loose function: float words may differ by this many ulps
         uint32_t every = 1;    // the shadow harness checks every Nth call
         const DontCare *dontCare = nullptr;
         int dontCareCount = 0;
+        uint32_t maxBytes = 0; // a recorded footprint's limit (0 = 64 KB); more is skipped
     };
 
     // Called by each subsystem's register function before install().

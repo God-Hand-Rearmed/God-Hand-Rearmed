@@ -40,6 +40,7 @@
 #include "ps2_host_input.h"   // prompts::pinDevice
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -60,6 +61,8 @@ namespace kamite::test_mode
     {
         namespace fs = std::filesystem;
         namespace GameObj = game::GameObj;
+        // replayFrame(): the playing replay's test frame, kReplayIdle outside one (any thread).
+        std::atomic<uint32_t> g_replayFrame{0xFFFFFFFFu};
         namespace GameWork = game::GameWork;
 
         constexpr uint32_t kSample = 32u;                     // a DS2 status (the libpad layout) per game frame
@@ -1007,6 +1010,7 @@ namespace kamite::test_mode
         {
             Run &run = g_run;
             run.phase = Run::Phase::Done;
+            g_replayFrame.store(kReplayIdle, std::memory_order_relaxed);
             if (ok && run.record)
             {
                 if (run.polls < run.rec.polls())
@@ -1158,6 +1162,8 @@ namespace kamite::test_mode
                 run.readsLastFrame = run.readsThisFrame;
                 run.readsThisFrame = 0;
                 const uint8_t *sample = run.sampleUsed >= 0 ? run.rec.samples.data() + static_cast<size_t>(run.sampleUsed) * kSample : nullptr;
+                if (!run.record)
+                    g_replayFrame.store(run.frame, std::memory_order_relaxed);
                 logFrame(run.log, rdram, run.frame, run.divider, run.readsLastFrame, run.sampleUsed, sample);
                 writeRamFrame(run.ram, rdram, run.frame);
                 writeExtraFrame(run.extra, rdram, run.frame, run.extraRegions);
@@ -1840,6 +1846,11 @@ namespace kamite::test_mode
     bool failed()
     {
         return g_run.failed;
+    }
+
+    uint32_t replayFrame()
+    {
+        return g_replayFrame.load(std::memory_order_relaxed);
     }
 
     bool recording()

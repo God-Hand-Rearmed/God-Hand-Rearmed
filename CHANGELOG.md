@@ -4,6 +4,9 @@ Newest first, one line per change; the code comments say how.
 
 ## November 21, 2026
 
+- Performance: more of the game's vector helpers (normalize, cross product, camera and light matrices, copies) and the queueing of draw packets run as native code.
+- Launcher: clicks in the Options book no longer land on the row above (or below) the one under the mouse.
+- Performance: the draw data sent to the PS2's vector unit each frame is gathered in one pass (about twice as fast in crowded scenes).
 - Fixed the monitor turning off mid-game when playing with a controller (Windows' screen timeout) (#12).
 - Linux and Steam Deck: the screen no longer blanks mid-game when playing with a controller either (#12). The desktop is asked not to (the freedesktop ScreenSaver inhibit, which KDE and the Deck's Desktop Mode have, else GNOME's session manager), and the X server's own screensaver timer is reset every 30 s. Not yet on a Wayland desktop that has neither (sway and the like).
 - Performance: the game's matrix, rotation and sine / cosine helpers (libvu0's MulMatrix, ApplyMatrix, RotMatrixX / Y / Z, ecossin) run as native code.

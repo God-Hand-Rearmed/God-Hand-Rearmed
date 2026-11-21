@@ -80,6 +80,9 @@ namespace kamite::native
     inline Vec4 blend(Vec4 a, Vec4 b) { return {_mm_blend_ps(a.v, b.v, Mask)}; }
     // VMR32: every lane takes the next one's value (x <- y, y <- z, z <- w, w <- x).
     inline Vec4 rotateLanes(Vec4 a) { return {_mm_shuffle_ps(a.v, a.v, _MM_SHUFFLE(0, 3, 2, 1))}; }
+    // r = (a[X], a[Y], a[Z], a[W]): VOPMULA / VOPMSUB's yzx / zxy forms.
+    template <int X, int Y, int Z, int W>
+    inline Vec4 shuffle(Vec4 a) { return {_mm_shuffle_ps(a.v, a.v, _MM_SHUFFLE(W, Z, Y, X))}; }
     // A VU operand: exponent 0 -> signed zero, exponent 255 -> signed FLT_MAX.
     inline Vec4 norm(Vec4 a)
     {
@@ -138,6 +141,14 @@ namespace kamite::native
         return {vbslq_f32(vld1q_u32(m), b.v, a.v)};
     }
     inline Vec4 rotateLanes(Vec4 a) { return {vextq_f32(a.v, a.v, 1)}; }
+    template <int X, int Y, int Z, int W>
+    inline Vec4 shuffle(Vec4 a)
+    {
+        float in[4], out[4];
+        vst1q_f32(in, a.v);
+        out[0] = in[X], out[1] = in[Y], out[2] = in[Z], out[3] = in[W];
+        return {vld1q_f32(out)};
+    }
     inline Vec4 norm(Vec4 a)
     {
         const uint32x4_t bits = vreinterpretq_u32_f32(a.v);
@@ -245,6 +256,8 @@ namespace kamite::native
         return r;
     }
     inline Vec4 rotateLanes(Vec4 a) { return {{a.v[1], a.v[2], a.v[3], a.v[0]}}; }
+    template <int X, int Y, int Z, int W>
+    inline Vec4 shuffle(Vec4 a) { return {{a.v[X], a.v[Y], a.v[Z], a.v[W]}}; }
     inline Vec4 norm(Vec4 a)
     {
         Vec4 r;
@@ -308,6 +321,12 @@ namespace kamite::native
     inline float sqrtScalar(float x)
     {
         volatile float r = std::sqrt(x);
+        return r;
+    }
+    // A scalar quotient in the float environment (one rounding): VU0's VDIV for ordinary operands.
+    inline float divScalar(float a, float b)
+    {
+        volatile float r = a / b;
         return r;
     }
 

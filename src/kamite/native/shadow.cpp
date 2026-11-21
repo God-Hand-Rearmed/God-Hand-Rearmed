@@ -44,9 +44,12 @@ namespace kamite::native::shadow
         {
             R5900Context before;
             R5900Context native;
-            Footprint fp;
-            uint32_t offsets[Footprint::kMaxRanges];
+            std::vector<Footprint::Range> ranges; // the footprint: declared, or recorded by the native's first run
+            std::vector<uint32_t> offsets;
             uint32_t total = 0;
+            bool recorded = false, firstRun = false, strayed = false;
+            const uint8_t *realRam = nullptr;
+            Recording rec, rerun;
             std::vector<uint8_t> in, nativeBytes;
             uint64_t charged = 0;
             int checkpoints = 0;
@@ -158,10 +161,12 @@ namespace kamite::native::shadow
             if (!sameWords(reinterpret_cast<const uint8_t *>(&f.native), reinterpret_cast<const uint8_t *>(real),
                            sizeof(R5900Context), fn.ulps, worst, &floatWord, plain ? nullptr : &fn))
                 kinds |= kCtx;
-            for (int i = 0, at = 0; i < f.fp.count; at += static_cast<int>(f.fp.ranges[i].size), ++i)
-                if (!sameWords(f.nativeBytes.data() + at, rdram + f.offsets[i], f.fp.ranges[i].size, fn.ulps, worst,
+            for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                if (!sameWords(f.nativeBytes.data() + at, rdram + f.offsets[i], f.ranges[i].size, fn.ulps, worst,
                                nullptr, nullptr))
                     kinds |= kRam;
+            if (f.strayed) // a rerun touched bytes the first run hadn't: its input there is unknown
+                kinds |= kRam;
             if (f.charged != realCycles)
                 kinds |= kCycles;
             if (kinds == 0u)
@@ -172,19 +177,57 @@ namespace kamite::native::shadow
         // ---- the native's run on the scratch copy ----------------------------------------------------------------
         bool runNative(Slot &slot, Frame &f, int dueAt)
         {
-            for (int i = 0, at = 0; i < f.fp.count; at += static_cast<int>(f.fp.ranges[i].size), ++i)
-                std::memcpy(g_scratch + f.offsets[i], f.in.data() + at, f.fp.ranges[i].size);
+            Recording *rec = nullptr;
+            if (!f.recorded)
+                for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                    std::memcpy(g_scratch + f.offsets[i], f.in.data() + at, f.ranges[i].size);
+            else if (f.firstRun)
+            {
+                f.rec.reset(f.realRam, slot.fn.maxBytes);
+                rec = &f.rec;
+            }
+            else
+            {
+                // A rerun (an early exit): the first run's input, filled where it read; anything new reads 0 (strayed).
+                for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                    std::memcpy(g_scratch + f.offsets[i], f.in.data() + at, f.ranges[i].size);
+                f.rerun.reset(nullptr, 0u);
+                f.rerun.ranges = f.ranges;
+                f.rerun.mark();
+                rec = &f.rerun;
+            }
             std::memcpy(static_cast<void *>(&f.native), &f.before, sizeof(R5900Context));
             ShadowEnv env{g_scratch};
             env.dueAt = dueAt;
             env.loopCycles = g_settings.loopCycles;
+            env.record = rec;
             const bool ran = slot.fn.runShadow(env, &f.native);
             f.charged = env.charged;
             f.checkpoints = env.checkpoints;
-            for (int i = 0, at = 0; i < f.fp.count; at += static_cast<int>(f.fp.ranges[i].size), ++i)
-                std::memcpy(f.nativeBytes.data() + at, g_scratch + f.offsets[i], f.fp.ranges[i].size);
-            for (int i = 0; i < f.fp.count; ++i) // after all of them (ranges may overlap): a later read outside sees 0s
-                std::memset(g_scratch + f.offsets[i], 0, f.fp.ranges[i].size);
+            f.strayed = rec && rec->strayed;
+            if (rec == &f.rec)
+            {
+                f.ranges = f.rec.ranges;
+                f.offsets.resize(f.ranges.size());
+                for (size_t i = 0; i < f.ranges.size(); ++i)
+                    f.offsets[i] = f.ranges[i].address;
+                f.in = f.rec.in;
+                f.total = f.rec.bytes;
+                f.firstRun = false;
+            }
+            f.nativeBytes.resize(f.total);
+            for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                std::memcpy(f.nativeBytes.data() + at, g_scratch + f.offsets[i], f.ranges[i].size);
+            // After all of them (ranges may overlap): a later read outside sees 0s.
+            if (rec)
+            {
+                for (const Footprint::Range &r : rec->ranges) // a rerun's strayed ranges included
+                    std::memset(g_scratch + r.address, 0, r.size);
+                rec->unmark();
+            }
+            else
+                for (int i = 0; i < static_cast<int>(f.ranges.size()); ++i)
+                    std::memset(g_scratch + f.offsets[i], 0, f.ranges[i].size);
             return ran;
         }
 
@@ -279,13 +322,13 @@ namespace kamite::native::shadow
                     std::snprintf(line, sizeof(line), "    context +0x%zX native %02X / real %02X\n", at, n[at], r[at]);
                     out += line;
                 }
-            for (int i = 0, at = 0; i < f.fp.count; at += static_cast<int>(f.fp.ranges[i].size), ++i)
-                for (uint32_t w = 0; w < f.fp.ranges[i].size; w += 16)
+            for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                for (uint32_t w = 0; w < f.ranges[i].size; w += 16)
                 {
-                    const uint32_t size = std::min<uint32_t>(16, f.fp.ranges[i].size - w);
+                    const uint32_t size = std::min<uint32_t>(16, f.ranges[i].size - w);
                     if (std::memcmp(f.nativeBytes.data() + at + w, rdram + f.offsets[i] + w, size) == 0)
                         continue;
-                    std::snprintf(line, sizeof(line), "    ram %08X native", f.fp.ranges[i].address + w);
+                    std::snprintf(line, sizeof(line), "    ram %08X native", f.ranges[i].address + w);
                     out += line;
                     appendHex(out, f.nativeBytes.data() + at + w, size);
                     out += " / real";
@@ -315,7 +358,7 @@ namespace kamite::native::shadow
             }
             if (!g_bin)
                 return;
-            const uint32_t ctxSize = sizeof(R5900Context), count = static_cast<uint32_t>(f.fp.count);
+            const uint32_t ctxSize = sizeof(R5900Context), count = static_cast<uint32_t>(static_cast<int>(f.ranges.size()));
             char name[32] = {};
             std::snprintf(name, sizeof(name), "%s", slot.fn.name);
             put(g_bin, "GHRSHDW1", 8);
@@ -327,18 +370,18 @@ namespace kamite::native::shadow
             put(g_bin, &f.charged, 8);
             put(g_bin, &realCycles, 8);
             put(g_bin, &count, 4);
-            for (int i = 0; i < f.fp.count; ++i)
+            for (int i = 0; i < static_cast<int>(f.ranges.size()); ++i)
             {
-                put(g_bin, &f.fp.ranges[i].address, 4);
-                put(g_bin, &f.fp.ranges[i].size, 4);
+                put(g_bin, &f.ranges[i].address, 4);
+                put(g_bin, &f.ranges[i].size, 4);
             }
             put(g_bin, &f.before, ctxSize);
             put(g_bin, &f.native, ctxSize);
             put(g_bin, real, ctxSize);
             put(g_bin, f.in.data(), f.total);
             put(g_bin, f.nativeBytes.data(), f.total);
-            for (int i = 0; i < f.fp.count; ++i)
-                put(g_bin, rdram + f.offsets[i], f.fp.ranges[i].size);
+            for (int i = 0; i < static_cast<int>(f.ranges.size()); ++i)
+                put(g_bin, rdram + f.offsets[i], f.ranges[i].size);
             std::fflush(g_bin);
         }
 
@@ -371,30 +414,48 @@ namespace kamite::native::shadow
                 return;
             }
             Frame &f = g_frames[g_depth];
-            f.fp = Footprint{};
-            slot.fn.footprint(ctx, f.fp);
-            bool shadowable = !f.fp.overflow;
-            f.total = 0;
-            for (int i = 0; shadowable && i < f.fp.count; ++i)
-            {
-                shadowable = plainRam(f.fp.ranges[i].address, f.fp.ranges[i].size, f.offsets[i]);
-                f.total += f.fp.ranges[i].size;
-            }
-            if (!shadowable || f.total > kMaxBytes)
-            {
-                ++stats.skipped;
-                slot.held(rdram, ctx, runtime);
-                return;
-            }
-            f.in.resize(f.total);
-            f.nativeBytes.resize(f.total);
-            for (int i = 0, at = 0; i < f.fp.count; at += static_cast<int>(f.fp.ranges[i].size), ++i)
-                std::memcpy(f.in.data() + at, rdram + f.offsets[i], f.fp.ranges[i].size);
             std::memcpy(static_cast<void *>(&f.before), ctx, sizeof(R5900Context));
+            f.recorded = slot.fn.footprint == nullptr;
+            f.strayed = false;
+            if (!f.recorded)
+            {
+                Footprint fp;
+                slot.fn.footprint(ctx, fp);
+                bool shadowable = !fp.overflow;
+                f.total = 0;
+                f.ranges.assign(fp.ranges, fp.ranges + fp.count);
+                f.offsets.resize(f.ranges.size());
+                for (size_t i = 0; shadowable && i < f.ranges.size(); ++i)
+                {
+                    shadowable = plainRam(f.ranges[i].address, f.ranges[i].size, f.offsets[i]);
+                    f.total += f.ranges[i].size;
+                }
+                if (!shadowable || f.total > kMaxBytes)
+                {
+                    ++stats.skipped;
+                    slot.held(rdram, ctx, runtime);
+                    return;
+                }
+                f.in.resize(f.total);
+                f.nativeBytes.resize(f.total);
+                for (int i = 0, at = 0; i < static_cast<int>(f.ranges.size()); at += static_cast<int>(f.ranges[i].size), ++i)
+                    std::memcpy(f.in.data() + at, rdram + f.offsets[i], f.ranges[i].size);
+            }
+            else
+            {
+                f.firstRun = true;
+                f.realRam = rdram;
+            }
 
             if (!runNative(slot, f, 0))
             {
                 ++stats.declined;
+                slot.held(rdram, ctx, runtime);
+                return;
+            }
+            if (f.recorded && f.rec.overflow) // too many ranges / bytes to keep: not checked
+            {
+                ++stats.skipped;
                 slot.held(rdram, ctx, runtime);
                 return;
             }

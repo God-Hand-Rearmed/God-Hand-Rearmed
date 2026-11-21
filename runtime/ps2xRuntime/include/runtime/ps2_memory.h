@@ -12,6 +12,7 @@
 #include <mutex>
 
 #include "gs/ps2_gif_arbiter.h"
+#include "ps2_byte_buffer.h"
 #if defined(_MSC_VER)
 #include <intrin.h>
 #elif defined(USE_SSE2NEON)
@@ -425,7 +426,7 @@ public:
         bool fromScratchpad = false;
         uint32_t srcAddr = 0;
         uint32_t qwc = 0;
-        std::vector<uint8_t> chainData;
+        ps2x::ByteBuffer chainData;
     };
     std::vector<PendingTransfer> m_pendingGifTransfers;
     std::vector<PendingTransfer> m_pendingVif0Transfers;

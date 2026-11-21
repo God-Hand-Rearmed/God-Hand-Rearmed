@@ -2,6 +2,7 @@
 
 #include "kamite/native/native.h"
 #include "kamite/native/shadow.h"
+#include "kamite/native/chain_digest.h"
 
 #include "kamite/frame_patches.h"
 #include "kamite/function_hooks.h"
@@ -40,7 +41,7 @@ namespace kamite::native
         }
 
         // The installed natives: one trampoline per slot (a template instance per index), no lookup on the call.
-        constexpr size_t kMaxNatives = 64;
+        constexpr size_t kMaxNatives = 128;
         struct Installed
         {
             NativeFunction fn;
@@ -149,6 +150,7 @@ namespace kamite::native
     void installFromEnvironment(PS2Runtime &runtime)
     {
         libvu0::registerFunctions();
+        packet::registerFunctions();
 
 #if !defined(KAMITE_RELEASE)
         const bool replaying = replayCase() != nullptr;
@@ -157,6 +159,9 @@ namespace kamite::native
         const bool shadowUnset = !shadowValue || !*shadowValue;
         const std::string shadowList = shadowUnset ? "" : lower(shadowValue);
         const bool shadowNone = shadowList == "none" || shadowList == "0";
+        // Rung 3's chain digest (chain_digest.h): every replay, whatever is shadowed.
+        if (replaying)
+            chain_digest::begin(shadowOutput().c_str());
 #endif
         for (const NativeFunction &fn : registry())
         {
@@ -212,6 +217,7 @@ namespace kamite::native
     void flush()
     {
 #if !defined(KAMITE_RELEASE)
+        chain_digest::end();
         if (g_shadowing)
             shadow::writeSummary();
 #endif

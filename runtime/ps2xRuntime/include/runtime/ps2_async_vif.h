@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ps2x/state_io.h"
+#include "runtime/ps2_byte_buffer.h"
 
 #include <chrono>
 #include <cstdint>
@@ -20,7 +21,7 @@ namespace ps2x::asyncvif
     struct Item
     {
         ItemKind kind = ItemKind::Vif1;
-        std::vector<uint8_t> data;
+        ps2x::ByteBuffer data;
     };
 
     void setDefaultEnabled(bool enabled);
@@ -40,7 +41,7 @@ namespace ps2x::asyncvif
     // them to mtvu_trace.txt once the buffer is full. For finding which thread waits for which in a frame.
     void traceEvent(char code, uint32_t arg = 0u) noexcept;
     uint32_t currentFbrst();
-    std::vector<uint8_t> takeBuffer();
+    ps2x::ByteBuffer takeBuffer();
     void enqueue(PS2Memory &memory, std::vector<Item> &&items);
     void sync(PS2Memory &memory);
     void stop(PS2Memory &memory);

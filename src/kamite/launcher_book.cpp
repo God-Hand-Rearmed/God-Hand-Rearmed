@@ -1,9 +1,11 @@
 #include "kamite/launcher_book.h"
 
 #include "imgui_impl_raylib.h"
+#include "imgui_internal.h"
 #include "rlgl.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstring>
 
@@ -329,12 +331,27 @@ namespace kamite::launcher::book
     void beginFrame(const Space &space)
     {
         ImGui_ImplRaylib_NewFrame();
+        ImGuiContext &g = *ImGui::GetCurrentContext();
+        const int first = g.InputEventsQueue.Size; // events trickled over from the last frame are virtual already
         ImGui_ImplRaylib_ProcessEvents();
-        // the mouse in the book's own (virtual) pixels; the last position event of the frame wins
-        if (IsWindowFocused() && IsCursorOnScreen())
+        // The mouse in the book's own (virtual) pixels: rlImGui's position events (screen pixels) mapped in place. A
+        // second, virtual position event after them was wrong on a click: ImGui trickles a position event that follows
+        // a button change to the next frame, so the press and the release were taken at the screen position, up to a
+        // row off where the book is tilted (K, Nov 21: a click near a row's top took the row above).
+        const bool mouse = IsWindowFocused() && IsCursorOnScreen();
+        for (int i = first; i < g.InputEventsQueue.Size; ++i)
         {
-            const Vector2 v = space.unmap(GetMousePosition());
-            ImGui::GetIO().AddMousePosEvent(v.x, v.y);
+            ImGuiInputEvent &e = g.InputEventsQueue[i];
+            if (e.Type != ImGuiInputEventType_MousePos)
+                continue;
+            if (!mouse)
+            {
+                e.MousePos.PosX = e.MousePos.PosY = -FLT_MAX; // ImGui's "no mouse" (rlImGui sends FLT_MIN)
+                continue;
+            }
+            const Vector2 v = space.unmap(Vector2{e.MousePos.PosX, e.MousePos.PosY});
+            e.MousePos.PosX = v.x;
+            e.MousePos.PosY = v.y;
         }
         ImGui::NewFrame();
     }

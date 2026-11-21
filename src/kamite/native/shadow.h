@@ -7,7 +7,9 @@
 // reaches guest RAM, the live context or the scheduler. A call the original ended at a checkpoint (a resume pc) is
 // compared against the native stopped at each of its checkpoints in turn. A mismatch's whole input and both results
 // go to <output>.native.bin (16 per function per run); <output>.native.txt has the counts and the first mismatches'
-// differing fields, rewritten every few seconds and at exit.
+// differing fields, rewritten every few seconds and at exit. A native with a recorded footprint (footprint = nullptr,
+// rung 3) runs once on the scratch with each first touch filled from the real RAM: what it touched is the footprint
+// (up to 256 ranges, its maxBytes or 64 KB; more is skipped), and an early exit's rerun starts from those bytes.
 
 #include "kamite/native/native_function.h"
 

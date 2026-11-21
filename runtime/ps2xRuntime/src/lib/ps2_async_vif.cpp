@@ -94,7 +94,7 @@ namespace ps2x::asyncvif
             std::condition_variable workCv;
             std::condition_variable idleCv;
             std::deque<Job> jobs;
-            std::vector<std::vector<uint8_t>> spare;
+            std::vector<ps2x::ByteBuffer> spare;
             bool busy = false;
             bool stop = false;
             std::thread thread;
@@ -422,7 +422,7 @@ namespace ps2x::asyncvif
         return s_worker.load()->memory == &memory;
     }
 
-    std::vector<uint8_t> takeBuffer()
+    ps2x::ByteBuffer takeBuffer()
     {
         Worker *worker = s_worker;
         if (!worker)
@@ -430,7 +430,7 @@ namespace ps2x::asyncvif
         std::lock_guard<std::mutex> lock(worker->mutex);
         if (worker->spare.empty())
             return {};
-        std::vector<uint8_t> buffer = std::move(worker->spare.back());
+        ps2x::ByteBuffer buffer = std::move(worker->spare.back());
         worker->spare.pop_back();
         return buffer;
     }

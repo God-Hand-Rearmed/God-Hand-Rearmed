@@ -5,8 +5,9 @@ rem replay (a new build = every case again: the regression check), otherwise ski
 rem cases\summary.txt. One case at a time: the game cannot run twice at once. The game runs in this window (no
 rem window of its own to steal the focus); a replay that ends with an error is tried once more and, if it fails again,
 rem the case is not stamped, so the next double-click replays it.
-rem Each run also appends the SHA-256 of its CSV / RAM / snapshot files to cases\fingerprints.txt (one line per case
-rem and run): identical lines across builds = the game ran exactly the same. RUNS replays every case that many times
+rem Each run also appends the SHA-256 of its CSV / RAM / snapshot files (and, in dev builds, the DMA chains' digest
+rem <case>.<rate>.chain.bin: what the game sent to VU1 / the GS, claude/native-next.md rung 3) to cases\fingerprints.txt
+rem (one line per case and run): identical lines across builds = the game ran exactly the same. RUNS replays every case that many times
 rem per build (1 normally; 2 to check memory / determinism work: Replay-Cases-Twice.cmd). With 2, the whole-RAM snapshots of the previous build
 rem (.snap.prev.bin) are compared with this build's, leaving out the words that differ between this build's own two
 rem runs (tools\fps60\snap_compare.py; its verdicts go to fingerprints.txt too). Run 1's CSV stays as <case>.<rate>.csv.run1,
@@ -26,11 +27,13 @@ for %%f in (cases\*.case) do (
         set "FAILED="
         for %%r in (30 60) do (
             if exist "%%f.%%r.snap.bin" move /y "%%f.%%r.snap.bin" "%%f.%%r.snap.prev.bin" >nul
-            del /q "%%f.%%r.snap.run1.bin" "%%f.%%r.snapdiff.txt" "%%f.%%r.csv.run1" 2>nul
+            if exist "%%f.%%r.chain.bin" move /y "%%f.%%r.chain.bin" "%%f.%%r.chain.prev.bin" >nul
+            del /q "%%f.%%r.snap.run1.bin" "%%f.%%r.snapdiff.txt" "%%f.%%r.csv.run1" "%%f.%%r.chain.run1.bin" 2>nul
         )
         for /l %%n in (1,1,%RUNS%) do (
             del /q "%%f.30.csv" "%%f.60.csv" "%%f.30.shapes.csv" "%%f.60.shapes.csv" "%%f.report.txt" 2>nul
             del /q "%%f.30.ram.bin" "%%f.60.ram.bin" "%%f.30.snap.bin" "%%f.60.snap.bin" "%%f.30.rolls.csv" "%%f.60.rolls.csv" 2>nul
+            del /q "%%f.30.chain.bin" "%%f.60.chain.bin" 2>nul
             for %%r in (0 1) do (
                 if %%r==0 (set "RATE=30") else (set "RATE=60")
                 echo Replaying %%~nxf at !RATE! FPS ^(run %%n of %RUNS%^)...
@@ -42,7 +45,7 @@ for %%f in (cases\*.case) do (
                 )
             )
             set "LINE=!BUILD!;run %%n;%%~nxf"
-            for %%r in (30 60) do for %%k in (csv ram.bin snap.bin) do (
+            for %%r in (30 60) do for %%k in (csv ram.bin snap.bin chain.bin) do (
                 set "H=missing"
                 if exist "%%f.%%r.%%k" (
                     set "H="
@@ -54,6 +57,7 @@ for %%f in (cases\*.case) do (
             >>cases\fingerprints.txt echo !LINE!
             if %%n==1 if %RUNS% GEQ 2 for %%r in (30 60) do (
                 if exist "%%f.%%r.snap.bin" move /y "%%f.%%r.snap.bin" "%%f.%%r.snap.run1.bin" >nul
+                if exist "%%f.%%r.chain.bin" move /y "%%f.%%r.chain.bin" "%%f.%%r.chain.run1.bin" >nul
                 if exist "%%f.%%r.csv" copy /y "%%f.%%r.csv" "%%f.%%r.csv.run1" >nul
             )
         )

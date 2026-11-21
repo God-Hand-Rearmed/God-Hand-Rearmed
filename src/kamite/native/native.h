@@ -24,4 +24,8 @@ namespace kamite::native
     {
         void registerFunctions();
     }
+    namespace packet
+    {
+        void registerFunctions();
+    }
 }

@@ -27,6 +27,10 @@ namespace kamite::test_mode
     [[nodiscard]] bool failed();
     // A case is being recorded (any thread; for menus).
     [[nodiscard]] bool recording();
+    // The playing case replay's test frame (0 = the state just loaded), from the frame's start until the next; kReplayIdle
+    // before the state loads and after the run (any thread; the native road's chain digest, native/chain_digest.cpp).
+    constexpr uint32_t kReplayIdle = 0xFFFFFFFFu;
+    [[nodiscard]] uint32_t replayFrame();
 
     // The Modern controls' host side (modern_controls.cpp updateCamera, game thread, once a game frame): the free
     // camera and the turn it gives Gene (his yaw +0x104) are not in a save state, so a case keeps them per frame (its

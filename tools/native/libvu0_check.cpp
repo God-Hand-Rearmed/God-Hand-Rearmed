@@ -97,6 +97,98 @@ int main(int argc, char **argv)
         std::fclose(r);
     }
     bad += rotBad;
+
+    // Rung 3's batch 1 (<vectors>.ops, written by shadow_test from the recompiled functions): OuterProduct, Normalize,
+    // capVu0Length, InversMatrix, ScaleVector, MulVector, TransMatrix; records the natives would decline are skipped.
+    int opsCount = 0, opsBad = 0;
+    if (std::FILE *o = std::fopen((std::string(argv[1]) + ".ops").c_str(), "rb"))
+    {
+        unsigned char rec[256];
+        const Vec4 vf0 = bitsOf(0u, 0u, 0u, 0x3F800000u);
+        while (std::fread(rec, 1, sizeof(rec), o) == sizeof(rec))
+        {
+            uint32_t kind;
+            uint16_t status;
+            float s;
+            std::memcpy(&kind, rec, 4), std::memcpy(&s, rec + 132, 4), std::memcpy(&status, rec + 136, 2);
+            const Vec4 a = load(rec + 4), b = load(rec + 68), vf5 = load(rec + 84), vf6 = load(rec + 100), acc = load(rec + 116);
+            unsigned char got[64], want[64];
+            size_t size = 0;
+            auto put = [&](const void *mine, const void *theirs, size_t n) {
+                std::memcpy(got + size, mine, n), std::memcpy(want + size, theirs, n), size += n;
+            };
+            unsigned char t[16], u[16];
+            if (kind == 1)
+            {
+                if (!libvu0::finiteXyz(a) || !libvu0::finiteXyz(b) || libvu0::exponent255(laneBits<3>(vf6)))
+                    continue;
+                const libvu0::OuterResult r = libvu0::outerProduct(a, b);
+                store(t, blend<8>(r.r, sub(vf6, vf6))), put(t, rec + 140, 16);
+                store(u, blend<7>(acc, r.acc)), put(u, rec + 220, 16);
+            }
+            else if (kind == 2)
+            {
+                if (!libvu0::finiteXyz(a) || !libvu0::ordinaryLength(libvu0::squaresSummed(a, a)))
+                    continue;
+                const libvu0::NormalizeResult n = libvu0::normalize(vf0, a, vf5, status);
+                store(t, n.vf6), put(t, rec + 140, 16);
+                store(u, n.vf5), put(u, rec + 242, 14);
+                put(&n.q, rec + 236, 4), put(&n.status, rec + 240, 2);
+            }
+            else if (kind == 3)
+            {
+                if (!libvu0::finiteXyz(a))
+                    continue;
+                const libvu0::LengthResult l = libvu0::length(vf0, a, status);
+                store(t, l.vf4), put(t, rec + 204, 16);
+                put(&l.q, rec + 236, 4), put(&l.status, rec + 240, 2);
+            }
+            else if (kind == 4)
+            {
+                libvu0::Words r[4];
+                bool ok = true;
+                for (int k = 0; k < 4; ++k)
+                    std::memcpy(r[k].w, rec + 4 + 16 * k, 16), ok = ok && libvu0::finiteXyz(load(r[k].w));
+                if (!ok)
+                    continue;
+                const Vec4 v5 = load(r[3].w), v9 = blend<7>(v5, sub(v5, v5));
+                store(r[3].w, v9);
+                const libvu0::Words t4 = libvu0::pextlw(r[1], r[0]), t5 = libvu0::pextuw(r[1], r[0]);
+                const libvu0::Words t6 = libvu0::pextlw(r[3], r[2]), t7 = libvu0::pextuw(r[3], r[2]);
+                const libvu0::Words c0 = libvu0::pcpyld(t6, t4), c1 = libvu0::pcpyud(t4, t6), c2 = libvu0::pcpyld(t7, t5);
+                const libvu0::InversResult x = libvu0::inversRows(load(c0.w), load(c1.w), load(c2.w), v5, v9, acc);
+                unsigned char m[64];
+                std::memcpy(m, c0.w, 16), std::memcpy(m + 16, c1.w, 16), std::memcpy(m + 32, c2.w, 16), store(m + 48, x.vf4);
+                put(m, rec + 140, 48);
+                store(t, x.vf4), put(t, rec + 188, 16);
+            }
+            else if (kind == 5)
+            {
+                if (!libvu0::finiteInputs(a) || (floatBits(s) & 0x7FFFFFFFu) >= 0x5E800000u)
+                    continue;
+                store(t, mul(a, splat(s))), put(t, rec + 140, 16);
+            }
+            else if (kind == 6)
+            {
+                if (!libvu0::finiteInputs(a) || !libvu0::finiteInputs(b))
+                    continue;
+                store(t, mul(a, b)), put(t, rec + 140, 16);
+            }
+            else
+            {
+                const Vec4 row3 = load(rec + 52);
+                if (!libvu0::finiteXyz(row3) || !libvu0::finiteXyz(b))
+                    continue;
+                put(rec + 4, rec + 140, 48);
+                store(t, blend<7>(row3, add(row3, b))), put(t, rec + 188, 16);
+            }
+            ++opsCount;
+            if (std::memcmp(got, want, size) != 0 && ++opsBad <= 5)
+                std::printf("ops vector %d (kind %u) differs\n", opsCount, kind);
+        }
+        std::fclose(o);
+    }
+    bad += opsBad;
 #if defined(KAMITE_VU_SSE)
     const char *path = "SSE";
 #elif defined(KAMITE_VU_NEON)
@@ -104,6 +196,7 @@ int main(int argc, char **argv)
 #else
     const char *path = "plain C++";
 #endif
-    std::printf("%s: %d vectors, %d differ; RotMatrix %d vectors, %d differ\n", path, count, bad - rotBad, rotCount, rotBad);
+    std::printf("%s: %d vectors, %d differ; RotMatrix %d vectors, %d differ; batch 1 maths %d vectors, %d differ\n", path,
+                count, bad - rotBad - opsBad, rotCount, rotBad, opsCount, opsBad);
     return bad ? 1 : 0;
 }
