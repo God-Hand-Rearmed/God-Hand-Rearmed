@@ -149,7 +149,9 @@ namespace kamite::tutorial_text
         // (button_prompts updateSticks). Lines up to ~36 letters: without the picture the centred block may be wider.
         // Modern: Hold (K, Nov 19; the font has no degree sign, so "180-degree"): "Hold [L1] to brawl, double-tap / it for a
         // quick 180-degree turn.", the Auto block "AUTO: Brawling starts on any hit / and stops when no enemy is near."
-        std::vector<uint16_t> modernText(bool autoOn, bool hold)
+        // Hold to Cam (K, Nov 20; Claude's draft wording, K edits): "Hold [L1] for freecam, tap / it for a quick
+        // 180-degree turn." (no Auto there).
+        std::vector<uint16_t> modernText(bool autoOn, bool hold, bool holdCam)
         {
             std::vector<uint16_t> out{kScale, kTextScale};
             iconLine(out, kStickIcon, "Use the right analog stick to evade");
@@ -160,7 +162,7 @@ namespace kamite::tutorial_text
                 indent(out);
                 add(out, "Hold");
                 out.insert(out.end(), {kScale, kIconScale, kHoldIcon, kScale, kTextScale});
-                add(out, "to brawl, double-tap\n");
+                add(out, holdCam ? "for freecam, tap\n" : "to brawl, double-tap\n");
                 indentedLine(out, "it for a quick 180-degree turn.", !autoOn);
                 if (autoOn)
                 {
@@ -453,7 +455,8 @@ namespace kamite::tutorial_text
                            "Tutorial 1 for the keyboard (the Dodge Modifier)");
             else
                 pointEntry(header, 0, kEntry0Offset, kText, modern,
-                           modern ? modernText(modern::autoEnabled(), modern::holdEnabled()) : std::vector<uint16_t>{},
+                           modern ? modernText(modern::autoEnabled(), modern::holdEnabled(), modern::holdCamEnabled())
+                                  : std::vector<uint16_t>{},
                            "Tutorial 1 explains Modern's switch");
             const menu_buttons::Style style = menu_buttons::style();
             if (const int leftClick = keyboardLeftClickIcon(); leftClick != -2)

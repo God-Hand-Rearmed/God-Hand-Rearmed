@@ -14,7 +14,7 @@
 // environment (vu_vec.h); the back-face signs and the flags the run ends with are taken from the exact results, as the
 // runtime's VU does. After the batch the VU state is left exactly as the microprogram leaves it.
 #include "kamite/render/vu1_programs.h"
-#include "kamite/render/vu_vec.h"
+#include "kamite/native/vu_vec.h"
 
 #include "runtime/ps2_vu1.h"
 #include "runtime/ps2_vu1_native.h"

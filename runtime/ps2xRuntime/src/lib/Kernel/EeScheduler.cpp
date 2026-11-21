@@ -1,4 +1,6 @@
 #include "runtime/ee_scheduler.h"
+#include "runtime/vsync_lock.h"
+#include "runtime/audio_stretch_control.h"
 
 #include "ps2_log.h"
 #include "ps2_runtime_macros.h"
@@ -58,6 +60,9 @@ namespace
     std::atomic<std::mutex *> g_pacingMutex{nullptr};
     std::atomic<std::condition_variable *> g_pacingCv{nullptr};
 
+    // Emulated time lost to late vblanks (re-anchors under 50 ms), read by ps2_audio.cpp (ps2xEmulatedTimeLostNs).
+    std::atomic<int64_t> g_emulatedTimeLostNs{0};
+
     // Host time of the deadline processDueDeadlines took off the checkpoints for an interrupt handler (zero: none).
     std::chrono::steady_clock::time_point g_deadlinesDeferredUntil{};
 
@@ -84,6 +89,26 @@ namespace
     // present 1-3 ms after it raced that pickup (~5 images/s held twice and ~5 never shown); at 6-8 ms each image is
     // shown exactly once (tools/present_stats.py).
     // PS2X_VSYNC_LOCK_STATS=1 logs the phase error every ~5 s.
+    // A lock that keeps pulling the same way never finds the display's phase: the display's refresh follows the game's
+    // own frames (a variable-refresh display, G-Sync / FreeSync, with VSync on: each present moves the next vblank with
+    // it) or it is too far from 59.94 Hz to follow. Every field's step then moved the game's clock, up to 1.5% (0.25 ms a
+    // field), past the 0.5% the sound's rate control absorbs (ps2_audio.cpp): the sound queue ran dry or overflowed about
+    // every 15 s, a 43-128 ms skip in the music (issue #1, a 120 Hz display on an RTX 4070). A lock in step keeps the
+    // phase error near 0 (the steady step is error / 8: a 60.000 Hz display's 0.1% is 0.13 ms of error); a re-anchor
+    // after a hitch is pulled back within ~1 s. So a window of kReleaseFields judged fields (2 s; the first is
+    // convergence) with under 10% of them within kReleaseErrorNs (0.53 ms = a steady 0.4% correction) releases the lock
+    // until the display is measured afresh (another monitor: host_vsync.cpp starts over); the game then runs at 59.94 Hz,
+    // which a VRR display follows. Released after ~4 s: the sound queue's margin (~85 ms) outlasts that much drift. The
+    // kSettleFields after a re-anchor (a vblank later than the catch-up allows: a hitch, a PC below full speed) are not
+    // judged: the lock is still pulling the phase back then.
+    // The release alone left skips (test/vsync_lock_test.cpp): for up to 4 s before it lets go the clock moved 1.5%,
+    // more than a queue at its priming level (~42 ms) holds; delays that kept the error inside the in-step margin never
+    // released and ran 0.3-0.5% off; a stall over 100 ms made the measurement stale and the lock start over; hitches
+    // more often than every ~0.7 s kept every window unjudged. So the lock (ps2x::VsyncLock, Mode::Checked:
+    // vsync_lock.h) also checks whether the display's phase answers the game's clock: it lets go after ~1.4 s of its
+    // largest steps that the phase did not follow, or when the display's drift against the game (measured apart from
+    // the lock's steps and the re-anchors) stays over 0.2% (holding the game slower) or 0.5% (faster) for ~5 s, and it
+    // tries again every 2 minutes. While locked its steps are 3d97a84's.
     std::chrono::steady_clock::time_point lockToHostVsync(std::chrono::steady_clock::time_point target) noexcept
     {
         static int s_lock = -1;
@@ -102,56 +127,41 @@ namespace
             return target;
         std::chrono::steady_clock::time_point lastVblank;
         std::chrono::nanoseconds period{};
-        if (!ps2xHostVsync(lastVblank, period))
-            return target;
-        constexpr int64_t kEmulatedFieldNs = 16683400; // NTSC field (1001/60000 s)
-        const int64_t periodNs = period.count();
-        // Refreshes per emulated field: 1 on a 60 Hz display, 2/3/4 at 120/180/240 Hz (each image then stays exactly
-        // that many refreshes). 0 = no whole multiple within 2% (75, 144, 165 Hz...): those cannot show 60 images a
-        // second evenly without VRR, so the clock is left alone.
-        int64_t multiple = 0;
-        for (int64_t n = 1; n <= 8 && multiple == 0; ++n)
-            if (periodNs * n >= kEmulatedFieldNs * 98 / 100 && periodNs * n <= kEmulatedFieldNs * 102 / 100)
-                multiple = n;
-        static int64_t s_reportedMultiple = -1;
-        if (multiple != s_reportedMultiple)
+        const bool measured = ps2xHostVsync(lastVblank, period);
+        // Where the emulated vblank (and so the present) sits in the host refresh. PS2X_VSYNC_PHASE_MS=<ms after the
+        // host vblank> at 60 Hz (PROGRESS §96); at 120/180/240 Hz the same fraction of the shorter refresh, so the
+        // present stays clear of the compositor's pickup after each vblank (§97).
+        static ps2x::VsyncLock s_vsyncLock([]
         {
-            s_reportedMultiple = multiple;
-            if (multiple == 0)
+            const char *value = std::getenv("PS2X_VSYNC_PHASE_MS");
+            return (value && *value ? std::atof(value) : 7.0) * 1e6;
+        }());
+        const auto ns = [](std::chrono::steady_clock::time_point t)
+        { return std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count(); };
+        ps2x::VsyncLock::Report report;
+        const int64_t periodNs = period.count();
+        const int64_t deadlineNs = s_vsyncLock.next(ns(target), measured, measured ? ns(lastVblank) : 0, periodNs, report);
+        if (report.displayChanged)
+        {
+            if (report.multiple == 0)
                 std::fprintf(stderr, "[vsync-lock] host display %.3f Hz: not a multiple of 59.94 Hz, not locked\n",
                              1e9 / static_cast<double>(periodNs));
             else
                 std::fprintf(stderr, "[vsync-lock] host display %.3f Hz: emulated vblank locked to it, %lld refresh(es) per field (PS2X_VSYNC_LOCK=0 turns this off)\n",
-                             1e9 / static_cast<double>(periodNs), static_cast<long long>(multiple));
+                             1e9 / static_cast<double>(periodNs), static_cast<long long>(report.multiple));
         }
-        if (multiple == 0)
-            return target;
-        // Where the emulated vblank (and so the present) sits in the host refresh. PS2X_VSYNC_PHASE_MS=<ms after the
-        // host vblank> at 60 Hz (PROGRESS §96); at 120/180/240 Hz the same fraction of the shorter refresh, so the
-        // present stays clear of the compositor's pickup after each vblank (§97).
-        static const double kTargetPhase60Ns = []
-        {
-            const char *value = std::getenv("PS2X_VSYNC_PHASE_MS");
-            return (value && *value ? std::atof(value) : 7.0) * 1e6;
-        }();
-        const int64_t kTargetPhaseNs = static_cast<int64_t>(kTargetPhase60Ns * static_cast<double>(periodNs) / static_cast<double>(kEmulatedFieldNs));
-        constexpr int64_t kMaxStepNs = 250000;
-        int64_t phase = std::chrono::duration_cast<std::chrono::nanoseconds>(target - lastVblank).count() % periodNs;
-        if (phase < 0)
-            phase += periodNs;
-        int64_t error = phase - kTargetPhaseNs;
-        if (error > periodNs / 2)
-            error -= periodNs;
-        else if (error < -periodNs / 2)
-            error += periodNs;
-        const int64_t step = std::clamp<int64_t>(-error / 8, -kMaxStepNs, kMaxStepNs);
-        if (s_stats)
+        if (report.released)
+            std::fprintf(stderr, "[vsync-lock] released (%s): it kept moving the game's clock %s by %.2f%% (the display %.3f Hz "
+                                 "follows the game's frames, VRR / G-Sync with VSync on, or is too far from 59.94 Hz); free-running "
+                                 "at 59.94 Hz\n",
+                         report.why, report.releasedLater ? "later" : "earlier", report.releasedPercent, 1e9 / static_cast<double>(periodNs));
+        if (s_stats && report.locked)
         {
             static uint64_t fields = 0u;
             static double sumAbs = 0.0, worst = 0.0;
             ++fields;
-            sumAbs += std::abs(static_cast<double>(error)) / 1e6;
-            worst = std::max(worst, std::abs(static_cast<double>(error)) / 1e6);
+            sumAbs += std::abs(static_cast<double>(report.errorNs)) / 1e6;
+            worst = std::max(worst, std::abs(static_cast<double>(report.errorNs)) / 1e6);
             if (fields % 300u == 0u)
             {
                 std::fprintf(stderr, "[vsync-lock] host period %.4f ms (%.3f Hz), phase error mean %.3f ms, worst %.3f ms\n",
@@ -160,7 +170,7 @@ namespace
                 worst = 0.0;
             }
         }
-        return target + std::chrono::nanoseconds(step);
+        return target + std::chrono::nanoseconds(deadlineNs - ns(target));
     }
 
     bool gsInterruptUnseen() noexcept
@@ -2885,9 +2895,21 @@ void EeScheduler::processDueDeadlines()
                 scheduleEvent(scheduled.deadlineCycle + kVBlankDurationCycles,
                               hostStart + kVBlankDuration * slow,
                               EeEvent{EeEventType::VBlankEnd, 0, m_vsyncTick + 1u});
-                scheduleEvent(scheduled.deadlineCycle + vblankPeriodCycles(),
-                              slow > 1u ? hostStart + vblankPeriod() * slow : lockToHostVsync(hostStart + vblankPeriod()),
-                              EeEvent{EeEventType::VBlankStart, 0, 0});
+                const auto nextDeadline = slow > 1u ? hostStart + vblankPeriod() * slow
+                                                    : lockToHostVsync(hostStart + vblankPeriod());
+                // The emulated time this field loses against real time (and that much SPU2 sound), net: the re-anchor's
+                // drop plus the lock's own move of the next deadline (negative when it pulls lost time back). The audio's
+                // time-stretch switches on from it while the game runs below full speed (audio_stretch_control.h, issue
+                // #5). A single drop over 50 ms is a stall, not a slowdown, and is left out. Slow motion is not a loss.
+                if (slow <= 1u)
+                {
+                    const auto ns = [](std::chrono::steady_clock::duration d)
+                    { return std::chrono::duration_cast<std::chrono::nanoseconds>(d).count(); };
+                    const int64_t droppedNs = ns(hostStart - scheduled.hostDeadline);
+                    const int64_t lockNs = ns(nextDeadline - (hostStart + vblankPeriod()));
+                    g_emulatedTimeLostNs.fetch_add((droppedNs <= 50000000 ? droppedNs : 0) + lockNs, std::memory_order_relaxed);
+                }
+                scheduleEvent(scheduled.deadlineCycle + vblankPeriodCycles(), nextDeadline, EeEvent{EeEventType::VBlankStart, 0, 0});
                 m_pacingRefCycle = scheduled.deadlineCycle;
                 m_pacingRefTime = hostStart;
             }
@@ -3202,4 +3224,9 @@ void EeScheduler::publishIdleDebugContext()
     {
         publishDebugContext(selected->activeContext());
     }
+}
+
+int64_t ps2xEmulatedTimeLostNs() noexcept
+{
+    return g_emulatedTimeLostNs.load(std::memory_order_relaxed);
 }

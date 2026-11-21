@@ -18,6 +18,14 @@ namespace ps2_host_input
     };
 
     void setRightStickInvertDefault(uint32_t axes);
+    // The sticks' deadzone for every controller, in percent of the stick's reach (0 = none; stick drift): stick 0 the
+    // left, 1 the right. Until set, PS2X_LEFT_STICK_DEADZONE / PS2X_RIGHT_STICK_DEADZONE (GHR.ini [Game]
+    // LeftStickDeadzone / RightStickDeadzone). A controls.ini [PadN] Deadzone above it wins. Any thread.
+    void setStickDeadzone(int stick, int percent);
+    // The controller's sticks swapped (left-handed play; K, Nov 21): the right stick does the left's job and the left
+    // the right's, in play and menus. Keys and the mouse keep theirs; the deadzones stay with the stick they name; the
+    // stick presses are the Button Mapping page's. Until set, PS2X_SWAP_STICKS (GHR.ini [Game] SwapSticks). Any thread.
+    void setSwapSticks(bool on);
     void setMouseCameraEnabled(bool enabled);
     void setMouseStickEnabled(bool enabled);
     [[nodiscard]] MouseCameraInput consumeMouseCameraInput();

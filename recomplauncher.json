@@ -170,6 +170,7 @@
             "Game/SwayBar": "0",
             "Game/Fps60": "1",
             "Game/ControlStyle": "hold",
+            "Game/HoldMode": "brawl",
             "Game/ModernAuto": "1",
             "Game/KbmControlStyle": "modern",
             "Game/KbmModernAuto": "0",
@@ -204,6 +205,7 @@
             "Game/SwayBar": "1",
             "Game/Fps60": "1",
             "Game/ControlStyle": "hold",
+            "Game/HoldMode": "brawl",
             "Game/ModernAuto": "1",
             "Game/KbmControlStyle": "modern",
             "Game/KbmModernAuto": "0",
@@ -239,6 +241,7 @@
             "Game/SwayBar": "1",
             "Game/Fps60": "1",
             "Game/ControlStyle": "hold",
+            "Game/HoldMode": "brawl",
             "Game/ModernAuto": "1",
             "Game/KbmControlStyle": "modern",
             "Game/KbmModernAuto": "0",
@@ -545,6 +548,29 @@
       }
     },
     {
+      "id": "CameraInvertY",
+      "label": "Invert Camera Y-Axis",
+      "help": "Freecam: push up or move the mouse up to look down. Brawling dodges stay as they are.",
+      "group": "Camera",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/CameraInvertY": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/CameraInvertY": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/CameraInvertY": "0"
+      }
+    },
+    {
       "id": "Vibration",
       "label": "Vibration",
       "help": "Controller rumble. Girls know what it's for.",
@@ -565,6 +591,61 @@
       ],
       "defaults": {
         "Game/Vibration": "1"
+      }
+    },
+    {
+      "id": "LeftStickDeadzone",
+      "label": "Left Stick Deadzone",
+      "help": "How far the left stick must move before it counts. Raise it if Gene walks on his own.",
+      "group": "Controller",
+      "slider": {
+        "key": "Game/LeftStickDeadzone",
+        "min": 0,
+        "max": 50,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Game/LeftStickDeadzone": "0"
+      }
+    },
+    {
+      "id": "RightStickDeadzone",
+      "label": "Right Stick Deadzone",
+      "help": "How far the right stick must move before it counts. Raise it if the camera drifts or Gene dodges on his own.",
+      "group": "Controller",
+      "slider": {
+        "key": "Game/RightStickDeadzone",
+        "min": 0,
+        "max": 50,
+        "step": 5,
+        "format": "%d"
+      },
+      "defaults": {
+        "Game/RightStickDeadzone": "0"
+      }
+    },
+    {
+      "id": "SwapSticks",
+      "label": "Swap Sticks",
+      "help": "For lefties: the right stick moves Gene, the left one dodges and aims. Stick presses: swap them in Button Mapping.",
+      "group": "Controller",
+      "choices": [
+        {
+          "label": "Off",
+          "set": {
+            "Game/SwapSticks": "0"
+          }
+        },
+        {
+          "label": "On",
+          "set": {
+            "Game/SwapSticks": "1"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/SwapSticks": "0"
       }
     },
     {
@@ -1218,6 +1299,32 @@
       },
       "when": {
         "Game/ControlStyle": "modern"
+      }
+    },
+    {
+      "id": "HoldMode",
+      "label": "Modern: Hold Mode",
+      "help": "Hold to Brawl: hold L1 to brawl, double-tap it to turn. Hold to Cam: hold L1 for freecam, tap it to turn.",
+      "group": "Move & Groove",
+      "choices": [
+        {
+          "label": "Hold to Brawl",
+          "set": {
+            "Game/HoldMode": "brawl"
+          }
+        },
+        {
+          "label": "Hold to Cam",
+          "set": {
+            "Game/HoldMode": "cam"
+          }
+        }
+      ],
+      "defaults": {
+        "Game/HoldMode": "brawl"
+      },
+      "when": {
+        "Game/ControlStyle": "hold"
       }
     },
     {

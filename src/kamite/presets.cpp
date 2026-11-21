@@ -25,7 +25,7 @@ namespace kamite::presets
         {"SLEAZY MODE", "Sleazy Mode", "...is Now Selectable! For the girl who just wants to have fun.",
          "Adds: Cunt Punter, Tension - Off the Cuff, and Wild Curry Funk.", 15},
     };
-    const Text kCustomText = {"CUSTOM", "Custom", "Your own mix.", "Pick a preset to replace it.", 1};
+    const Text kCustomText = {"CUSTOM", "Custom", "You know what you like.", "Resets with a preset.", 1};
 
     const Text &text(int preset) { return preset >= 0 && preset < kCount ? kText[preset] : kCustomText; }
 
@@ -45,6 +45,7 @@ namespace kamite::presets
             {"ControlStyle", {"classic", "hold", "hold", "hold"}}, // Remastered up: Modern: Hold (K, Nov 19; Toggle optional)
             {"ModernAuto", {"1", "1", "1", "1"}},     // Toggle's Auto: no preset uses Toggle, so never counted
             {"ModernAutoHold", {"1", "1", "1", "1"}}, // the same [Game] ModernAuto key under Hold
+            {"HoldMode", {"brawl", "brawl", "brawl", "brawl"}}, // Hold with Auto = Hold to Brawl (K, Nov 20)
             {"KbmControlStyle", {"classic", "modern", "modern", "modern"}},
             {"KbmModernAuto", {"0", "0", "0", "0"}},
             {"AspectRatio", {"4:3", "auto", "auto", "auto"}},

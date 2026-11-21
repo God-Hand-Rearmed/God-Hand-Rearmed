@@ -24,6 +24,11 @@ namespace ps2_host_display
     // applies what changed. On Windows a launcher's borderless window is replaced by a new one instead (its OpenGL
     // frames would hide the GS child window). Main thread.
     void openHostWindow(const char *title);
+    // Main thread, the window made: puts it in a Display Mode now (as requestMode), or switches borderless fullscreen
+    // on / off as F11 does (back to maximized if it was) and returns the mode it is now in. The game loop runs them for
+    // requestMode and F11; the launcher calls them itself (its Display Mode row and F11, K, Nov 21).
+    void applyMode(int mode);
+    int toggleFullscreen();
     // Real vsync for the window (PS2X_VSYNC, default on); off = the software 60 FPS limiter.
     bool vsyncEnabled();
     // The FPS Counter (the frame rate / game speed line at the bottom left; Options > INTERFACE > Overlays). Any

@@ -113,7 +113,7 @@ namespace kamite::test_mode
                                                  "KAMITE_SPRINT_TRAVERSAL", "KAMITE_CHARACTER", "KAMITE_LIFT_CHAIRS",
                                                  "KAMITE_TENSION_PLACABLE", "KAMITE_OFF_THE_CUFF",
                                                  "KAMITE_BALL_BUSTER_WOMEN", "KAMITE_ROULETTE_CYCLE",
-                                                 "KAMITE_BUCK_BREAKER", "KAMITE_CASE_DEVICE"};
+                                                 "KAMITE_BUCK_BREAKER", "KAMITE_CASE_DEVICE", "KAMITE_HOLD_MODE"};
         // The game's own value of the gameplay settings above when nothing sets them (GHR.ini's defaults). A case
         // without one (the recorder's GHR.ini had no such line, or the option is newer than the case) ran with this
         // value, so its replay does too instead of taking the replaying machine's (Nov 6: T1's Elvis case replayed
@@ -131,7 +131,9 @@ namespace kamite::test_mode
             {"KAMITE_BUCK_BREAKER", "0"},
             // The device in effect (menus and HUD hints follow it; K, Nov 16). Older cases replayed as keyboard & mouse
             // whenever no controller was awake at the start, which is what their fingerprints hold (Nov 19).
-            {"KAMITE_CASE_DEVICE", "keys"}};
+            {"KAMITE_CASE_DEVICE", "keys"},
+            // Hold's mode (K, Nov 20): cases before it ran Hold to Brawl.
+            {"KAMITE_HOLD_MODE", "brawl"}};
         const char *caseDefault(const std::string &name)
         {
             for (const CaseDefault &d : kCaseDefaults)
@@ -1443,7 +1445,7 @@ namespace kamite::test_mode
                 if (std::strcmp(name, "KAMITE_ASPECT") == 0)
                 {
                     char number[32];
-                    std::snprintf(number, sizeof(number), "%.6f", aspectRatio());
+                    std::snprintf(number, sizeof(number), "%.9g", static_cast<double>(aspectRatio())); // exact float
                     resolved = number;
                     value = resolved.c_str();
                 }
@@ -1454,6 +1456,8 @@ namespace kamite::test_mode
                     value = !modern::caseStyle().modern ? "classic" : modern::caseStyle().hold ? "hold" : "modern";
                 else if (std::strcmp(name, "KAMITE_MODERN_AUTO") == 0)
                     value = modern::caseStyle().autoOn ? "1" : "0";
+                else if (std::strcmp(name, "KAMITE_HOLD_MODE") == 0)
+                    value = modern::caseStyle().holdCam ? "cam" : "brawl";
                 if (value)
                     rec.settings += std::string("env.") + name + "=" + value + "\n";
             }
@@ -1718,9 +1722,24 @@ namespace kamite::test_mode
             const size_t equals = line.find('=');
             if (equals == std::string::npos)
                 continue;
-            const std::string name = line.substr(4, equals - 4), setting = trim(line.substr(equals + 1));
+            const std::string name = line.substr(4, equals - 4);
+            std::string setting = trim(line.substr(equals + 1));
             if (std::find(std::begin(kCaseSettings), std::end(kCaseSettings), name) == std::end(kCaseSettings))
                 continue; // only the settings a case may carry
+            // An older case kept the aspect as written ("16:9"), which the game snaps to the primary screen's own
+            // shape when within 3%: the replay then depended on the replaying machine's monitor (and its DPI scaling:
+            // 1.77813 on K's 2560x1440, 1.77778 on his 3440x1440, Nov 20). Pinned to the ratio's exact float, what an
+            // unsnapped "16:9" gives (widescreen.cpp parseAspect).
+            if (name == "KAMITE_ASPECT")
+            {
+                float w = 0.0f, h = 0.0f;
+                if (std::sscanf(setting.c_str(), "%f:%f", &w, &h) == 2 && w > 0.0f && h > 0.0f)
+                {
+                    char number[32];
+                    std::snprintf(number, sizeof(number), "%.9g", static_cast<double>(w / h));
+                    setting = number;
+                }
+            }
 #if defined(_WIN32)
             _putenv_s(name.c_str(), setting.c_str());
 #else

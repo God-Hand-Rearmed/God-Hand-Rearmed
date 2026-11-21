@@ -4763,8 +4763,12 @@ namespace kamite::launcher
             if (!m.description.empty())
                 text += (text.empty() ? "" : "\n") + m.description;
             std::vector<std::string> parts;
-            if (!m.files.empty())
-                parts.push_back(countOf(m.files.size(), "game file"));
+            const size_t entries = static_cast<size_t>(
+                std::count_if(m.files.begin(), m.files.end(), [](const std::string &f) { return !mod_list::archiveOf(f).empty(); }));
+            if (m.files.size() > entries)
+                parts.push_back(countOf(m.files.size() - entries, "game file"));
+            if (entries != 0)
+                parts.push_back(entries == 1 ? std::string("1 archive entry") : std::to_string(entries) + " archive entries");
             if (m.textureCount != 0)
                 parts.push_back(countOf(m.textureCount, "texture"));
             if (!m.patches.empty())
@@ -6307,13 +6311,54 @@ namespace kamite::launcher
             startBark(state, context.iso);
         }
         KM_INFO(Boot, "launcher: shown (" << (state.installed ? "installed" : "not installed") << ")");
+        loadHotkeys(state); // F11 (Full screen) as GHR.ini binds it
 
+        // The window follows Display Mode at once (K, Nov 21): the Options row, and F11 as in the game (saved to the
+        // row's two keys).
+        const auto windowMode = []
+        { return IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE) ? 2 : IsWindowMaximized() ? 1 : 0; };
+        int appliedMode = windowMode();
+        // Into a plain window: one that came back small (the size raylib had before fullscreen: 960 wide) is set to
+        // 16:9 at 3/4 of the monitor's height, centred.
+        const auto sizeWindow = [](int mode)
+        {
+            if (mode != 0)
+                return;
+            const int monitor = GetCurrentMonitor();
+            const int mw = GetMonitorWidth(monitor), mh = GetMonitorHeight(monitor);
+            if (mw <= 0 || mh <= 0 || GetScreenHeight() >= mh * 2 / 3)
+                return;
+            int h = mh * 3 / 4, w = h * 16 / 9;
+            if (w > mw * 9 / 10)
+                w = mw * 9 / 10, h = w * 9 / 16;
+            const Vector2 origin = GetMonitorPosition(monitor);
+            SetWindowSize(w, h);
+            SetWindowPosition(static_cast<int>(origin.x) + (mw - w) / 2, static_cast<int>(origin.y) + (mh - h) / 2);
+        };
         while (!state.done)
         {
             if (WindowShouldClose())
             {
                 state.result = Result::Quit;
                 break;
+            }
+            {
+                const int wanted = state.ini.getBool("Video", "StartFullscreen", true)    ? 2
+                                   : state.ini.getBool("Video", "StartMaximized", false) ? 1
+                                                                                         : 0;
+                if (wanted != appliedMode)
+                {
+                    ps2_host_display::applyMode(wanted);
+                    appliedMode = wanted;
+                    sizeWindow(wanted);
+                }
+                if (!g_capture.active && g_hotkeyCapture < 0 && hk::pressed(hk::Action::Fullscreen))
+                {
+                    appliedMode = ps2_host_display::toggleFullscreen();
+                    state.ini.setBool("Video", "StartFullscreen", appliedMode == 2);
+                    state.ini.setBool("Video", "StartMaximized", appliedMode == 1);
+                    sizeWindow(appliedMode);
+                }
             }
             state.unit = std::clamp(static_cast<float>(GetScreenHeight()) / 900.0f, 0.55f, 3.0f);
             feedGamepads(io);

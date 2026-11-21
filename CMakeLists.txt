@@ -53,14 +53,18 @@ if(NOT MSVC AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
     add_compile_options(-msse4.1)
 endif()
 
-add_subdirectory(runtime EXCLUDE_FROM_ALL)
-add_subdirectory(src)
-
-# The tests, run with ctest: tests/unit (the operating-system layer's pure logic; also builds on its own, see
-# tests/unit/CMakeLists.txt) and, further down, the PCSX2 renderer's on Linux.
+# The tests, run with ctest: runtime/ps2xRuntime/test (the vblank lock on simulated displays, issue #1; the audio's
+# time-stretch on a PC below full speed, issue #5), tests/unit (the operating-system layer's pure logic; also builds on
+# its own, see tests/unit/CMakeLists.txt) and, further down, the PCSX2 renderer's on Linux.
 option(KAMITE_BUILD_TESTS "Build and register the tests (ctest)" OFF)
 if(KAMITE_BUILD_TESTS)
     enable_testing()
+endif()
+
+add_subdirectory(runtime EXCLUDE_FROM_ALL)
+add_subdirectory(src)
+
+if(KAMITE_BUILD_TESTS)
     add_subdirectory(tests/unit)
 endif()
 

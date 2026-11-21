@@ -561,9 +561,11 @@ namespace
     {
         uint32_t lba = 0, sectors = 0;
         uint64_t size = 0;
-        std::filesystem::path host; // empty: bytes
+        std::filesystem::path host; // empty: bytes or pieces
         std::vector<uint8_t> bytes;
         std::unique_ptr<std::ifstream> stream; // the host file, opened at the first read
+        std::vector<PS2ServedFiles::Piece> pieces; // a file built from pieces (sorted by offset)
+        std::vector<std::unique_ptr<std::ifstream>> pieceStreams; // per piece, its host file (opened at its first read)
     };
     std::mutex g_servedMutex;
     std::vector<ServedFile> g_served; // by LBA
@@ -611,6 +613,27 @@ uint32_t PS2ServedFiles::serve(std::vector<uint8_t> bytes)
     return addServed(std::move(file));
 }
 
+uint32_t PS2ServedFiles::serve(std::vector<Piece> pieces, uint64_t size)
+{
+    std::sort(pieces.begin(), pieces.end(), [](const Piece &a, const Piece &b) { return a.offset < b.offset; });
+    for (size_t i = 0; i < pieces.size(); ++i)
+    {
+        Piece &p = pieces[i];
+        if (p.source == Piece::Source::Bytes)
+            p.size = std::min<uint64_t>(p.size, p.bytes.size());
+        if (p.offset + p.size > size || (i + 1 < pieces.size() && p.offset + p.size > pieces[i + 1].offset))
+        {
+            std::cerr << "[CDIMAGE] a served file's pieces overlap or run past its size; not served" << std::endl;
+            return 0u;
+        }
+    }
+    ServedFile file;
+    file.size = size;
+    file.pieceStreams.resize(pieces.size());
+    file.pieces = std::move(pieces);
+    return addServed(std::move(file));
+}
+
 bool PS2ServedFiles::any()
 {
     std::lock_guard<std::mutex> lock(g_servedMutex);
@@ -650,6 +673,42 @@ bool PS2ServedFiles::read(uint32_t lba, uint32_t sectors, void *destination, siz
     std::memset(out, 0, size);
     const uint64_t offset = static_cast<uint64_t>(lba - file.lba) * PS2CdImage::kSectorSize;
     const size_t count = static_cast<size_t>(std::min<uint64_t>(size, file.size - offset));
+    if (!file.pieces.empty())
+    {
+        const uint64_t end = offset + count;
+        bool ok = true;
+        for (size_t i = 0; i < file.pieces.size(); ++i)
+        {
+            const Piece &p = file.pieces[i];
+            if (p.offset >= end || p.offset + p.size <= offset)
+                continue;
+            const uint64_t from = std::max(offset, p.offset), to = std::min(end, p.offset + p.size);
+            uint8_t *dst = out + (from - offset);
+            const uint64_t at = p.from + (from - p.offset);
+            const size_t n = static_cast<size_t>(to - from);
+            if (p.source == Piece::Source::Bytes)
+                std::memcpy(dst, p.bytes.data() + (from - p.offset), n);
+            else if (p.source == Piece::Source::Disc)
+                ok = PS2CdImage::instance().read(at, dst, n) && ok;
+            else
+            {
+                std::unique_ptr<std::ifstream> &in = file.pieceStreams[i];
+                if (!in)
+                    in = std::make_unique<std::ifstream>(p.host, std::ios::binary);
+                in->clear();
+                in->seekg(static_cast<std::streamoff>(at));
+                in->read(reinterpret_cast<char *>(dst), static_cast<std::streamsize>(n));
+                if (static_cast<size_t>(in->gcount()) != n)
+                {
+                    std::cerr << "[CDIMAGE] served piece " << p.host.string() << ": read failed at 0x" << std::hex << at << std::dec
+                              << std::endl;
+                    in.reset();
+                    ok = false;
+                }
+            }
+        }
+        return ok;
+    }
     if (file.host.empty())
     {
         std::memcpy(out, file.bytes.data() + offset, count);

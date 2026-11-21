@@ -291,12 +291,22 @@ def median(xs):
     return xs[n // 2] if n % 2 else 0.5 * (xs[n // 2 - 1] + xs[n // 2])
 
 
-def group_by_id(rows, mcol, key=None):
-    """{id: [(lo, hi)]} of whole episodes (not cut by the run's first or last frame)."""
+def group_by_id(rows, mcol, key=None, div=1):
+    """{id: [(lo, hi)]} of whole episodes (not cut by the run's first or last frame). A looping motion that wraps on
+    the last 60 FPS row before the state moves on leaves a one-row stub of the same id at a fractional motion frame
+    (the LEVELDIE cases, Nov 20: Gene's 20D9A20 1.53 s read as 0.77 s, the median of 1.52 and 0.02): dropped. A
+    one-row restart on a whole frame (a state's first frame, e.g. the demon's phase 18 step 0) is real and stays."""
     out = {}
-    for value, lo, hi in episodes(rows, mcol):
+    eps = episodes(rows, mcol)
+    fcol = mcol.replace("motion", "mframe")
+    for n, (value, lo, hi) in enumerate(eps):
         if value in ("", None) or lo == 0 or hi == len(rows):
             continue
+        if div == 1 and hi - lo == 1 and n > 0 and eps[n - 1][0] == value and n + 1 < len(eps) \
+                and eps[n + 1][0] != value:
+            f = num(rows[lo].get(fcol))
+            if f is not None and f != int(f):
+                continue
         k = key(rows[lo], value) if key else value
         out.setdefault(k, []).append((lo, hi))
     return out
@@ -319,7 +329,7 @@ def id_stats(rows, div, eps, cols):
 
 def compare_ids(rows30, rows60, mcol, cols, tol, key=None, label_of=str):
     """Lines for flagged ids, the list of agreeing ids, ids seen at one rate only; and the flag count."""
-    g30, g60 = group_by_id(rows30, mcol, key), group_by_id(rows60, mcol, key)
+    g30, g60 = group_by_id(rows30, mcol, key, 2), group_by_id(rows60, mcol, key, 1)
     flagged_lines, ok, one_side, flagged = [], [], [], 0
     for k in sorted(set(g30) | set(g60), key=lambda x: str(x)):
         if k not in g30 or k not in g60:
@@ -373,7 +383,7 @@ def compare_enemy_ids(rows30, rows60, enemies, tol):
     # Group per slot, then merge (episodes are slot-local: a slot can change occupant mid-run).
     for slots, g, div in ((s30, g30, 2), (s60, g60, 1)):
         for rows in slots:
-            for k, eps in group_by_id(rows, "motion", key).items():
+            for k, eps in group_by_id(rows, "motion", key, div).items():
                 g.setdefault(k, []).extend((rows, lo, hi) for lo, hi in eps)
     flagged_lines, ok, one_side, flagged = [], [], [], 0
     for k in sorted(set(g30) | set(g60), key=str):

@@ -10,6 +10,8 @@
 //                                new line). A folder without one is still a mod (named after the folder).
 //   mods/<name>/<disc path>      game files replaced whole (pl/pl00.dat, em/em06.dat ...): every file in a subfolder
 //                                except the ones below; files at the top (mod.ini, a readme, pictures) are not.
+//   mods/<name>/<x.afs>/<entry>  one entry of an archive (bgm/bgm00.afs/12.ogg, se/ev/ev01.afs/ev01_cut00.wav): by
+//                                its stored name or number; audio converted to the game's ADX (step 2)
 //   mods/<name>/textures/        PCSX2 replacement images (before the player's texture pack)
 //   mods/<name>/patches/*.pnach  PCSX2 patches
 //   mods/<name>/characters/      characters (step 4; not game files)
@@ -70,6 +72,12 @@ namespace kamite::mod_list
     std::vector<Entry> enabledEntries(const std::vector<Mod> &mods);
     // What differs between the mods a state was made with and the ones on now, in a few words ("" when nothing does).
     std::string describeDifference(const std::vector<Entry> &state, const std::vector<Entry> &now);
+
+    // A mod's file inside one of the game's archives (step 2): "bgm/bgm00.afs/<entry>.ogg" -> "bgm/bgm00.afs" ("" for
+    // any other path). The entry: its stored name or its number, any extension (afs_archive.h, mod_audio.h).
+    std::string archiveOf(const std::string &file);
+    // What two mods' files clash on: the path, or for an archive entry the archive + the entry without its extension.
+    std::string fileKey(const std::string &file);
 
     std::string lower(std::string s);
     std::string utf8(const std::filesystem::path &p);

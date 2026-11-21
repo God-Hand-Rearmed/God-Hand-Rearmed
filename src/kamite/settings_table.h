@@ -75,6 +75,9 @@ namespace kamite::settings
         // kPad / kKeyboard; -1 = always. The launcher lists both.
         int8_t device = -1;
         const char *gameName = nullptr; // the in-game name when it differs from the launcher's
+        // Listed only while a Modern control style is picked (the free camera's own settings; K, Nov 21): in the launcher
+        // either device's, in game the device in use's (modernStyle).
+        bool freeCamera = false;
     };
     inline constexpr int8_t kPad = 0, kKeyboard = 1;
 
@@ -85,8 +88,10 @@ namespace kamite::settings
     // The stored value (the fallback when unset). [Sound] MusicVolume falls back to 0 for an old MuteMusic=1.
     std::string value(const IniFile &ini, const Setting &setting);
     bool on(const IniFile &ini, const Setting &setting); // a Toggle's value
-    // Whether a sub-option's parent lets it show.
+    // Whether a sub-option's parent lets it show (and a freeCamera row: either device on Modern).
     bool parentAllows(const IniFile &ini, const Setting &setting);
+    // Whether the device's Control Style is a Modern one (kPad: Modern: Toggle / Hold; kKeyboard: Modern; -1: either).
+    bool modernStyle(const IniFile &ini, int8_t device);
     int choiceIndex(const Setting &setting, const std::string &value); // -1: none of them
     // Camera & FOV ([Video] CameraPreset): the preset four camera values match ("custom" for none), and a pick written
     // (a preset's four values; Custom starts from Action's).

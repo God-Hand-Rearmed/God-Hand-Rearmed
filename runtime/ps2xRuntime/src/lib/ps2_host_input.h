@@ -167,6 +167,9 @@ namespace ps2_host_input
         // Window thread, after sample(): a save-state command an extra button fired (QuickSave / QuickLoad; None:
         // nothing), once.
         [[nodiscard]] Command takeFired();
+        // Any thread: the commands are held (the game's pause menu and the title, K, Nov 21: a tap there is a menu press,
+        // not a save). A press begun while held fires nothing, on release either; Start passes to the game.
+        void setHeld(bool held);
     }
 
     // Button prompts (any thread). What player 1's bindings show where the game draws a PS2 button: for each input the

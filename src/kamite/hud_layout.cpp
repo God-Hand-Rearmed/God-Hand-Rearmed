@@ -68,6 +68,14 @@ namespace kamite::hud
         // return address is only r040's while its code is there: the jal and the delay slot around it are checked.
         constexpr uint32_t kPetitDevilFadeReturn = 0x007995D0u;
         bool petitDevilFade(const uint8_t *rdram, uint32_t caller);
+        // The casino games' dimmer: a full-screen entry of the game's own layout faded in over the live table (grey,
+        // alpha 0x40 / 0x48) and out again, then left drawn at alpha 0 until the next round or the game closes. Counted
+        // as a menu background, the picture went 4:3 at each result and stayed so (K, Nov 20 F6 dumps). Blackjack:
+        // BlackJackId__Trans' layout (cIDBase_trans returns to 0x1D5194), entry 30 (IdGlow_setState 0x1D6A70, Win /
+        // Lose / Push). Slots, both machines: the slot UI's own layout (func_001E7440's second cIDBase_trans, returns to
+        // 0x1E7460), entry 1 (CustomIDOwner_setColorMode 0x1E7660, behind the pay table).
+        constexpr uint32_t kBlackJackTransReturn = 0x001D5194u, kSlotTransReturn = 0x001E7460u;
+        bool casinoDimmer(const uint8_t *rdram, uint32_t caller, uint32_t layout, uint32_t entry);
         constexpr uint32_t kPlayerBar = 0xF0000001u, kRadar = 0xF0000002u, kRoulette = 0xF0000003u, kMoney = 0xF0000004u;
         // The gold counter under the minimap (cCockMoney, its trans func_00143998 is a cockpit vtable method, not in
         // the radar's trans): the cIDBase_trans of its own layout returns to 0x1439E0, its "+gold" pop-ups' to
@@ -224,6 +232,15 @@ namespace kamite::hud
         {
             return caller == kPetitDevilFadeReturn && read32(rdram, 0x007995C8u) == 0x0C0AAB0Au && // jal cIDBase_trans
                    read32(rdram, 0x007995CCu) == 0x26040010u;                                       // a0 = this + 0x10
+        }
+
+        bool casinoDimmer(const uint8_t *rdram, uint32_t caller, uint32_t layout, uint32_t entry)
+        {
+            const uint32_t index = caller == kBlackJackTransReturn ? 30u : caller == kSlotTransReturn ? 1u : 0u;
+            if (index == 0u || layout < 0x100000u)
+                return false;
+            const uint32_t entries = read32(rdram, layout + idb::kEnt) & PS2_RAM_MASK;
+            return entries != 0u && entry == entries + ent::kSize * index;
         }
 
         float screenWidth(const uint8_t *rdram)
@@ -419,7 +436,7 @@ namespace kamite::hud
                 const float height = 448.0f; // the game's 2D screen (0..448, NTSC)
                 if (g_inIdTrans && !g_ctx.active && !g_menuSeen && !ownNow() && !g_ownScreen && y1 - y0 >= 0.8f * height &&
                     g_idCaller != kJukeBoxTransReturn && !petitDevilFade(rdram, g_idCaller) &&
-                    (g_subScreenOpen || !tutorialUp(rdram)))
+                    !casinoDimmer(rdram, g_idCaller, g_curLayout, g_entry) && (g_subScreenOpen || !tutorialUp(rdram)))
                 {
                     g_menuSeen = true; // a menu's background (fades are drawn outside any layout)
                     if (g_wide && g_menuMode == MenuMode::Pillarbox)

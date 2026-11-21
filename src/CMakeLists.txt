@@ -74,6 +74,9 @@ set(KAMITE_HOST_SOURCES
     kamite/hitbox_overlay.cpp
     kamite/menu_buttons.cpp
     kamite/mod_list.cpp
+    kamite/adx_codec.cpp
+    kamite/afs_archive.cpp
+    kamite/mod_audio.cpp
     kamite/mods.cpp
     kamite/modern_controls.cpp
     kamite/near_geometry.cpp
@@ -81,6 +84,9 @@ set(KAMITE_HOST_SOURCES
     kamite/render/clip_scenery.cpp
     kamite/render/scenery_strip.cpp
     kamite/render/vu1_programs.cpp
+    kamite/native/native.cpp
+    kamite/native/shadow.cpp
+    kamite/native/libvu0.cpp
     kamite/crash_history.cpp
     kamite/hud_layout.cpp
     kamite/hotkeys.cpp
@@ -323,10 +329,11 @@ file(WRITE "${KAMITE_MODULE_INDEX}.tmp"
 file(COPY_FILE "${KAMITE_MODULE_INDEX}.tmp" "${KAMITE_MODULE_INDEX}" ONLY_IF_DIFFERENT)
 
 add_executable(kamite ${KAMITE_HOST_SOURCES} "${KAMITE_MODULE_INDEX}")
-# The native VU1 programs (kamite/render) round every float operation on its own, as the VU does: no contraction into
-# FMA (MSVC's /fp:precise below does not contract).
+# The native VU1 programs (kamite/render) and native EE functions (kamite/native) round every float operation on its
+# own, as the VU / EE does: no contraction into FMA (MSVC's /fp:precise below does not contract).
 if(NOT MSVC)
     set_source_files_properties(kamite/render/character_skin.cpp kamite/render/clip_scenery.cpp kamite/render/scenery_strip.cpp
+                                kamite/native/libvu0.cpp
                                 PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 if(KAMITE_RELEASE) # CMakeLists.txt: GHR.exe's own code and the runtime, not the generated game code

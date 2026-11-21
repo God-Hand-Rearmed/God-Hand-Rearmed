@@ -95,6 +95,8 @@ namespace kamite::options_pages
                 continue;
             if (s.device >= 0 && s.device != (keyboard ? settings::kKeyboard : settings::kPad))
                 continue; // the other device's (K, Nov 16)
+            if (s.freeCamera && !settings::modernStyle(ini, keyboard ? settings::kKeyboard : settings::kPad))
+                continue; // the free camera's: the device in use is on Classic
             if (!category || std::strcmp(category, s.category) != 0)
             {
                 category = s.category;

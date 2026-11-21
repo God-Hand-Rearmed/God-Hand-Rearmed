@@ -580,6 +580,7 @@ namespace ps2_host_input
         std::array<ExtraHold, extra::Count> g_extraHold{}; // window thread
         bool g_extraStartWas = false;              // window thread: the controller's Start at the last sample
         bool g_hideStart = false;                  // window thread: the Start of a SaveLoad chord, hidden until released
+        std::atomic<bool> g_extraHeld{false};      // extra::setHeld: the commands are held (pause menu, title)
         std::vector<extra::Command> g_extraFired;  // window thread
         std::filesystem::file_time_type g_loadedTime{};
         uintmax_t g_loadedSize = 0u;
@@ -1070,6 +1071,7 @@ namespace ps2_host_input
             g_extraStartWas = start;
             if (!start)
                 g_hideStart = false;
+            const bool held = g_extraHeld.load(std::memory_order_relaxed);
             for (size_t b = 0; b < extra::Count; ++b)
             {
                 const extra::Command command = config.commands[b];
@@ -1077,11 +1079,11 @@ namespace ps2_host_input
                 const bool down = present && command != extra::Command::None && gp::button(device, kExtraPad[b]);
                 if (down && !hold.down)
                 {
-                    hold = ExtraHold{true, false};
-                    if (command == extra::Command::QuickSave || command == extra::Command::QuickLoad)
+                    hold = ExtraHold{true, held}; // begun while held: its release saves nothing either
+                    if (!held && (command == extra::Command::QuickSave || command == extra::Command::QuickLoad))
                         g_extraFired.push_back(command);
                 }
-                if (down && command == extra::Command::SaveLoad && startPressed)
+                if (down && command == extra::Command::SaveLoad && startPressed && !held)
                 {
                     g_extraFired.push_back(extra::Command::QuickLoad);
                     hold.startUsed = true;
@@ -1089,7 +1091,7 @@ namespace ps2_host_input
                 }
                 if (!down && hold.down)
                 {
-                    if (command == extra::Command::SaveLoad && !hold.startUsed)
+                    if (command == extra::Command::SaveLoad && !hold.startUsed && !held)
                         g_extraFired.push_back(extra::Command::QuickSave);
                     hold = ExtraHold{};
                 }
@@ -1687,6 +1689,8 @@ namespace ps2_host_input
 
         std::atomic<const std::atomic<uint64_t> *> g_fieldCounter{nullptr};
         std::atomic<uint32_t> g_invertRightDefault{0u};
+        std::array<std::atomic<int>, 2> g_stickDeadzone{-1, -1}; // setStickDeadzone (percent); -1 = the environment's
+        std::atomic<int> g_swapSticks{-1};                         // setSwapSticks; -1 = the environment's
         std::atomic<bool> g_mouseCameraEnabled{false};
         std::atomic<bool> g_mouseStickEnabled{true};
         bool g_mouseLocked = false;
@@ -1949,17 +1953,44 @@ namespace ps2_host_input
                 state.pressure[static_cast<size_t>(pressure)] = (state.buttons & button) != 0u ? 0xFFu : 0x00u;
         }
 
-        // A stick from its four directions: radial deadzone, then PCSX2's axis scale (1.33 reaches the corners).
+        // The Options' deadzone of a stick (0 left, 1 right) as a fraction: set live, else the environment (GHR.ini).
+        float optionsDeadzone(int which)
+        {
+            int percent = g_stickDeadzone[static_cast<size_t>(which)].load(std::memory_order_relaxed);
+            if (percent < 0)
+            {
+                const char *value = std::getenv(which == 0 ? "PS2X_LEFT_STICK_DEADZONE" : "PS2X_RIGHT_STICK_DEADZONE");
+                percent = value ? std::atoi(value) : 0;
+            }
+            return static_cast<float>(std::clamp(percent, 0, 95)) / 100.0f;
+        }
+
+        // Swap Sticks (setSwapSticks): set live, else the environment (GHR.ini).
+        bool swapSticks()
+        {
+            const int set = g_swapSticks.load(std::memory_order_relaxed);
+            if (set >= 0)
+                return set != 0;
+            static const bool fromEnvironment = []
+            { const char *value = std::getenv("PS2X_SWAP_STICKS"); return value && *value == '1'; }();
+            return fromEnvironment;
+        }
+
+        // A stick from its four directions: radial deadzone (the larger of controls.ini's and the Options' for this
+        // stick, K Nov 20: stick drift; with Swap Sticks the physical stick's), then PCSX2's axis scale (1.33 reaches
+        // the corners).
         std::pair<float, float> stick(const PadConfig &config, const std::array<float, StickHalfCount> &halves, size_t up, uint32_t invert)
         {
             float x = halves[up + 1u] - halves[up + 3u]; // right - left
             float y = halves[up + 2u] - halves[up];      // down - up
             const float magnitude = std::hypot(x, y);
-            if (magnitude <= config.deadzone || magnitude <= 0.0f)
+            const bool physicalLeft = (up == LUp) != swapSticks();
+            const float deadzone = std::max(config.deadzone, optionsDeadzone(physicalLeft ? 0 : 1));
+            if (magnitude <= deadzone || magnitude <= 0.0f)
                 return {0.0f, 0.0f};
-            if (config.deadzone > 0.0f)
+            if (deadzone > 0.0f)
             {
-                const float scale = (magnitude - config.deadzone) / (1.0f - config.deadzone) / magnitude;
+                const float scale = (magnitude - deadzone) / (1.0f - deadzone) / magnitude;
                 x *= scale;
                 y *= scale;
             }
@@ -2100,6 +2131,16 @@ namespace ps2_host_input
             }
             if (player == 0u)
                 notePromptInput(keysHeld, padsHeld, pad);
+            // Swap Sticks: the controller's halves trade places, the keys' and the mouse buttons' stay.
+            const bool swap = swapSticks();
+            if (swap)
+                for (size_t i = 0; i < 4u; ++i)
+                {
+                    const float padLeft = bindingsKindValue(config.sticks[LUp + i], false);
+                    const float padRight = bindingsKindValue(config.sticks[RUp + i], false);
+                    halves[LUp + i] = std::max(padRight, bindingsKindValue(config.sticks[LUp + i], true));
+                    halves[RUp + i] = std::max(padLeft, bindingsKindValue(config.sticks[RUp + i], true));
+                }
             if (player == 0u)
             {
                 // The Dodge Modifier (play only): the keys and mouse buttons on the left stick move the right stick (the
@@ -2109,7 +2150,7 @@ namespace ps2_host_input
                     for (size_t i = 0; i < 4u; ++i)
                     {
                         const float keys = bindingsKindValue(config.sticks[LUp + i], true);
-                        halves[LUp + i] = bindingsKindValue(config.sticks[LUp + i], false);
+                        halves[LUp + i] = bindingsKindValue(config.sticks[swap ? RUp + i : LUp + i], false);
                         halves[RUp + i] = std::max(halves[RUp + i], keys);
                     }
                 g_keyboardDodge.store(dodge, std::memory_order_relaxed);
@@ -2310,6 +2351,17 @@ namespace ps2_host_input
     void setRightStickInvertDefault(uint32_t axes)
     {
         g_invertRightDefault.store(axes, std::memory_order_relaxed);
+    }
+
+    void setStickDeadzone(int stick, int percent)
+    {
+        if (stick == 0 || stick == 1)
+            g_stickDeadzone[static_cast<size_t>(stick)].store(std::clamp(percent, 0, 95), std::memory_order_relaxed);
+    }
+
+    void setSwapSticks(bool on)
+    {
+        g_swapSticks.store(on ? 1 : 0, std::memory_order_relaxed);
     }
 
     void setMouseCameraEnabled(bool enabled)
@@ -3336,6 +3388,11 @@ namespace ps2_host_input
         void requestR3QuickTurn(uint32_t pad, bool on)
         {
             controls::requestR3QuickTurn(pad, on);
+        }
+
+        void setHeld(bool held)
+        {
+            g_extraHeld.store(held, std::memory_order_relaxed);
         }
 
         Command takeFired()

@@ -16,6 +16,8 @@
 #endif
 #include <windows.h>
 
+#include <cstdio>
+
 namespace
 {
     HWND g_cover = nullptr;
@@ -34,6 +36,21 @@ namespace
             g_cover = nullptr;
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
+}
+
+// Keeps the display (and the PC) awake while the program runs (issue #12): a controller's input doesn't count as the
+// user being active, so Windows' "turn off my screen after N minutes" blanked the monitor mid-game (no signal; the game
+// still running; a key, Alt+Tab or a re-plugged cable woke it). GLFW doesn't ask for this in a borderless window; SDL
+// would, but we start only its gamepad part. Bound to the calling thread (the main / window thread, which lives as
+// long as the program) until it exits.
+void ps2xHostKeepDisplayAwake() noexcept
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    if (SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) == 0)
+        std::fprintf(stderr, "[window] couldn't keep the display awake (SetThreadExecutionState failed)\n");
 }
 
 // True on Windows itself, false under Wine (ntdll exports wine_get_version there).

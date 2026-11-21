@@ -27,6 +27,26 @@ namespace kamite::mod_list
 
     fs::path fromUtf8(const std::string &s) { return fs::path(std::u8string(s.begin(), s.end())); }
 
+    std::string archiveOf(const std::string &file)
+    {
+        const size_t slash = file.find_last_of('/');
+        if (slash == std::string::npos || slash < 4 || slash + 1 == file.size())
+            return {};
+        const std::string archive = file.substr(0, slash);
+        return lower(archive.substr(archive.size() - 4)) == ".afs" ? archive : std::string();
+    }
+
+    std::string fileKey(const std::string &file)
+    {
+        const std::string archive = archiveOf(file);
+        if (archive.empty())
+            return file;
+        std::string entry = file.substr(archive.size() + 1);
+        if (const size_t dot = entry.find_last_of('.'); dot != std::string::npos && dot != 0)
+            entry.resize(dot);
+        return archive + "/" + entry;
+    }
+
     namespace
     {
         std::string trim(const std::string &s)
@@ -241,8 +261,21 @@ namespace kamite::mod_list
                     continue;
                 Conflict c;
                 c.other = above;
-                std::set_intersection(mods[above].files.begin(), mods[above].files.end(), mods[below].files.begin(),
-                                      mods[below].files.end(), std::back_inserter(c.files));
+                // By key (an archive entry's name without its extension: "x.ogg" and "x.adx" are one entry), and a whole
+                // archive against the entries of it.
+                std::set<std::string> keysAbove, keysBelow;
+                for (const std::string &f : mods[above].files)
+                    keysAbove.insert(fileKey(f));
+                for (const std::string &f : mods[below].files)
+                    keysBelow.insert(fileKey(f));
+                std::set<std::string> clash;
+                for (const std::string &k : keysBelow)
+                    if (keysAbove.count(k) || keysAbove.count(archiveOf(k)))
+                        clash.insert(k);
+                for (const std::string &k : keysAbove)
+                    if (keysBelow.count(archiveOf(k)))
+                        clash.insert(archiveOf(k));
+                c.files.assign(clash.begin(), clash.end());
                 std::vector<std::string> shared;
                 std::set_intersection(mods[above].textures.begin(), mods[above].textures.end(), mods[below].textures.begin(),
                                       mods[below].textures.end(), std::back_inserter(shared));

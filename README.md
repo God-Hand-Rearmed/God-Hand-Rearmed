@@ -63,7 +63,7 @@ True 60FPS (fists punching swiftly) game logic, that by a thousand fixes was ach
 <!-- MEDIA: assets/readme/60fps.gif — 30 vs 60 side by side -->
 ---
 
-### Wider Than Yo Momma!
+### Wider Than Yo Momma's!
 
 I'll kick up your goddamn Aspect Ratio, boy! 
 
@@ -72,7 +72,7 @@ invited to kick your ass, too! <!-- tag:AspectRatio --> `Remastered+`
 
 No UI stretching in gameplay; menus at 4:3 unless you like 'em on the thicker side!
 
-<!-- MEDIA: assets/readme/ultrawide.jpg — a fight at 21:9 or 32:9 -->
+![God Hand: Rearmed](assets/wide_ass.webp)
 ---
 
 ### Modern Controls, Tank Me Later!
@@ -219,6 +219,8 @@ Every option, with the same help text you'll see in the launcher and in game.
 **Controller**
 
 - **Vibration:** Controller rumble. Girls know what it's for.
+- **Left Stick Deadzone:** How far the left stick must move before it counts. Raise it if Gene walks on his own. *0% to 50%*
+- **Right Stick Deadzone:** How far the right stick must move before it counts. Raise it if the camera drifts or Gene dodges on his own. *0% to 50%*
 - **Menu Controls:** Western: bottom button confirms; right cancels. Japanese: right button confirms; bottom cancels. *Western / Japanese / Classic*
 
 </details>
@@ -285,6 +287,7 @@ Every option, with the same help text you'll see in the launcher and in game.
 
 - **Control Style: Pad:** Classic: PS2's OG fixed facing brawling. Modern (rebindable): Toggle Brawl (R3) | Hold to Brawl (L1). *Classic / Modern: Toggle / Modern: Hold* (F2 > Controls changes it while playing) `Remastered+`
   - **Modern: Auto:** Brawling starts when dealing or taking damage. Press the stick (rebindable) to go back to freecam.
+  - **Modern: Hold Mode:** Hold to Brawl: hold L1 to brawl, double-tap it to turn. Hold to Cam: hold L1 for freecam, tap it to turn. *Hold to Brawl / Hold to Cam* `Remastered+`
   - **Modern: Auto:** Brawling starts when dealing or taking damage. It stops once no enemy is near. `Remastered+`
 - **Control Style: KBM:** Keyboard & mouse. Classic: PS2's OG brawling. Modern: mouse freecam. *Classic / Modern: Toggle* `Remastered+`
   - **Modern: Auto:** Brawling starts when dealing or taking damage. Middle-click (rebindable) to go back to freecam.
@@ -427,6 +430,8 @@ and testing from the boys.
   boundaries and structures.
 - The "60 Fps" and "Widescreen 16:9" PCSX2 patches for SLUS-21503 (Puggsy and others): where the 60 FPS mode and the
   aspect-ratio support started.
+- [GT3 Revisited](https://github.com/matt-pulsipher/GT3-revisited) (MIT): the PS2's exact float arithmetic (the EE's adder,
+  multiplier and divider, worked out by its authors).
 - [anasrar/chihuahua](https://github.com/anasrar/chihuahua) (MIT): file-format knowledge and the motion reader.
 - [akitotheanimator/God-Hand-Tools](https://github.com/akitotheanimator/God-Hand-Tools) (with CarLoiD, Kerilk and Roni
   Evil): model, motion and motion-event formats.

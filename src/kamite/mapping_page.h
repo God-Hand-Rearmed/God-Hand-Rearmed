@@ -71,6 +71,7 @@ namespace kamite::mapping_page
         bool modern = false;         // [Game] ControlStyle=modern or hold: the right stick turns the free camera; Toggle:
                                      // R3 switches brawling / free camera
         bool hold = false;           // ControlStyle=hold: L1 held = brawling, double tap = the turn; R3 = State::r3QuickTurn
+        bool holdCam = false;        // ... HoldMode=cam: L1 held = the free camera, a tap = the turn
         bool presets = false;        // [Game] StyleSwitching: the d-pad switches styles
         int menuStyle = 1;           // 0 Classic, 1 Western, 2 Japanese (menu_buttons::Style)
     };

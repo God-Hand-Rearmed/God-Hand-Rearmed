@@ -137,7 +137,7 @@ static uint64_t fnv(const void *p, size_t n, uint64_t h = 0xCBF29CE484222325ull)
 static double g_vuSeconds = 0.0;
 static bool g_native = false; // runOne(compiled): a native program first where one matches (native mode)
 // VU1_REPLAY_CLEAR_STICKY=1 (native mode): every run starts with the status register's sticky Z/S/U/O bits clear, as at
-// the start of a session; the native programs set them (src/kamite/render/vu_vec.h kStatusStickyFlags), so those bits
+// the start of a session; the native programs set them (src/kamite/native/vu_vec.h kStatusStickyFlags), so those bits
 // are left out of the status comparison.
 static const bool g_clearSticky = [] {
     const char *v = std::getenv("VU1_REPLAY_CLEAR_STICKY");

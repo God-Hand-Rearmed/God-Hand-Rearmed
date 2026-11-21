@@ -11,7 +11,7 @@
 // After the batch the VU state is left exactly as the microprogram leaves it, including what its software pipeline
 // already computed from the data past the batch: later programs read some of those registers.
 #include "kamite/render/vu1_programs.h"
-#include "kamite/render/vu_vec.h"
+#include "kamite/native/vu_vec.h"
 
 #include "runtime/ps2_vu1.h"
 #include "runtime/ps2_vu1_native.h"

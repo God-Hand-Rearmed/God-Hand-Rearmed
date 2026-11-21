@@ -335,6 +335,13 @@ namespace kamite::file_layer
         return add(path, PS2ServedFiles::serve(std::move(bytes)), size, "memory");
     }
 
+    bool replace(std::string_view path, std::vector<PS2ServedFiles::Piece> pieces, uint64_t size, const std::string &from)
+    {
+        if (!disc_files::open() || !disc_files::find(path) || size > 0xFFFFFFFFull)
+            return false;
+        return add(path, PS2ServedFiles::serve(std::move(pieces), size), static_cast<uint32_t>(size), from);
+    }
+
     int replaceFolder(const fs::path &folder, const std::string &who)
     {
         if (!disc_files::open())

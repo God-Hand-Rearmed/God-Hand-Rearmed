@@ -755,6 +755,7 @@ namespace
 void ps2xHostVsyncSetWindow(void *window) noexcept; // Kernel/host_vsync.cpp
 #if defined(_WIN32)
 bool ps2xHostReplacesLauncherWindow() noexcept; // Kernel/host_window_win32.cpp
+void ps2xHostKeepDisplayAwake() noexcept;
 void ps2xHostHandoffCoverShow(void *window) noexcept;
 void ps2xHostHandoffCoverHide() noexcept;
 #endif
@@ -1143,6 +1144,56 @@ static void keepBorderlessBehind()
         ClearWindowState(FLAG_WINDOW_TOPMOST);
 }
 
+// Whether leaving fullscreen goes back to a maximized window (it was one when fullscreen began).
+static bool s_restoreMaximized = false;
+
+void ps2_host_display::applyMode(int mode)
+{
+    if (!IsWindowReady())
+        return;
+    ps2_host_input::releaseMouse();
+    const bool full = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
+    if (mode == 2)
+    {
+        if (!full)
+        {
+            s_restoreMaximized = IsWindowMaximized();
+            ToggleBorderlessWindowed();
+            keepBorderlessBehind();
+        }
+    }
+    else
+    {
+        if (full)
+            ToggleBorderlessWindowed();
+        if (mode == 1 && !IsWindowMaximized())
+            MaximizeWindow();
+        else if (mode == 0 && IsWindowMaximized())
+            RestoreWindow();
+        s_restoreMaximized = mode == 1;
+    }
+    ps2_host_display::startFullscreen = mode == 2;
+    ps2_host_display::startMaximized = mode == 1;
+}
+
+int ps2_host_display::toggleFullscreen()
+{
+    if (!IsWindowReady())
+        return 0;
+    ps2_host_input::releaseMouse();
+    const bool leavingFullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
+    if (!leavingFullscreen)
+        s_restoreMaximized = IsWindowMaximized();
+    ToggleBorderlessWindowed();
+    keepBorderlessBehind();
+    if (leavingFullscreen && s_restoreMaximized)
+        MaximizeWindow();
+    const int mode = !leavingFullscreen ? 2 : s_restoreMaximized ? 1 : 0;
+    ps2_host_display::startFullscreen = mode == 2;
+    ps2_host_display::startMaximized = mode == 1;
+    return mode;
+}
+
 // requestWindowShape: a plain window takes the display's aspect (the aspect ratio changed while playing).
 static void shapeWindowToAspect()
 {
@@ -1165,6 +1216,9 @@ static void shapeWindowToAspect()
     SetWindowPosition(static_cast<int>(origin.x) + std::max(0, (monitorWidth - width) / 2),
                       static_cast<int>(origin.y) + std::max(0, (monitorHeight - height) / 2));
 }
+#else
+void ps2_host_display::applyMode(int) {}
+int ps2_host_display::toggleFullscreen() { return 2; }
 #endif
 
 
@@ -1269,6 +1323,9 @@ void ps2_host_display::openHostWindow(const char *title)
     }
     else if (!showWhenShaped)
         SetWindowTitle(title);
+#if defined(_WIN32)
+    ps2xHostKeepDisplayAwake(); // the screen timeout ignores controllers (issue #12)
+#endif
     // Window size (PS2X_WINDOW_SIZE): "auto" (default) = the internal resolution's height (448 x PS2X_GS_SCALE, at most
     // 9/10 of the monitor's) in the display's shape, centered; "<w>x<h>" = that client size, centered; "native" = HOST_WINDOW_WIDTH x HOST_WINDOW_HEIGHT as before.
     const char *sizeValue = std::getenv("PS2X_WINDOW_SIZE");
@@ -1737,6 +1794,19 @@ namespace
         const ModuleSlot *moduleSlot = moduleFunctionSlot(address);
         return moduleSlot ? moduleSlot->load(std::memory_order_relaxed) : nullptr;
     }
+
+    // anyFunction for the generated code's calls and jumps (callGuestFunctionAs, dispatchGuestBranch), inline: an
+    // aligned target inside the generated table's [base, end) is its slot, exactly as generatedFunctionTableSlot finds
+    // it (end - base is a multiple of 4, so offset < 4 x slots <=> address < end; an address below base wraps past the
+    // count); anything else (room DLLs' modules, misaligned) goes to anyFunction. anyFunction itself was a call and
+    // ~5% of the EE samples in K's replays of bb97dcb (claude/gt3-revisited.md "Audit").
+    PS2_FORCEINLINE PS2Runtime::RecompiledFunction branchTarget(uint32_t address)
+    {
+        const uint32_t offset = address - g_ps2RecompiledFunctionTableBase;
+        if ((offset >> 2) < g_ps2RecompiledFunctionTableSlotCount && (address & 3u) == 0u)
+            return g_ps2RecompiledFunctionTable[offset >> 2];
+        return anyFunction(address);
+    }
 }
 
 std::atomic<uint32_t> g_ps2xPatchFlags{0u};
@@ -2140,7 +2210,7 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
     RecompiledFunction targetFn = nullptr;
     if (singleLookup)
     {
-        targetFn = anyFunction(targetPc);
+        targetFn = branchTarget(targetPc);
     }
     else if (hasFunction(targetPc))
         targetFn = lookupFunction(targetPc);
@@ -2206,7 +2276,7 @@ static PS2_FORCEINLINE bool callGuestFunctionAs(PS2Runtime &runtime, EeScheduler
                                                 R5900Context *ctx, uint32_t targetPc, uint32_t sourcePc,
                                                 uint32_t fallthroughPc, PS2Runtime::GuestBranchKind kind)
 {
-    PS2Runtime::RecompiledFunction fn = anyFunction(targetPc);
+    PS2Runtime::RecompiledFunction fn = branchTarget(targetPc);
     if (fn == nullptr || g_branchTraceSize != 0u || g_fullCallDispatch) [[unlikely]]
         return runtime.dispatchGuestBranch(rdram, ctx, targetPc, sourcePc, fallthroughPc, kind,
                                            kind == PS2Runtime::GuestBranchKind::IndirectCall ? "JALR" : "JAL");
@@ -3360,7 +3430,6 @@ void PS2Runtime::run()
         gameThreadFinished.store(true, std::memory_order_release); });
 
     ThreadPriority::RaiseCurrentThread(ThreadPriority::Level::AboveNormal);
-    bool restoreMaximized = false;
     uint64_t tick = 0;
     std::ofstream frameTimes;
     // With PCSX2's GS the presents happen on the GS thread: GSPcsx2Backend writes this file instead.
@@ -3621,45 +3690,14 @@ void PS2Runtime::run()
         const bool fullscreenAsked = ps2x::hotkeys::take(ps2x::hotkeys::Action::Fullscreen); // the F2 menu's button
         if (fullscreenKey || fullscreenAsked)
         {
-            ps2_host_input::releaseMouse();
-            const bool leavingFullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
-            if (!leavingFullscreen)
-                restoreMaximized = IsWindowMaximized();
-            ToggleBorderlessWindowed();
-            keepBorderlessBehind();
-            if (leavingFullscreen && restoreMaximized)
-                MaximizeWindow();
+            const int mode = ps2_host_display::toggleFullscreen();
             // The port keeps it as its Display Mode (saved like the OPTIONS screen's row).
             if (auto *listener = ps2_host_display::modeListener.load(std::memory_order_relaxed))
-                listener(!leavingFullscreen ? 2 : restoreMaximized ? 1 : 0);
+                listener(mode);
         }
         // The OPTIONS screen's Display Mode.
         if (const int mode = ps2_host_display::requestedMode.exchange(-1, std::memory_order_relaxed); mode >= 0)
-        {
-            ps2_host_input::releaseMouse();
-            const bool full = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
-            if (mode == 2)
-            {
-                if (!full)
-                {
-                    restoreMaximized = IsWindowMaximized();
-                    ToggleBorderlessWindowed();
-                    keepBorderlessBehind();
-                }
-            }
-            else
-            {
-                if (full)
-                    ToggleBorderlessWindowed();
-                if (mode == 1 && !IsWindowMaximized())
-                    MaximizeWindow();
-                else if (mode == 0 && IsWindowMaximized())
-                    RestoreWindow();
-                restoreMaximized = mode == 1;
-            }
-            ps2_host_display::startFullscreen = mode == 2;
-            ps2_host_display::startMaximized = mode == 1;
-        }
+            ps2_host_display::applyMode(mode);
         if (ps2_host_display::shapeRequested.exchange(false, std::memory_order_relaxed))
             shapeWindowToAspect();
 #endif

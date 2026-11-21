@@ -42,10 +42,16 @@ namespace kamite::modern
     void setModern(bool on);
     // The controller's Modern is Hold ([Game] ControlStyle=hold; setModern(true) too). Any thread.
     void setHold(bool on);
+    // Hold's mode: Hold to Cam ([Game] HoldMode=cam: brawl mode unless L1 is held) or Hold to Brawl. Any thread.
+    void setHoldCam(bool on);
     // Modern: Hold is in effect now (the controller is the device in use). Any thread.
     bool holdEnabled();
+    // ... and it is Hold to Cam.
+    bool holdCamEnabled();
     void setAuto(bool on);
     void setMouseCamera(bool on);
+    // The free camera's up / down, stick and mouse ([Game] CameraInvertY; the Options' Invert Camera Y-Axis).
+    void setInvertY(bool on);
     // The keyboard & mouse's own Control Style and Auto ([Game] KbmControlStyle / KbmModernAuto; K, Nov 16). enabled()
     // and autoEnabled() answer for the device used last.
     void setKbmModern(bool on);
@@ -56,6 +62,7 @@ namespace kamite::modern
         bool modern = false;
         bool autoOn = false;
         bool hold = false; // the controller's Modern: Hold (recorded as KAMITE_CONTROL_STYLE=hold)
+        bool holdCam = false; // ... Hold to Cam (KAMITE_HOLD_MODE=cam)
     };
     CaseStyle caseStyle();
     // A hit between Gene and an enemy landed (either way; game thread, the damage steps): with Auto, brawl mode.

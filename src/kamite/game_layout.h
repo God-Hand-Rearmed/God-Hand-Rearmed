@@ -29,6 +29,7 @@ namespace kamite::game
         inline constexpr uint32_t kSaveFlags = 0x588u;  // decomp: pad588; ours: bit 0x200000 = Hard unlocked
         inline constexpr uint32_t kDebugFlags = 0x594u; // decomp: debugFlags
         inline constexpr uint32_t kRoom = 0x5B0u;       // decomp: room (u16, the current room id)
+        inline constexpr uint16_t kTitleRoom = 0x020u;  // the title screen (its room DLL r020)
         inline constexpr uint32_t kFlags5D8 = 0x5D8u;   // decomp: flags5D8; the preview's STP group (Stp:: below)
         inline constexpr uint32_t kFlagsDsp = 0x5E0u;   // the preview's DSP group (Dsp:: below)
         inline constexpr uint32_t kFlags5E4 = 0x5E4u;   // decomp: flags5E4; the preview's STA group (Sta:: below)
@@ -171,6 +172,10 @@ namespace kamite::game
         inline constexpr uint32_t kPointer = 0x3BD930u; // D_003BD930
         inline constexpr uint32_t kKind = 0x48u;        // the open screen, -1 when closed
         inline constexpr uint32_t kOpen = 0x50u;        // short open
+        inline constexpr uint32_t kStack = 0xEE8u;      // int[11]: the kinds opened, outermost first (cSubScr_SubScrOn
+                                                        // writes its kind at [0])
+        inline constexpr uint32_t kDepth = 0xF15u;      // u8: entries in kStack
+        inline constexpr int32_t kPauseKind = 0;        // the pause menu (cGame_gameLoop's cSubScr_SubScrOn at 0x2A6770)
     }
 
     // cMessDrawFont, the message text drawer (cMessDrawFont.h); D_005E7510 is the one the text entries draw with.

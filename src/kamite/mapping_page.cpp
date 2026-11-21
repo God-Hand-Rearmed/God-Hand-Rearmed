@@ -42,9 +42,14 @@ namespace kamite::mapping_page
         constexpr Words kHoldL1 = {{"BRAWL (HOLD)", "180\xC2\xB0 TURN (2X)"}, false};
         constexpr Words kHoldR3 = {{"180\xC2\xB0 TURN", nullptr}, false};
         constexpr const char *kHoldL1Drum = "BRAWL / TURN", *kHoldR3Drum = "180\xC2\xB0 TURN";
+        // Hold to Cam (K, Nov 20): L1 held is the free camera, a tap the turn.
+        constexpr Words kHoldCamL1 = {{"FREECAM (HOLD)", "180\xC2\xB0 TURN (TAP)"}, false};
+        constexpr const char *kHoldCamL1Drum = "FREECAM / TURN";
         const Words &wordsOf(const Options &options, uint8_t input)
         {
-            return options.hold && input == L1 ? kHoldL1 : options.hold && input == R3 ? kHoldR3 : kActions[input];
+            return options.hold && input == L1 ? (options.holdCam ? kHoldCamL1 : kHoldL1)
+                   : options.hold && input == R3 ? kHoldR3
+                                                 : kActions[input];
         }
         // An input does something in play (the stick presses' actions come with their options).
         bool acts(const State &state, const Options &options, uint8_t input)
@@ -214,6 +219,8 @@ namespace kamite::mapping_page
             const std::string style = settings::value(ini, *s);
             o.hold = style == "hold";
             o.modern = style == "modern" || o.hold;
+            if (const settings::Setting *mode = settings::find("HoldMode"))
+                o.holdCam = o.hold && settings::value(ini, *mode) == "cam";
         }
         if (const settings::Setting *s = settings::find("MenuButtons"))
         {
@@ -484,7 +491,7 @@ namespace kamite::mapping_page
                     item.icon = at < kRemappable ? d.keep(icons + set.file[at] + ".png") : "";
                     const bool does = entry.r3Turn >= 0 ? entry.r3Turn == 1 : shown(input);
                     item.text = !does                               ? kEmpty
-                                : options.hold && input == L1 ? kHoldL1Drum
+                                : options.hold && input == L1 ? (options.holdCam ? kHoldCamL1Drum : kHoldL1Drum)
                                 : options.hold && input == R3 ? kHoldR3Drum
                                                               : kDrumNames[input];
                     if (does && kDrumArrows[input])

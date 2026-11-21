@@ -636,6 +636,24 @@ namespace kamite::menu_buttons
             const uint32_t player = rd32(game::GameWork::address(game::GameWork::kPlayerObj));
             return !ramPointer(player, 0x700u) || (rd32(game::GameWork::address(game::GameWork::kFlags5E4)) & 0x40u) != 0u;
         }
+        // The pause menu or one of its pages (the outermost sub screen opened is the pause menu: Techniques, OPTIONS, the
+        // map...), or the title screen: the extra buttons' save-state commands are held there (K, Nov 21). The shops, the
+        // save screen, minigames and the casino keep them.
+        bool pauseOrTitle()
+        {
+            uint16_t room = 0;
+            std::memcpy(&room, g_ram + (game::GameWork::address(game::GameWork::kRoom) & PS2_RAM_MASK), sizeof(room));
+            if (room == game::GameWork::kTitleRoom)
+                return true;
+            const uint32_t subScr = rd32(game::SubScr::kPointer);
+            if (!ramPointer(subScr, 0x1000u))
+                return false;
+            const int32_t kind = static_cast<int32_t>(rd32(subScr + game::SubScr::kKind));
+            if (kind < 0 && static_cast<int16_t>(rd32(subScr + game::SubScr::kOpen)) == 0)
+                return false;
+            const bool stacked = g_ram[(subScr + game::SubScr::kDepth) & PS2_RAM_MASK] != 0u;
+            return (stacked ? static_cast<int32_t>(rd32(subScr + game::SubScr::kStack)) : kind) == game::SubScr::kPauseKind;
+        }
         // A tutorial pop-up is up.
         bool tutorialPopUp()
         {
@@ -668,6 +686,7 @@ namespace kamite::menu_buttons
                                                                    : PadButton::Triangle);
             const bool popUp = tutorialPopUp(), roulette = menu && rouletteOpen();
             ps2_host_input::setMenuEscStart(menu && eventOrTitle() && !subScreenUp() && !roulette && !popUp);
+            ps2_host_input::extra::setHeld(pauseOrTitle());
             // The roulette with the keyboard and mouse (K, Nov 16): left click OK, right click cancel, the wheel steps it.
             ps2_host_input::setMenuRoulette(roulette);
             g_promptMode.store(!menu || popUp ? PromptMode::Play : roulette ? PromptMode::Roulette : PromptMode::Menu,

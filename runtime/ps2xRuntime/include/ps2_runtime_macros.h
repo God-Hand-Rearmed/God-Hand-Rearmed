@@ -13,6 +13,7 @@
 #endif
 
 #include "ps2_runtime.h"
+#include "ps2_ee_float.h"
 
 static PS2_FORCEINLINE int32_t Ps2ExtractEpi32(__m128i v, int index)
 {
@@ -140,64 +141,320 @@ static inline uint32_t ps2_plzcw32(uint32_t x)
 #define PS2_PXOR(a, b) _mm_xor_si128((__m128i)(a), (__m128i)(b))
 #define PS2_PNOR(a, b) _mm_xor_si128(_mm_or_si128((__m128i)(a), (__m128i)(b)), _mm_set1_epi32(0xFFFFFFFF))
 
-PS2_FORCEINLINE __m128 ps2VuClampVector(__m128 value)
+// EE FPU and VU0 macro arithmetic. Default (since Nov 20): the host's ops under the PS2's rounding and flush, ps2ee
+// wherever a value is past FLT_MAX or a divisor is 0 (see ps2FpuPastMax below). With PS2_EXACT_EE_FLOAT defined at build
+// time: the PS2's own rules, bit for bit (ps2_ee_float.h, from GT3 Revisited): add / sub
+// chop after the adder's one-guard-bit alignment, the multiplier's and divider's last-place quirks, no denormals,
+// exponent 255 an ordinary exponent (+-0x7FFFFFFF the largest values). The registers keep floats. VU1 keeps its own
+// maths (rendering only). add / sub / mul (+ madd / msub, VU0's too) run on the host's floats under the game thread's
+// chop + DAZ / FTZ (main.cpp applyEeFloatingPointMode: guest code runs on that thread only), bit for bit ps2ee's, and
+// fall back to ps2ee (integer code, the same on every host) where the host can't be exact: add aligns the smaller
+// operand to the larger's half ulp first ((y + S) - S, S = +-2^(ex-1)); mul is the chopped host product unless its
+// bits 16-22 are 0 (the multiplier's lost carry may show; a round a's is taken from a table).
+PS2_FORCEINLINE float ps2FpuAddHost(float a, float b, bool &inexact)
 {
-    const __m128i bits = _mm_castps_si128(value);
-    const __m128i exponentMask = _mm_set1_epi32(0x7F800000);
-    const __m128i special = _mm_cmpeq_epi32(_mm_and_si128(bits, exponentMask), exponentMask);
-    const __m128i saturated = _mm_or_si128(_mm_and_si128(bits, _mm_set1_epi32(static_cast<int>(0x80000000u))), _mm_set1_epi32(0x7F7FFFFF));
-    return _mm_castsi128_ps(_mm_or_si128(_mm_and_si128(special, saturated), _mm_andnot_si128(special, bits)));
-}
-
-PS2_FORCEINLINE float ps2FpuClamp(float value)
-{
-    uint32_t bits;
-    std::memcpy(&bits, &value, sizeof(bits));
-    if ((bits & 0x7F800000u) == 0x7F800000u)
+    const uint32_t ia = ps2ee::bits(a), ib = ps2ee::bits(b);
+    const uint32_t ma = ia & 0x7FFFFFFFu, mb = ib & 0x7FFFFFFFu;
+    const bool swap = mb > ma;
+    const uint32_t x = swap ? ib : ia, y = swap ? ia : ib; // |x| >= |y|
+    const uint32_t ex = (swap ? mb : ma) >> 23, ey = (swap ? ma : mb) >> 23;
+    float yf = ps2ee::fl(y);
+    if (ex - ey >= 2u)
     {
-        bits = (bits & 0x80000000u) | 0x7F7FFFFFu;
-        std::memcpy(&value, &bits, sizeof(value));
+        const float half = ps2ee::fl((y & 0x80000000u) | ((ex - 1u) << 23));
+        yf = (yf + half) - half;
     }
-    return value;
+    const float r = ps2ee::fl(x) + yf;
+    inexact = (ps2ee::bits(r) & 0x7FFFFFFFu) > 0x7F7FFFFEu; // past FLT_MAX: an overflow or an exponent-255 operand
+    return r;
 }
-
-PS2_FORCEINLINE void ps2FpuAlignOperands(float &a, float &b)
+PS2_FORCEINLINE float ps2FpuMulHost(float a, float b, bool &inexact)
 {
-    uint32_t ua;
-    uint32_t ub;
-    std::memcpy(&ua, &a, sizeof(ua));
-    std::memcpy(&ub, &b, sizeof(ub));
-    const int32_t diff = static_cast<int32_t>((ua >> 23) & 0xFFu) - static_cast<int32_t>((ub >> 23) & 0xFFu);
-    if (diff >= 25)
-        ub &= 0x80000000u;
-    else if (diff > 0)
-        ub &= 0xFFFFFFFFu << (diff - 1);
-    else if (diff <= -25)
-        ua &= 0x80000000u;
-    else if (diff < 0)
-        ua &= 0xFFFFFFFFu << (-diff - 1);
-    std::memcpy(&a, &ua, sizeof(a));
-    std::memcpy(&b, &ub, sizeof(b));
+    const float r = a * b;
+    const uint32_t ia = ps2ee::bits(a), ib = ps2ee::bits(b), rb = ps2ee::bits(r);
+    const uint32_t low = ((ia & 0x7FFFFFu) | 0x800000u) * ((ib & 0x7FFFFFu) | 0x800000u); // product's low 32 bits
+    const bool carry = (low & 0x7F0000u) == 0u && (ia & 0x7F800000u) != 0u && (ib & 0x7F800000u) != 0u &&
+                       (ib & 0xFFFFu) != 0u; // (not with a 0 operand, nor a round b: x * 1.0 is the chopped product)
+    inexact = (rb & 0x7FFFFFFFu) > 0x7F7FFFFEu;
+    if (carry && !inexact)
+    {
+        // A round a (1.0 * x, 0.5 * x, 3.0 * x ...): the lost carry by table, the product one lower in its last place
+        // where its bits 16-22 (23 with the top bit) are 0. Anything else, or a result near the smallest normal, goes
+        // to ps2ee.
+        if ((ia & 0xFFFFu) == 0u && (rb & 0x7F000000u) != 0u)
+        {
+            const uint64_t p = uint64_t((ia & 0x7FFFFFu) | 0x800000u) * uint64_t((ib & 0x7FFFFFu) | 0x800000u);
+            const uint32_t hi = uint32_t(p >> 47);
+            if ((p & ((uint64_t(1) << (23 + hi)) - 1)) < (uint64_t(1) << 16))
+                return ps2ee::fl(rb - ps2ee::roundCarry(ib));
+        }
+        else
+            inexact = true;
+    }
+    return r;
 }
-
+#if defined(PS2_EXACT_EE_FLOAT)
 PS2_FORCEINLINE float ps2FpuAdd(float a, float b)
 {
-    ps2FpuAlignOperands(a, b);
-    return ps2FpuClamp(a + b);
+    bool inexact;
+    const float r = ps2FpuAddHost(a, b, inexact);
+    return inexact ? ps2ee::fl(ps2ee::add(ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+PS2_FORCEINLINE float ps2FpuSub(float a, float b) { return ps2FpuAdd(a, -b); }
+// a = fs, b = ft: the multiplier's quirk is not commutative.
+PS2_FORCEINLINE float ps2FpuMul(float a, float b)
+{
+    bool inexact;
+    const float r = ps2FpuMulHost(a, b, inexact);
+    return inexact ? ps2ee::fl(ps2ee::mul(ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+PS2_FORCEINLINE float ps2FpuMadd(float acc, float a, float b)
+{
+    bool mulInexact, addInexact;
+    const float r = ps2FpuAddHost(acc, ps2FpuMulHost(a, b, mulInexact), addInexact);
+    return (mulInexact || addInexact) ? ps2ee::fl(ps2ee::madd(ps2ee::bits(acc), ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+PS2_FORCEINLINE float ps2FpuMsub(float acc, float a, float b)
+{
+    bool mulInexact, addInexact;
+    const float r = ps2FpuAddHost(acc, -ps2FpuMulHost(a, b, mulInexact), addInexact);
+    return (mulInexact || addInexact) ? ps2ee::fl(ps2ee::msub(ps2ee::bits(acc), ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+#else
+// The default (K, Nov 20: accurate to God Hand's gameplay, not to the PS2's hardware): the host's own add / mul under
+// the game thread's chop + DAZ / FTZ (the PS2's rounding direction and its flush of tiny values), without the PS2
+// adder's alignment and the multiplier's lost carry, which only ever move the last bit. A result at or past FLT_MAX
+// (an overflow, or any exponent-255 operand: the PS2 has no Inf / NaN, those are ordinary large numbers to it) is
+// redone by ps2ee, so overflow, the game's +-max sentinels and clamping stay the PS2's exactly and no Inf / NaN ever
+// reaches the game. PS2_EXACT_EE_FLOAT (build-time) restores the exact rules above.
+// At or past FLT_MAX - 1 ulp: FLT_MAX +- a small value chops to FLT_MAX - 1 ulp on the host but stays FLT_MAX on the
+// PS2 (the adder drops the small operand), and the game may use +-FLT_MAX as a sentinel, so those go to ps2ee too.
+PS2_FORCEINLINE bool ps2FpuPastMax(float r) { return (ps2ee::bits(r) & 0x7FFFFFFFu) > 0x7F7FFFFDu; }
+PS2_FORCEINLINE float ps2FpuAdd(float a, float b)
+{
+    const float r = a + b;
+    return ps2FpuPastMax(r) ? ps2ee::fl(ps2ee::add(ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+PS2_FORCEINLINE float ps2FpuSub(float a, float b) { return ps2FpuAdd(a, -b); }
+PS2_FORCEINLINE float ps2FpuMul(float a, float b)
+{
+    const float r = a * b;
+    return ps2FpuPastMax(r) ? ps2ee::fl(ps2ee::mul(ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+// The product rounded first, as on the PS2 (no fused multiply-add).
+PS2_FORCEINLINE float ps2FpuMadd(float acc, float a, float b)
+{
+    const float p = a * b, r = acc + p;
+    return ps2FpuPastMax(p) || ps2FpuPastMax(r) ? ps2ee::fl(ps2ee::madd(ps2ee::bits(acc), ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+PS2_FORCEINLINE float ps2FpuMsub(float acc, float a, float b)
+{
+    const float p = a * b, r = acc - p;
+    return ps2FpuPastMax(p) || ps2FpuPastMax(r) ? ps2ee::fl(ps2ee::msub(ps2ee::bits(acc), ps2ee::bits(a), ps2ee::bits(b))) : r;
+}
+#endif
+PS2_FORCEINLINE float ps2FpuMax(float a, float b) { return ps2ee::fl(ps2ee::maxOf(ps2ee::bits(a), ps2ee::bits(b))); }
+PS2_FORCEINLINE float ps2FpuMin(float a, float b) { return ps2ee::fl(ps2ee::minOf(ps2ee::bits(a), ps2ee::bits(b))); }
+PS2_FORCEINLINE float ps2FpuFromWord(int32_t v) { return ps2ee::fl(ps2ee::fromInt(v)); }
+
+// VU0 macro ops: the same rules on each lane. Fast path on the host's SSE floats under the game thread's chop +
+// DAZ / FTZ, bit for bit the same as ps2ee: add / sub align the smaller operand to the larger's half ulp first
+// ((y + S) - S with S = +-2^(ex-1), exact under chop), mul is the chopped host product. A vector with a lane the host
+// can't do exactly (an exponent-255 operand, a result at or past FLT_MAX, a product whose bits below its last place
+// are < 2^16: the multiplier's lost carry may show; most products of round numbers such as 1.0 * x) is redone lane by
+// lane with the scalar ops above (each exact, ps2ee only for the lanes that need it), out of line.
+#if defined(_MSC_VER)
+#define PS2_NOINLINE __declspec(noinline)
+#else
+#define PS2_NOINLINE __attribute__((noinline))
+#endif
+enum class Ps2VuLaneOp
+{
+    Add,
+    Madd,
+    Msub
+};
+PS2_NOINLINE inline __m128 ps2VuExactLanes(Ps2VuLaneOp op, __m128 acc, __m128 a, __m128 b)
+{
+    alignas(16) float z[4], x[4], y[4], r[4];
+    _mm_store_ps(z, acc);
+    _mm_store_ps(x, a);
+    _mm_store_ps(y, b);
+    for (int i = 0; i < 4; ++i)
+        r[i] = op == Ps2VuLaneOp::Add    ? ps2FpuAdd(x[i], y[i])
+               : op == Ps2VuLaneOp::Madd ? ps2FpuMadd(z[i], x[i], y[i])
+                                         : ps2FpuMsub(z[i], x[i], y[i]);
+    return _mm_load_ps(r);
 }
 
-PS2_FORCEINLINE float ps2FpuSub(float a, float b)
+// The host result r is exact unless a lane's magnitude is at or past FLT_MAX (an overflow chopped to FLT_MAX, or an
+// exponent-255 operand's Inf / NaN).
+PS2_FORCEINLINE bool ps2VuPastMax(__m128 r)
 {
-    ps2FpuAlignOperands(a, b);
-    return ps2FpuClamp(a - b);
+    const __m128i magnitude = _mm_and_si128(_mm_castps_si128(r), _mm_set1_epi32(0x7FFFFFFF));
+    return _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(magnitude, _mm_set1_epi32(0x7F7FFFFE)))) != 0;
 }
 
-inline float ps2SignedFloatMax(uint32_t signSource)
+// The default mode's check: the lanes of a vector at or past FLT_MAX - 1 ulp (an overflow, an exponent-255 operand,
+// FLT_MAX +- a small value; see ps2FpuPastMax).
+PS2_FORCEINLINE int ps2VuPastMaxLanes(__m128 r)
 {
-    const uint32_t bits = (signSource & 0x80000000u) | 0x7F7FFFFFu;
-    float out;
-    std::memcpy(&out, &bits, sizeof(out));
-    return out;
+    const __m128i magnitude = _mm_and_si128(_mm_castps_si128(r), _mm_set1_epi32(0x7FFFFFFF));
+    return _mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(magnitude, _mm_set1_epi32(0x7F7FFFFD))));
+}
+
+// The host sum, exact unless a lane comes out at or past FLT_MAX (*inexact set): an overflow chopped to FLT_MAX, or
+// an exponent-255 operand (the host's Inf / NaN carries through to the result).
+PS2_FORCEINLINE __m128 ps2VuAddHost(__m128 a, __m128 b, bool &inexact)
+{
+    const __m128i ia = _mm_castps_si128(a), ib = _mm_castps_si128(b), magMask = _mm_set1_epi32(0x7FFFFFFF);
+    const __m128i ma = _mm_and_si128(ia, magMask), mb = _mm_and_si128(ib, magMask);
+    const __m128i swap = _mm_cmpgt_epi32(mb, ma);
+    const __m128i x = _mm_blendv_epi8(ia, ib, swap), y = _mm_blendv_epi8(ib, ia, swap); // |x| >= |y|
+    const __m128i ex = _mm_srli_epi32(_mm_max_epi32(ma, mb), 23), ey = _mm_srli_epi32(_mm_min_epi32(ma, mb), 23);
+    const __m128i align = _mm_cmpgt_epi32(_mm_sub_epi32(ex, ey), _mm_set1_epi32(1));
+    // +-2^(ex-1) with y's sign (unused where align is off, so ex <= 1 needs no care)
+    const __m128i half = _mm_or_si128(_mm_and_si128(y, _mm_set1_epi32(int(0x80000000u))),
+                                      _mm_slli_epi32(_mm_sub_epi32(ex, _mm_set1_epi32(1)), 23));
+    const __m128 yf = _mm_castsi128_ps(y), hf = _mm_castsi128_ps(half);
+    const __m128 yAligned = _mm_blendv_ps(yf, _mm_sub_ps(_mm_add_ps(yf, hf), hf), _mm_castsi128_ps(align));
+    const __m128 r = _mm_add_ps(_mm_castsi128_ps(x), yAligned);
+    inexact = ps2VuPastMax(r);
+    return r;
+}
+
+#if defined(PS2_EXACT_EE_FLOAT)
+PS2_FORCEINLINE __m128 ps2VuAdd(__m128 a, __m128 b)
+{
+    bool inexact;
+    const __m128 r = ps2VuAddHost(a, b, inexact);
+    return inexact ? ps2VuExactLanes(Ps2VuLaneOp::Add, a, a, b) : r;
+}
+#else
+// The default: the host's sum; a lane at or past FLT_MAX sends the vector lane by lane through ps2FpuAdd (host
+// sums, ps2ee for the lanes past max).
+PS2_FORCEINLINE __m128 ps2VuAdd(__m128 a, __m128 b)
+{
+    const __m128 r = _mm_add_ps(a, b);
+    return ps2VuPastMaxLanes(r) ? ps2VuExactLanes(Ps2VuLaneOp::Add, a, a, b) : r;
+}
+#endif
+
+PS2_FORCEINLINE __m128 ps2VuSub(__m128 a, __m128 b)
+{
+    return ps2VuAdd(a, _mm_xor_ps(b, _mm_castsi128_ps(_mm_set1_epi32(int(0x80000000u)))));
+}
+
+// The chopped host product, exact except in the lanes set in check: a lane past FLT_MAX (an overflow, or an
+// exponent-255 operand's Inf / NaN), or a lane whose product's bits 16-22 are 0, so the multiplier's lost carry may
+// show (not when the product is 0, an operand 0 or tiny, nor when b is round, its low 16 bits 0: x * 1.0, x * 2.0 ...
+// are the chopped product).
+PS2_FORCEINLINE __m128 ps2VuMulHost(__m128 a, __m128 b, int &check)
+{
+    const __m128 r = _mm_mul_ps(a, b);
+    const __m128i ia = _mm_castps_si128(a), ib = _mm_castps_si128(b), ir = _mm_castps_si128(r);
+    const __m128i zero = _mm_setzero_si128();
+    const __m128i mantissa = _mm_set1_epi32(0x7FFFFF), hidden = _mm_set1_epi32(0x800000);
+    const __m128i low = _mm_mullo_epi32(_mm_or_si128(_mm_and_si128(ia, mantissa), hidden),
+                                        _mm_or_si128(_mm_and_si128(ib, mantissa), hidden)); // product's low 32 bits
+    const __m128i carry = _mm_cmpeq_epi32(_mm_and_si128(low, _mm_set1_epi32(0x7F0000)), zero);
+    const __m128i skip = _mm_or_si128(_mm_cmpeq_epi32(_mm_and_si128(ir, _mm_set1_epi32(0x7F800000)), zero),
+                                      _mm_cmpeq_epi32(_mm_and_si128(ib, _mm_set1_epi32(0xFFFF)), zero));
+    const __m128i past = _mm_cmpgt_epi32(_mm_and_si128(ir, _mm_set1_epi32(0x7FFFFFFF)), _mm_set1_epi32(0x7F7FFFFE));
+    check = _mm_movemask_ps(_mm_castsi128_ps(_mm_or_si128(_mm_andnot_si128(skip, carry), past)));
+    return r;
+}
+
+// The exact products of the lanes the host flagged (ps2FpuMul: the host's product, a round a's carry by table, ps2ee
+// for the rest); a lane that overflowed is +-0x7FFFFFFF, which the add after it sees as past FLT_MAX.
+PS2_NOINLINE inline __m128 ps2VuMulCheck(__m128 r, __m128 a, __m128 b, int lanes)
+{
+    alignas(16) float x[4], y[4], p[4];
+    _mm_store_ps(x, a);
+    _mm_store_ps(y, b);
+    _mm_store_ps(p, r);
+    for (int i = 0; i < 4; ++i)
+        if (lanes & (1 << i))
+            p[i] = ps2FpuMul(x[i], y[i]);
+    return _mm_load_ps(p);
+}
+
+#if defined(PS2_EXACT_EE_FLOAT)
+// a = fs, b = ft (the multiplier's quirk is not commutative).
+PS2_FORCEINLINE __m128 ps2VuMul(__m128 a, __m128 b)
+{
+    int check;
+    const __m128 r = ps2VuMulHost(a, b, check);
+    return check ? ps2VuMulCheck(r, a, b, check) : r;
+}
+#else
+// The default: the host's product; lanes past FLT_MAX redone by ps2FpuMul (ps2ee for them).
+PS2_FORCEINLINE __m128 ps2VuMul(__m128 a, __m128 b)
+{
+    const __m128 r = _mm_mul_ps(a, b);
+    const int lanes = ps2VuPastMaxLanes(r);
+    return lanes ? ps2VuMulCheck(r, a, b, lanes) : r;
+}
+#endif
+
+#if defined(PS2_EXACT_EE_FLOAT)
+// acc + a * b / acc - a * b: the product rounded first; a product that overflowed (+-max) is the result. Any lane
+// the host can't do exactly sends the vector lane by lane (an overflowed product reaches the add past FLT_MAX, so the
+// add's own check catches it).
+PS2_FORCEINLINE __m128 ps2VuMadd(__m128 acc, __m128 a, __m128 b)
+{
+    int check;
+    bool addInexact;
+    __m128 p = ps2VuMulHost(a, b, check);
+    if (check)
+        p = ps2VuMulCheck(p, a, b, check);
+    const __m128 r = ps2VuAddHost(acc, p, addInexact);
+    return addInexact ? ps2VuExactLanes(Ps2VuLaneOp::Madd, acc, a, b) : r;
+}
+PS2_FORCEINLINE __m128 ps2VuMsub(__m128 acc, __m128 a, __m128 b)
+{
+    int check;
+    bool addInexact;
+    __m128 p = ps2VuMulHost(a, b, check);
+    if (check)
+        p = ps2VuMulCheck(p, a, b, check);
+    const __m128 r = ps2VuAddHost(acc, _mm_xor_ps(p, _mm_castsi128_ps(_mm_set1_epi32(int(0x80000000u)))), addInexact);
+    return addInexact ? ps2VuExactLanes(Ps2VuLaneOp::Msub, acc, a, b) : r;
+}
+#else
+// The default: the host's product rounded, then the host's sum (no fused multiply-add, as on the PS2); a lane past
+// FLT_MAX in either sends the vector lane by lane through ps2FpuMadd / ps2FpuMsub.
+PS2_FORCEINLINE __m128 ps2VuMadd(__m128 acc, __m128 a, __m128 b)
+{
+    const __m128 p = _mm_mul_ps(a, b), r = _mm_add_ps(acc, p);
+    return (ps2VuPastMaxLanes(p) | ps2VuPastMaxLanes(r))
+               ? ps2VuExactLanes(Ps2VuLaneOp::Madd, acc, a, b)
+               : r;
+}
+PS2_FORCEINLINE __m128 ps2VuMsub(__m128 acc, __m128 a, __m128 b)
+{
+    const __m128 p = _mm_mul_ps(a, b), r = _mm_sub_ps(acc, p);
+    return (ps2VuPastMaxLanes(p) | ps2VuPastMaxLanes(r))
+               ? ps2VuExactLanes(Ps2VuLaneOp::Msub, acc, a, b)
+               : r;
+}
+#endif
+
+// max / min: sign-magnitude order with exponent-0 values as zero (+0 == -0: the first operand wins a tie).
+PS2_FORCEINLINE __m128i ps2VuKey(__m128 v)
+{
+    const __m128i i = _mm_castps_si128(v);
+    const __m128i sign = _mm_srai_epi32(i, 31);
+    const __m128i key = _mm_sub_epi32(_mm_xor_si128(_mm_and_si128(i, _mm_set1_epi32(0x7FFFFFFF)), sign), sign);
+    return _mm_andnot_si128(_mm_cmpeq_epi32(_mm_and_si128(i, _mm_set1_epi32(0x7F800000)), _mm_setzero_si128()), key);
+}
+PS2_FORCEINLINE __m128 ps2VuMax(__m128 a, __m128 b)
+{
+    return _mm_blendv_ps(a, b, _mm_castsi128_ps(_mm_cmpgt_epi32(ps2VuKey(b), ps2VuKey(a))));
+}
+PS2_FORCEINLINE __m128 ps2VuMin(__m128 a, __m128 b)
+{
+    return _mm_blendv_ps(a, b, _mm_castsi128_ps(_mm_cmpgt_epi32(ps2VuKey(a), ps2VuKey(b))));
 }
 
 PS2_FORCEINLINE uint32_t ps2FloatBits(float value)
@@ -225,54 +482,70 @@ constexpr uint32_t PS2_FCR31_D = 0x00010000u;
 constexpr uint32_t PS2_FCR31_SI = 0x00000040u;
 constexpr uint32_t PS2_FCR31_SD = 0x00000020u;
 
-inline float ps2FpuDivideNearest(float dividend, float divisor)
+// Divide / square root (div.s, sqrt.s, rsqrt.s, and VU0's vdiv / vsqrt / vrsqrt into Q). By default the host's
+// divider / root under the game thread's chop for ordinary operands (exponents 1-254, a result below FLT_MAX), without
+// the PS2 divider's occasional one-above last bit; zero divisors, exponent-0 / 255 operands and results past FLT_MAX
+// take ps2ee, so +-max for a division by zero, the PS2's huge-number handling and no Inf / NaN stay exact.
+// PS2_EXACT_EE_FLOAT: ps2ee for every one.
+PS2_FORCEINLINE uint32_t ps2EeDiv(uint32_t a, uint32_t b)
 {
-    const uint32_t csr = _mm_getcsr();
-    _mm_setcsr(csr & ~0x6000u);
-    const float result = _mm_cvtss_f32(_mm_div_ss(_mm_set_ss(dividend), _mm_set_ss(divisor)));
-    _mm_setcsr(csr);
-    return result;
+#if !defined(PS2_EXACT_EE_FLOAT)
+    const uint32_t ea = (a >> 23) & 0xFFu, eb = (b >> 23) & 0xFFu;
+    if (eb - 1u < 254u && ea != 255u)
+    {
+        const uint32_t r = ps2ee::bits(_mm_cvtss_f32(_mm_div_ss(_mm_set_ss(ps2ee::fl(a)), _mm_set_ss(ps2ee::fl(b)))));
+        if ((r & 0x7FFFFFFFu) <= 0x7F7FFFFDu)
+            return r;
+    }
+#endif
+    return ps2ee::div(a, b);
 }
-
-inline float ps2FpuSqrtNearest(float value)
+PS2_FORCEINLINE uint32_t ps2EeSqrt(uint32_t a) // sqrt(|a|)
 {
-    const uint32_t csr = _mm_getcsr();
-    _mm_setcsr(csr & ~0x6000u);
-    const float result = _mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(value)));
-    _mm_setcsr(csr);
-    return result;
+#if !defined(PS2_EXACT_EE_FLOAT)
+    if (((a >> 23) & 0xFFu) - 1u < 254u)
+        return ps2ee::bits(_mm_cvtss_f32(_mm_sqrt_ss(_mm_set_ss(ps2ee::fl(a & 0x7FFFFFFFu)))));
+#endif
+    return ps2ee::sqrt(a);
 }
-
+PS2_FORCEINLINE uint32_t ps2EeRsqrt(uint32_t a, uint32_t b) // a / sqrt(|b|)
+{
+#if !defined(PS2_EXACT_EE_FLOAT)
+    const uint32_t ea = (a >> 23) & 0xFFu, eb = (b >> 23) & 0xFFu;
+    if (eb - 1u < 254u && ea != 255u)
+    {
+        const __m128 root = _mm_sqrt_ss(_mm_set_ss(ps2ee::fl(b & 0x7FFFFFFFu)));
+        const uint32_t r = ps2ee::bits(_mm_cvtss_f32(_mm_div_ss(_mm_set_ss(ps2ee::fl(a)), root)));
+        if ((r & 0x7FFFFFFFu) <= 0x7F7FFFFDu)
+            return r;
+    }
+#endif
+    return ps2ee::rsqrt(a, b);
+}
 inline float ps2FpuDivide(uint32_t &fcr31, float dividend, float divisor)
 {
-    if (ps2FloatIsZero(divisor))
-    {
-        if (ps2FloatIsZero(dividend))
-            fcr31 |= PS2_FCR31_I | PS2_FCR31_SI;
-        else
-            fcr31 |= PS2_FCR31_D | PS2_FCR31_SD;
-        return ps2SignedFloatMax(ps2FloatBits(dividend) ^ ps2FloatBits(divisor));
-    }
-    return ps2FpuClamp(ps2FpuDivideNearest(dividend, divisor));
+    const uint32_t a = ps2ee::bits(dividend), b = ps2ee::bits(divisor);
+    if (ps2ee::isZero(b))
+        fcr31 |= ps2ee::isZero(a) ? (PS2_FCR31_I | PS2_FCR31_SI) : (PS2_FCR31_D | PS2_FCR31_SD);
+    return ps2ee::fl(ps2EeDiv(a, b));
 }
 
 inline float ps2FpuSqrt(uint32_t &fcr31, float value)
 {
-    if ((ps2FloatBits(value) & 0x80000000u) != 0u && !ps2FloatIsZero(value))
+    const uint32_t a = ps2ee::bits(value);
+    if ((a & ps2ee::kSign) != 0u && !ps2ee::isZero(a))
         fcr31 |= PS2_FCR31_I | PS2_FCR31_SI;
-    return ps2FpuClamp(ps2FpuSqrtNearest(std::fabs(value)));
+    return ps2ee::fl(ps2EeSqrt(a));
 }
 
 inline float ps2FpuRsqrt(uint32_t &fcr31, float numerator, float value)
 {
-    if (ps2FloatIsZero(value))
-    {
+    const uint32_t a = ps2ee::bits(numerator), b = ps2ee::bits(value);
+    if (ps2ee::isZero(b))
         fcr31 |= PS2_FCR31_D | PS2_FCR31_SD;
-        return ps2SignedFloatMax(ps2FloatBits(numerator) ^ ps2FloatBits(value));
-    }
-    if ((ps2FloatBits(value) & 0x80000000u) != 0u)
+    else if ((b & ps2ee::kSign) != 0u)
         fcr31 |= PS2_FCR31_I | PS2_FCR31_SI;
-    return ps2FpuClamp(ps2FpuDivideNearest(numerator, ps2FpuSqrtNearest(std::fabs(value))));
+    return ps2ee::fl(ps2EeRsqrt(a, b));
 }
 
 inline int32_t ps2FpuConvertToWord(float value)
@@ -288,50 +561,44 @@ constexpr uint16_t PS2_VU_STATUS_D = 0x0020u;
 constexpr uint16_t PS2_VU_STATUS_IS = 0x0400u;
 constexpr uint16_t PS2_VU_STATUS_DS = 0x0800u;
 
+// VU0's divide unit (vdiv, vsqrt, vrsqrt into Q): the same divider's results; the status flags as before.
 inline float ps2VuDivide(uint16_t &status, float dividend, float divisor)
 {
     status &= static_cast<uint16_t>(~(PS2_VU_STATUS_I | PS2_VU_STATUS_D));
-    if (ps2FloatIsZero(divisor))
-    {
-        if (ps2FloatIsZero(dividend))
-            status |= PS2_VU_STATUS_I | PS2_VU_STATUS_IS;
-        else
-            status |= PS2_VU_STATUS_D | PS2_VU_STATUS_DS;
-        return ps2SignedFloatMax(ps2FloatBits(dividend) ^ ps2FloatBits(divisor));
-    }
-    return ps2FpuClamp(dividend / divisor);
+    const uint32_t a = ps2ee::bits(dividend), b = ps2ee::bits(divisor);
+    if (ps2ee::isZero(b))
+        status |= ps2ee::isZero(a) ? (PS2_VU_STATUS_I | PS2_VU_STATUS_IS) : (PS2_VU_STATUS_D | PS2_VU_STATUS_DS);
+    return ps2ee::fl(ps2EeDiv(a, b));
 }
 
 inline float ps2VuSqrt(uint16_t &status, float value)
 {
     status &= static_cast<uint16_t>(~(PS2_VU_STATUS_I | PS2_VU_STATUS_D));
-    if ((ps2FloatBits(value) & 0x80000000u) != 0u && !ps2FloatIsZero(value))
+    const uint32_t a = ps2ee::bits(value);
+    if ((a & ps2ee::kSign) != 0u && !ps2ee::isZero(a))
         status |= PS2_VU_STATUS_I | PS2_VU_STATUS_IS;
-    return ps2FpuClamp(std::sqrt(std::fabs(value)));
+    return ps2ee::fl(ps2EeSqrt(a));
 }
 
 inline float ps2VuRsqrt(uint16_t &status, float numerator, float value)
 {
     status &= static_cast<uint16_t>(~(PS2_VU_STATUS_I | PS2_VU_STATUS_D));
-    if (ps2FloatIsZero(value))
-    {
-        if (ps2FloatIsZero(numerator))
-            status |= PS2_VU_STATUS_I | PS2_VU_STATUS_IS;
-        else
-            status |= PS2_VU_STATUS_D | PS2_VU_STATUS_DS;
-        return ps2SignedFloatMax(ps2FloatBits(numerator) ^ ps2FloatBits(value));
-    }
-    if ((ps2FloatBits(value) & 0x80000000u) != 0u)
+    const uint32_t a = ps2ee::bits(numerator), b = ps2ee::bits(value);
+    if (ps2ee::isZero(b))
+        status |= ps2ee::isZero(a) ? (PS2_VU_STATUS_I | PS2_VU_STATUS_IS) : (PS2_VU_STATUS_D | PS2_VU_STATUS_DS);
+    else if ((b & ps2ee::kSign) != 0u)
         status |= PS2_VU_STATUS_I | PS2_VU_STATUS_IS;
-    return ps2FpuClamp(numerator / std::sqrt(std::fabs(value)));
+    return ps2ee::fl(ps2EeRsqrt(a, b));
 }
 
 // PS2 VU (Vector Unit) operations
-#define PS2_VADD(a, b) ps2VuClampVector(_mm_add_ps((__m128)(a), (__m128)(b)))
-#define PS2_VSUB(a, b) ps2VuClampVector(_mm_sub_ps((__m128)(a), (__m128)(b)))
-#define PS2_VMUL(a, b) ps2VuClampVector(_mm_mul_ps((__m128)(a), (__m128)(b)))
-#define PS2_VDIV(a, b) _mm_div_ps((__m128)(a), (__m128)(b))
-#define PS2_VMULQ(a, q) ps2VuClampVector(_mm_mul_ps((__m128)(a), _mm_set1_ps(q)))
+#define PS2_VADD(a, b) ps2VuAdd((__m128)(a), (__m128)(b))
+#define PS2_VSUB(a, b) ps2VuSub((__m128)(a), (__m128)(b))
+#define PS2_VMUL(a, b) ps2VuMul((__m128)(a), (__m128)(b))
+#define PS2_VMADD(acc, a, b) ps2VuMadd((__m128)(acc), (__m128)(a), (__m128)(b))
+#define PS2_VMSUB(acc, a, b) ps2VuMsub((__m128)(acc), (__m128)(a), (__m128)(b))
+#define PS2_VMAX(a, b) ps2VuMax((__m128)(a), (__m128)(b))
+#define PS2_VMIN(a, b) ps2VuMin((__m128)(a), (__m128)(b))
 #define PS2_VBLEND(a, b, mask) PS2_BLENDV_PS((__m128)(a), (__m128)(b), (__m128)(mask))
 
 // Memory access helpers - Hybrid Fast/Slow Path
@@ -793,9 +1060,13 @@ inline __m128i ps2_u64_to_epi64_pair(uint64_t value)
 #define FPU_SET_ACC(ctx, res) (ctx->f_acc = res)
 #define FPU_ADD_S(a, b) ps2FpuAdd((float)(a), (float)(b))
 #define FPU_SUB_S(a, b) ps2FpuSub((float)(a), (float)(b))
-#define FPU_MUL_S(a, b) ps2FpuClamp((float)(a) * (float)(b))
-#define FPU_DIV_S(a, b) ps2FpuClamp((float)(a) / (float)(b))
-#define FPU_SQRT_S(a) ps2FpuClamp(std::sqrt(std::fabs((float)(a))))
+#define FPU_MUL_S(a, b) ps2FpuMul((float)(a), (float)(b))
+#define FPU_MADD_S(acc, a, b) ps2FpuMadd((float)(acc), (float)(a), (float)(b))
+#define FPU_MSUB_S(acc, a, b) ps2FpuMsub((float)(acc), (float)(a), (float)(b))
+#define FPU_MAX_S(a, b) ps2FpuMax((float)(a), (float)(b))
+#define FPU_MIN_S(a, b) ps2FpuMin((float)(a), (float)(b))
+#define FPU_DIV_S(a, b) ps2ee::fl(ps2EeDiv(ps2ee::bits((float)(a)), ps2ee::bits((float)(b))))
+#define FPU_SQRT_S(a) ps2ee::fl(ps2EeSqrt(ps2ee::bits((float)(a))))
 #define FPU_ABS_S(a) fabsf((float)(a))
 #define FPU_MOV_S(a) ((float)(a))
 #define FPU_NEG_S(a) (-(float)(a))
@@ -807,7 +1078,7 @@ inline __m128i ps2_u64_to_epi64_pair(uint64_t value)
 #define FPU_TRUNC_W_S(a) ((int32_t)(float)(a))
 #define FPU_CEIL_W_S(a) ((int32_t)ceilf((float)(a)))
 #define FPU_FLOOR_W_S(a) ((int32_t)floorf((float)(a)))
-#define FPU_CVT_S_W(a) ((float)(int32_t)(a))
+#define FPU_CVT_S_W(a) ps2FpuFromWord((int32_t)(a))
 #define FPU_CVT_S_L(a) ((float)(int64_t)(a))
 #define FPU_CVT_W_S(a) ps2FpuConvertToWord((float)(a))
 #define FPU_CVT_L_S(a) ((int64_t)(float)(a))

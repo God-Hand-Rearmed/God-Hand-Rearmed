@@ -18,7 +18,9 @@ namespace kamite::mods
     size_t prepare(const std::filesystem::path &exeDir);
 
     // After PS2Runtime::setIoPaths, before characters::install (the Character row's choice wins its files over a mod's):
-    // every game file an enabled mod has, served by the file layer from the lowest mod in the order that has it.
+    // every game file an enabled mod has, served by the file layer from the lowest mod in the order that has it; an
+    // archive (.afs) some mods replace entries of is served with those entries swapped in (afs_archive.h), their audio
+    // converted to ADX first (mod_audio.h, cached under <exe>/cache/mod-audio).
     void installFiles();
 
     // The enabled mod (its name) whose file replaces a game file ("em/em06.dat", lower case), or nullptr. For the

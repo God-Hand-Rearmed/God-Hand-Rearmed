@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "runtime/ps2_cd_image.h"
+
 class PS2Runtime;
 
 // The file layer: any game file in _DATA.AFS, by its disc path, replaced whole by a loose file or by bytes, of any
@@ -38,6 +40,9 @@ namespace kamite::file_layer
     // such file in the archive, or the replacement can't be read or is empty. A later replacement of a path wins.
     bool replace(std::string_view path, const std::filesystem::path &looseFile);
     bool replace(std::string_view path, std::vector<uint8_t> bytes);
+    // A file built from pieces (PS2ServedFiles::Piece: disc ranges, host files, bytes) of `size` bytes: an archive with
+    // some entries swapped (afs_archive.h). from names it in the log.
+    bool replace(std::string_view path, std::vector<PS2ServedFiles::Piece> pieces, uint64_t size, const std::string &from);
     // Every file under folder whose path relative to it is a game file's (folder/pl/pl00.dat replaces pl/pl00.dat);
     // anything else (character.ini, textures/) is skipped. Returns how many were replaced; who names them in the log.
     int replaceFolder(const std::filesystem::path &folder, const std::string &who);

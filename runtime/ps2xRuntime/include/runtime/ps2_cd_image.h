@@ -109,9 +109,29 @@ class PS2ServedFiles
 public:
     static constexpr uint32_t kFirstLba = 0x00400000u; // 8 GB in: past any DVD-9
 
+    // A part of a file built from pieces (an archive with some entries swapped): `size` bytes at `offset` in the
+    // served file, from the disc image (PS2CdImage's bytes at `from`, the overlay included), a host file (from `from`
+    // in it) or `bytes`. Pieces don't overlap; bytes no piece covers read as zero.
+    struct Piece
+    {
+        enum class Source
+        {
+            Disc,
+            Host,
+            Bytes,
+        };
+        uint64_t offset = 0, size = 0;
+        Source source = Source::Bytes;
+        uint64_t from = 0;
+        std::filesystem::path host;
+        std::vector<uint8_t> bytes;
+    };
+
     // The new file's first LBA; 0 when the file can't be read (or is empty).
     static uint32_t serve(const std::filesystem::path &hostFile);
     static uint32_t serve(std::vector<uint8_t> bytes);
+    // A file of `size` bytes made of pieces (sorted by offset here).
+    static uint32_t serve(std::vector<Piece> pieces, uint64_t size);
     static bool any();
     // Reads [lba, lba + sectors) into destination (size bytes) when lba lies in a served file: true, bytes past the
     // file's end zero. False: lba is not served (or the host file can't be read).
