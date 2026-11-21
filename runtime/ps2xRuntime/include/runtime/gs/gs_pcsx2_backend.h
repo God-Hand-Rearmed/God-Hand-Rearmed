@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 // PCSX2's GS (hardware renderer, pcsx2gs.dll) as the raster back end (docs/GS_PCSX2.md, phase 2). It takes the raw GIF
@@ -61,6 +62,14 @@ public:
     // Main thread: hides the GS image while a host UI drawn by raylib (the F1 debugger) is open.
     static void SetHostUiVisible(bool visible);
     static bool HostUiVisible();
+    // Main thread, after HostTick: the "Preparing shaders" notice to draw over the game window this frame
+    // (runtime/gs/gs_shader_notice.h: from the GS's first open until its first frame, once that has taken longer than
+    // ShaderNotice::kShowAfterSeconds; the child window is hidden meanwhile). False = none.
+    // PS2X_SHADER_NOTICE=0 turns it off, =1 on; by default it is on except on Windows (not tried there yet).
+    static bool ShaderNotice(std::string &title, std::string &detail, float &blockStart, float &blockEnd);
+    // Any thread: true once the first frame is out (or the open failed), with the time from the start of the open to
+    // it and the shaders compiled meanwhile (-1 = unknown). Logged once as "[gs] PCSX2 GS: first frame ...".
+    static bool ShaderNoticeResult(double &ms, int64_t &compiled);
     // Any thread: fields presented so far (the F3 counter's "Screen").
     static uint64_t Presents();
 

@@ -99,12 +99,15 @@ if(KAMITE_BUILD_TESTS)
         set_tests_properties(pcsx2_gs_smoke PROPERTIES TIMEOUT 300)
 
         # gs_pcsx2_backend_test: the runtime's side (gs_pcsx2_backend.cpp) with a raylib game window and no disc: the
-        # library found next to the executable, the X11 child window, resizes, hiding, the API switch, KAMITE_HOME.
+        # library found next to the executable, the X11 child window, resizes, hiding, the API switch, KAMITE_HOME, and
+        # the first start's "Preparing shaders" notice (runtime/gs/gs_shader_notice.h) with its shader count.
         add_executable(gs_pcsx2_backend_test
-            runtime/ps2xRuntime/test/gs_pcsx2_backend_test.cpp runtime/ps2xRuntime/src/lib/gs/gs_pcsx2_backend.cpp)
+            runtime/ps2xRuntime/test/gs_pcsx2_backend_test.cpp runtime/ps2xRuntime/src/lib/gs/gs_pcsx2_backend.cpp
+            runtime/ps2xRuntime/src/lib/gs/gs_shader_notice_draw.cpp)
         target_include_directories(gs_pcsx2_backend_test PRIVATE runtime/ps2xRuntime/include)
         find_package(X11 REQUIRED)
-        target_link_libraries(gs_pcsx2_backend_test PRIVATE pcsx2gs_api raylib X11::X11 ${CMAKE_DL_LIBS})
+        find_package(Threads REQUIRED)
+        target_link_libraries(gs_pcsx2_backend_test PRIVATE pcsx2gs_api raylib X11::X11 Threads::Threads ${CMAKE_DL_LIBS})
         set_target_properties(gs_pcsx2_backend_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
         add_dependencies(gs_pcsx2_backend_test pcsx2gs)
         add_dependencies(kamite_test_programs gs_pcsx2_backend_test)

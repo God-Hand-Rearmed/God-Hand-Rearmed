@@ -1,5 +1,6 @@
 #include "runtime/gs/gs_pcsx2_backend.h"
 #include "runtime/gs/gs_aspect.h"
+#include "runtime/gs/gs_shader_notice.h"
 
 #include <algorithm>
 #include <atomic>
@@ -10,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -90,6 +92,19 @@ namespace
     std::string g_apiWanted; // guarded by g_apiMutex
     NativeWindow g_newChild = nullptr; // made in Window, handed over by the steps' order (acquire / release)
     bool g_hostUiVisible = false; // SetHostUiVisible (main thread)
+    bool g_childHidden = false;   // main thread: the child window is hidden (for the host UI or the shader notice)
+
+    // The "Preparing shaders" notice (runtime/gs/gs_shader_notice.h). The GS thread starts it before its first open and
+    // finishes it at its first present; the main thread shows it in between (HostTick). Stage 0 = not yet, 1 = open
+    // under way, 2 = done: after that HostTick reads only the stage.
+    std::atomic<int> g_noticeStage{0};
+    std::atomic<bool> g_noticeWasShown{false};
+    std::mutex g_noticeMutex;
+    ps2x::gs::ShaderNotice g_notice;          // guarded by g_noticeMutex
+    ps2x::gs::ShaderIndexSet g_noticeIndexes; // guarded by g_noticeMutex
+    std::filesystem::path g_noticeCacheDir;   // guarded by g_noticeMutex
+    bool g_noticeShowing = false;             // main thread
+    double g_noticeLastPoll = 0.0;            // main thread
 
     std::filesystem::path exeDirectory()
     {
@@ -127,6 +142,90 @@ namespace
     {
         const char *value = std::getenv(name);
         return (value && *value) ? std::atoi(value) : fallback;
+    }
+
+    double secondsNow()
+    {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now() - g_processStart).count();
+    }
+
+    bool noticeEnabled()
+    {
+        static const bool enabled = []
+        {
+            const char *value = std::getenv("PS2X_SHADER_NOTICE");
+            if (value && *value)
+                return *value != '0';
+#if defined(_WIN32)
+            // Not tried on Windows: there a window presenting while it fills the monitor skips the composition that
+            // puts the child on top, and the launcher hand-off's cover sits over it (host_window_win32.cpp).
+            return false;
+#else
+            return true;
+#endif
+        }();
+        return enabled;
+    }
+
+    // The shader cache indexes in PCSX2's cache folder as they are now: a stat and the header bytes of each.
+    void sampleShaderIndexes(const std::filesystem::path &dir, ps2x::gs::ShaderIndexSample (&out)[ps2x::gs::kShaderIndexCount])
+    {
+        for (size_t i = 0; i < ps2x::gs::kShaderIndexCount; ++i)
+        {
+            const std::filesystem::path path = dir / ps2x::gs::kShaderIndexes[i].name;
+            std::error_code ec;
+            const uintmax_t size = std::filesystem::file_size(path, ec);
+            out[i] = {};
+            if (ec)
+                continue;
+            out[i].exists = true;
+            out[i].size = size;
+            std::ifstream file(path, std::ios::binary);
+            out[i].head.resize(ps2x::gs::kShaderIndexes[i].headerBytes);
+            file.read(out[i].head.data(), static_cast<std::streamsize>(out[i].head.size()));
+            out[i].head.resize(file ? out[i].head.size() : static_cast<size_t>(std::max<std::streamsize>(0, file.gcount())));
+        }
+    }
+
+    // GS thread, before the GS's first open (later opens, e.g. a graphics API switch, are not counted).
+    void noticeBegin(const std::filesystem::path &cacheDir)
+    {
+        if (g_noticeStage.load(std::memory_order_relaxed) != 0)
+            return;
+        ps2x::gs::ShaderIndexSample baseline[ps2x::gs::kShaderIndexCount];
+        sampleShaderIndexes(cacheDir, baseline);
+        {
+            std::lock_guard<std::mutex> lock(g_noticeMutex);
+            g_noticeCacheDir = cacheDir;
+            g_noticeIndexes.begin(baseline);
+            // PS2X_SHADER_NOTICE_DELAY_MS: when it shows (tests: 0, so the shown path always runs).
+            if (const char *delay = std::getenv("PS2X_SHADER_NOTICE_DELAY_MS"); delay && *delay)
+                g_notice.setShowAfter(std::max(0, std::atoi(delay)) / 1000.0);
+            g_notice.start(secondsNow());
+        }
+        g_noticeStage.store(1, std::memory_order_release);
+    }
+
+    // GS thread: the first frame is out (or the open failed). The last count, then the log line.
+    void noticeEnd()
+    {
+        if (g_noticeStage.load(std::memory_order_relaxed) != 1)
+            return;
+        std::string line;
+        {
+            std::lock_guard<std::mutex> lock(g_noticeMutex);
+            ps2x::gs::ShaderIndexSample samples[ps2x::gs::kShaderIndexCount];
+            sampleShaderIndexes(g_noticeCacheDir, samples);
+            g_noticeIndexes.observe(samples);
+            g_notice.setCompiled(g_noticeIndexes.compiled());
+            g_notice.finish(secondsNow());
+            line = g_notice.logLine();
+            if (g_noticeWasShown.load(std::memory_order_relaxed))
+                line += " (the notice was shown)";
+        }
+        g_noticeStage.store(2, std::memory_order_release);
+        std::fprintf(stderr, "%s\n", line.c_str());
+        std::fflush(stderr);
     }
 
 #if defined(_WIN32)
@@ -555,10 +654,66 @@ void GSPcsx2Backend::AttachHostWindow(void *parentHwnd)
     g_clientHeight.store(height);
 }
 
+namespace
+{
+    // Main thread: the child window hidden while a host UI or the shader notice is up, shown otherwise.
+    void syncChildHidden()
+    {
+        const bool hidden = g_hostUiVisible || g_noticeShowing;
+        if (!g_child || hidden == g_childHidden)
+            return;
+        g_childHidden = hidden;
+        // A graphics API switch's new window too (HostTick, ApiStep::Window): it becomes the child at the swap.
+        for (NativeWindow window : {g_child, g_newChild})
+        {
+            if (!window)
+                continue;
+#if defined(_WIN32)
+            ShowWindow(window, hidden ? SW_HIDE : SW_SHOWNA);
+#else
+            if (hidden)
+                g_x11.XUnmapWindow(g_x11.window, g_x11.id(window));
+            else
+                g_x11.XMapWindow(g_x11.window, g_x11.id(window));
+#endif
+        }
+#if !defined(_WIN32)
+        g_x11.XSync(g_x11.window, 0);
+#endif
+    }
+
+    // Main thread, each host frame: whether the shader notice shows, with a fresh count every 100 ms while it does.
+    void updateNotice()
+    {
+        bool show = false;
+        if (g_noticeStage.load(std::memory_order_acquire) == 1 && noticeEnabled())
+        {
+            std::lock_guard<std::mutex> lock(g_noticeMutex);
+            const double now = secondsNow();
+            show = g_notice.visible(now);
+            if (show)
+                g_noticeWasShown.store(true, std::memory_order_relaxed); // under the lock noticeEnd reads it after
+            if (show && now - g_noticeLastPoll >= 0.1)
+            {
+                g_noticeLastPoll = now;
+                ps2x::gs::ShaderIndexSample samples[ps2x::gs::kShaderIndexCount];
+                sampleShaderIndexes(g_noticeCacheDir, samples);
+                g_noticeIndexes.observe(samples);
+                g_notice.setCompiled(g_noticeIndexes.compiled());
+            }
+        }
+        if (show == g_noticeShowing)
+            return;
+        g_noticeShowing = show;
+        syncChildHidden();
+    }
+}
+
 void GSPcsx2Backend::HostTick()
 {
     if (!g_child)
         return;
+    updateNotice();
     // A graphics API switch: the new window under the old one (the old one keeps showing the picture until the GS
     // presents into the new one), then, once the GS has, the old one goes.
     if (g_apiStep.load(std::memory_order_acquire) == ApiStep::Window)
@@ -569,11 +724,11 @@ void GSPcsx2Backend::HostTick()
         {
 #if defined(_WIN32)
             SetWindowPos(g_newChild, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            if (g_hostUiVisible)
+            if (g_childHidden)
                 ShowWindow(g_newChild, SW_HIDE);
 #else
             g_x11.XLowerWindow(g_x11.window, g_x11.id(g_newChild));
-            if (g_hostUiVisible)
+            if (g_childHidden)
                 g_x11.XUnmapWindow(g_x11.window, g_x11.id(g_newChild));
             g_x11.XSync(g_x11.window, 0);
 #endif
@@ -727,15 +882,29 @@ void GSPcsx2Backend::SetHostUiVisible(bool visible)
     if (!g_child || g_hostUiVisible == visible)
         return;
     g_hostUiVisible = visible;
-#if defined(_WIN32)
-    ShowWindow(g_child, visible ? SW_HIDE : SW_SHOWNA);
-#else
-    if (visible)
-        g_x11.XUnmapWindow(g_x11.window, g_x11.id(g_child));
-    else
-        g_x11.XMapWindow(g_x11.window, g_x11.id(g_child));
-    g_x11.XSync(g_x11.window, 0);
-#endif
+    syncChildHidden();
+}
+
+bool GSPcsx2Backend::ShaderNotice(std::string &title, std::string &detail, float &blockStart, float &blockEnd)
+{
+    if (!g_noticeShowing)
+        return false;
+    std::lock_guard<std::mutex> lock(g_noticeMutex);
+    const double now = secondsNow();
+    title = ps2x::gs::ShaderNotice::title();
+    detail = g_notice.detail(now);
+    ps2x::gs::ShaderNotice::block(now, blockStart, blockEnd);
+    return true;
+}
+
+bool GSPcsx2Backend::ShaderNoticeResult(double &ms, int64_t &compiled)
+{
+    if (g_noticeStage.load(std::memory_order_acquire) != 2)
+        return false;
+    std::lock_guard<std::mutex> lock(g_noticeMutex);
+    ms = g_notice.elapsed(0.0) * 1000.0;
+    compiled = g_notice.compiled();
+    return true;
 }
 
 bool GSPcsx2Backend::HostUiVisible()
@@ -857,8 +1026,11 @@ bool GSPcsx2Backend::EnsureOpen()
     if (const char *first = std::getenv("PS2X_PCSX2_TEXTURE_FIRST"); first && *first)
         options += std::string("texture_first=") + first + ";";
     params.options = options.c_str();
+    noticeBegin(cacheDir);
     m_open = g_api->open(&params) != 0;
     m_failed = !m_open;
+    if (m_failed)
+        noticeEnd();
     if (m_open && !m_pendingVram.empty())
     {
         g_api->load_vram(m_pendingVram.data(), static_cast<uint32_t>(m_pendingVram.size()));
@@ -1015,11 +1187,17 @@ void GSPcsx2Backend::VSync(const GSVSyncRegs &regs)
         {
             m_open = false;
             m_failed = true;
+            noticeEnd(); // nothing will ever be presented: the notice must not stay up
         }
         g_apiStep.store(ApiStep::Swap, std::memory_order_release);
         if (result < 0)
             return;
     }
+    // Before the present, not after: the child window is hidden while the notice shows, and a driver that blocks a
+    // present into an unmapped window would then never let the notice end. The first frame's draws (and the shader
+    // compiles they bring) have already run in RawGif.
+    if (g_noticeStage.load(std::memory_order_relaxed) == 1)
+        noticeEnd();
     const auto presentStart = std::chrono::steady_clock::now();
     g_api->vsync(reinterpret_cast<const Pcsx2GsPrivRegs *>(&regs));
     WriteFrameTime(presentStart);
@@ -1090,6 +1268,8 @@ bool GSPcsx2Backend::SetScreen(const void *, uint32_t, const char *, uint32_t) {
 void GSPcsx2Backend::SetMenuInput(const void *) {}
 void GSPcsx2Backend::SetHostUiVisible(bool) {}
 bool GSPcsx2Backend::HostUiVisible() { return false; }
+bool GSPcsx2Backend::ShaderNotice(std::string &, std::string &, float &, float &) { return false; }
+bool GSPcsx2Backend::ShaderNoticeResult(double &, int64_t &) { return false; }
 uint64_t GSPcsx2Backend::Presents() { return 0u; }
 GSPcsx2Backend::GSPcsx2Backend() = default;
 GSPcsx2Backend::~GSPcsx2Backend() = default;

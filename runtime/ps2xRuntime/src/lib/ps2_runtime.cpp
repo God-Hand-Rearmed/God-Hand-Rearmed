@@ -14,6 +14,7 @@
 #include "ps2_runtime_macros.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_pcsx2_backend.h"
+#include "runtime/gs/gs_shader_notice.h"
 #include "runtime/gs/gs_shared_present.h"
 #include "runtime/ee_scheduler.h"
 #include "ThreadPriority.h"
@@ -3583,7 +3584,12 @@ void PS2Runtime::run()
         // top (PROGRESS §98). PS2X_HOST_PRESENT=1 always presents, as before.
         static const bool alwaysPresent = []
         { const char *v = std::getenv("PS2X_HOST_PRESENT"); return v && *v == '1'; }();
-        const bool hostPresents = !pcsx2Gs || alwaysPresent || GSPcsx2Backend::HostUiVisible();
+        // The GS's first start compiling its shaders: this window shows the "Preparing shaders" notice (the child is
+        // hidden meanwhile, GSPcsx2Backend::HostTick).
+        std::string noticeTitle, noticeDetail;
+        float noticeBlockStart = 0.0f, noticeBlockEnd = 0.0f;
+        const bool shaderNotice = pcsx2Gs && GSPcsx2Backend::ShaderNotice(noticeTitle, noticeDetail, noticeBlockStart, noticeBlockEnd);
+        const bool hostPresents = !pcsx2Gs || alwaysPresent || GSPcsx2Backend::HostUiVisible() || shaderNotice;
         if (!hostPresents)
         {
             PollInputEvents();
@@ -3613,6 +3619,8 @@ void PS2Runtime::run()
             const Rectangle dstRect{(screenWidth - dstWidth) * 0.5f, (screenHeight - dstHeight) * 0.5f, dstWidth, dstHeight};
             DrawTexturePro(displayTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
         }
+        if (shaderNotice)
+            ps2x::gs::drawShaderNotice(noticeTitle.c_str(), noticeDetail.c_str(), noticeBlockStart, noticeBlockEnd);
         if (m_debugUiInitialized && m_debugUiDrawCallback)
         {
             m_debugUiDrawCallback(*this, m_debugUiUserData);
@@ -3650,7 +3658,7 @@ void PS2Runtime::run()
         }
 #if defined(_WIN32)
         // The launcher hand-off's black cover (openHostWindow) goes once the game's own frames are on screen.
-        if (!pcsx2Gs || GSPcsx2Backend::Presents() >= 2u)
+        if (!pcsx2Gs || GSPcsx2Backend::Presents() >= 2u || shaderNotice)
             ps2xHostHandoffCoverHide();
 #endif
         // The image shown: the GS thread's shared-present sequence, or (copy path) the field it was uploaded for.

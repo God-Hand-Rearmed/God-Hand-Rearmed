@@ -365,7 +365,8 @@ The USA release (SLUS-21503). Others may work; that's the one it's tested with. 
 the checksums.
 
 **Why is the screen black for a while on the first start?**
-The shaders are being compiled for your GPU. Once. After that it's quick.
+The shaders are being compiled for your GPU. Once. After that it's quick. On Linux and the Steam Deck a "Preparing
+shaders" notice with a moving bar shows meanwhile (the seconds, and how many shaders are done).
 
 **Windows SmartScreen is yelling at me.**
 The exe isn't signed (certificates cost money; this is free). **More info > Run anyway**.

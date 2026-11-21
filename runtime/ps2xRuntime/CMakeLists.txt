@@ -443,6 +443,7 @@ add_library(ps2_runtime STATIC
     src/lib/gs/gs_recording.cpp
     src/lib/gs/gs_threaded_backend.cpp
     src/lib/gs/gs_pcsx2_backend.cpp
+    src/lib/gs/gs_shader_notice_draw.cpp
     src/lib/ipu/ps2_ipu.c
     src/lib/ipu/ps2_ipu_glue.c
     src/lib/gs/gs_swizzle.cpp
@@ -732,6 +733,16 @@ if(KAMITE_BUILD_TESTS)
         target_compile_options(audio_stretch_test PRIVATE /W3 /utf-8)
     endif()
     add_test(NAME audio_stretch_test COMMAND audio_stretch_test)
+
+    # The PCSX2 GS's "Preparing shaders" notice (runtime/gs/gs_shader_notice.h): when it shows, its text and bar, the
+    # shader count read from PCSX2's cache index files. Header-only: nothing else is linked.
+    add_executable(shader_notice_test test/shader_notice_test.cpp)
+    target_include_directories(shader_notice_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    set_target_properties(shader_notice_test PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    if(MSVC)
+        target_compile_options(shader_notice_test PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME shader_notice_test COMMAND shader_notice_test)
 
     # Keeping the display awake on Linux (runtime/keep_awake.h: issue #12, the screen blanking during play with a
     # controller). keep_awake_test: the calls' order and fallback on a fake bus; keep_awake_bus: the real libdbus path

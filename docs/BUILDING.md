@@ -154,7 +154,7 @@ next to `GHR.exe`.
 | Problem | What to do |
 |---------|------------|
 | "Wrong disc" message | Your image is a different version. Compare it with [DISC_HASHES.md](../DISC_HASHES.md). |
-| Black screen on the very first start | Wait: the graphics are being prepared. Later starts are fast. |
+| Black screen on the very first start | Wait: the graphics are being prepared. Later starts are fast. On Linux a "Preparing shaders" notice shows instead (`PS2X_SHADER_NOTICE=0` turns it off, `=1` also turns it on on Windows); the log's `[gs] PCSX2 GS: first frame ... ms after opening, N shaders compiled` line says how long it took. |
 | Short pauses the first time an effect appears | Its shaders are being prepared; they do not come back once seen. |
 | Controls screen (F1) does not draw | With the PCSX2 renderer it cannot be drawn yet: use the launcher's Controls tab. |
 | The game crashes or freezes | Please report it with the log (next section). |

@@ -4,6 +4,7 @@ Newest first, one line per change; the code comments say how.
 
 ## November 21, 2026
 
+- Linux and Steam Deck: the first start shows "Preparing shaders for your GPU" with a moving bar, the seconds and the shaders compiled so far, instead of a black screen (after half a second, so a quick start never flashes it). The log says how long the first frame took and how many shaders were compiled.
 - Performance: more of the game's vector helpers (normalize, cross product, camera and light matrices, copies) and the queueing of draw packets run as native code.
 - Launcher: clicks in the Options book no longer land on the row above (or below) the one under the mouse.
 - Performance: the draw data sent to the PS2's vector unit each frame is gathered in one pass (about twice as fast in crowded scenes).

@@ -11,6 +11,12 @@ the headers from Ninja's dependency log of a full build (`ninja -t deps`), plus 
 `3rdparty/cpuinfo` (it is built with its own CMakeLists). The folder layout is PCSX2's, so a newer PCSX2 can be
 copied over the same paths. `pcsx2-gs/tools/make_loaders.py` and `extract_config.py` read a full PCSX2 checkout.
 
+GHR reads, and does not change, one PCSX2 file layout from outside the library: the shader cache index files
+(`vulkan_shaders.idx`, `d3d_shaders_sm*.idx`: a header, then one fixed-size entry per compiled shader), whose growth is
+the shader count of the first start's "Preparing shaders" notice (`kShaderIndexes` in
+`runtime/ps2xRuntime/include/runtime/gs/gs_shader_notice.h`). After copying a newer PCSX2 over, `gs_pcsx2_backend_test`
+says whether the Vulkan one still has that layout; a wrong one only makes the count wrong.
+
 ## Linux
 
 On Linux `pcsx2-gs/` builds `libpcsx2gs.so` (Vulkan only, presenting into an X11 window: `VK_KHR_xlib_surface`) and

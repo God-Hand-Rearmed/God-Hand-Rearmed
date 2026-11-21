@@ -3,18 +3,25 @@
 // AttachHostWindow puts over it, then a GSPcsx2Backend fed a GIF packet and vsyncs as the GS thread feeds it. Checks
 // what GHR depends on: libpcsx2gs.so found next to the executable, GLFW on X11, the child window following the game
 // window's size, hidden and shown again for a host UI, a graphics API switch to Direct3D 11 turned down with the
-// Vulkan window kept, the shader cache written under KAMITE_HOME, and the picture on the child window.
+// Vulkan window kept, the shader cache written under KAMITE_HOME, and the picture on the child window. First, the
+// "Preparing shaders" notice of a first start: the GS opened on a thread of its own (as GHR's GS thread does) on an
+// empty shader cache while the main thread keeps the window: the notice drawn over the hidden child window, the child
+// shown again after the first frame, and the shader count against the library's own cache index.
 //   gs_pcsx2_backend_test [frames]      (exit 0 = every check passed; run under Xvfb like pcsx2_gs_smoke)
 //   gs_pcsx2_backend_test --no-x11      (no display at all: the PCSX2 GS turns itself down)
+// PS2X_NOTICE_SNAPSHOT=<file.ppm>: the game window with the notice on it, written once it has shown for 0.4 s.
 #include "runtime/gs/gs_pcsx2_backend.h"
+#include "runtime/gs/gs_shader_notice.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <X11/Xlib.h>
@@ -131,6 +138,44 @@ namespace
         const auto close = [](int a, int b) { return a >= b - 24 && a <= b + 24; };
         return px >= 0 && close((px >> 16) & 0xFF, r) && close((px >> 8) & 0xFF, g) && close(px & 0xFF, b);
     }
+
+    // The window's image as a binary PPM.
+    bool WritePpm(Display *display, Window window, const char *path)
+    {
+        XWindowAttributes a{};
+        if (!XGetWindowAttributes(display, window, &a))
+            return false;
+        XImage *image = XGetImage(display, window, 0, 0, a.width, a.height, AllPlanes, ZPixmap);
+        std::FILE *file = image ? std::fopen(path, "wb") : nullptr;
+        if (file)
+        {
+            std::fprintf(file, "P6\n%d %d\n255\n", a.width, a.height);
+            for (int y = 0; y < a.height; ++y)
+                for (int x = 0; x < a.width; ++x)
+                {
+                    const unsigned long px = XGetPixel(image, x, y);
+                    const unsigned char rgb[3] = {static_cast<unsigned char>(px >> 16), static_cast<unsigned char>(px >> 8),
+                                                  static_cast<unsigned char>(px)};
+                    std::fwrite(rgb, 1, 3, file);
+                }
+            std::fclose(file);
+        }
+        if (image)
+            XDestroyImage(image);
+        return file != nullptr;
+    }
+
+    // Entries in PCSX2's Vulkan shader cache index (gs_shader_notice.h: header, then one per shader); -1 = no file or
+    // a size the layout does not explain.
+    long VulkanIndexEntries(const std::filesystem::path &cacheDir)
+    {
+        const ps2x::gs::ShaderIndexFormat &format = ps2x::gs::kShaderIndexes[0];
+        std::error_code ec;
+        const uintmax_t size = std::filesystem::file_size(cacheDir / format.name, ec);
+        if (ec || size < format.headerBytes || (size - format.headerBytes) % format.entryBytes != 0u)
+            return -1;
+        return static_cast<long>((size - format.headerBytes) / format.entryBytes);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -155,6 +200,11 @@ int main(int argc, char *argv[])
     setenv("KAMITE_HOME", home.c_str(), 1);
     setenv("PS2X_PCSX2_VSYNC", "0", 1); // Xvfb has no refresh to wait for
     setenv("PS2X_PCSX2_STRETCH", "1", 1); // the picture fills the window, so a fraction of it is a fraction of the picture
+    // The shader notice on, and shown from the open's start: its drawn path runs whatever the machine's speed (the
+    // delay itself is shader_notice_test's). No Mesa disk cache, so the shaders are really compiled.
+    setenv("PS2X_SHADER_NOTICE", "1", 1);
+    setenv("PS2X_SHADER_NOTICE_DELAY_MS", "0", 1);
+    setenv("MESA_SHADER_CACHE_DISABLE", "true", 1);
     unsetenv("PS2X_GS_RENDERER");
 
     // As ps2_host_display::openHostWindow.
@@ -182,23 +232,106 @@ int main(int argc, char *argv[])
     regs.regset1[7] = 10ull << 9;              // DISPFB1
     regs.regset1[8] = 0x1BF4FF00834138ull;     // DISPLAY1
     const std::vector<uint64_t> packet = Packet();
+    auto feed = [&](GSPcsx2Backend &gs)
+    {
+        gs.RawGif(reinterpret_cast<const uint8_t *>(packet.data()), static_cast<uint32_t>(packet.size() * 8u));
+        regs.csr ^= 0x2000u;
+        gs.VSync(regs);
+    };
     auto frame = [&](GSPcsx2Backend &gs)
     {
         BeginDrawing();
         ClearBackground(RlColor{0, 0, 0, 255});
         EndDrawing();
         GSPcsx2Backend::HostTick();
-        gs.RawGif(reinterpret_cast<const uint8_t *>(packet.data()), static_cast<uint32_t>(packet.size() * 8u));
-        regs.csr ^= 0x2000u;
-        gs.VSync(regs);
+        feed(gs);
     };
+
+    // The first start: the GS thread opens the GS on an empty shader cache; the main thread runs the host loop's part
+    // (HostTick, then the notice drawn when there is one) until the first frame is out.
+    {
+        const std::filesystem::path cacheDir = home / "shadercache_pcsx2";
+        double ms = 0.0;
+        int64_t compiled = 0;
+        check(!GSPcsx2Backend::ShaderNoticeResult(ms, compiled), "before the GS opens: no shader notice result yet");
+        std::atomic<bool> firstFrame{false};
+        std::atomic<bool> stop{false};
+        std::thread gsThread([&]
+        {
+            GSPcsx2Backend gs;
+            gs.Initialize(vram.data(), static_cast<uint32_t>(vram.size()));
+            feed(gs);
+            firstFrame.store(true);
+            while (!stop.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }); // ~GSPcsx2Backend closes the GS on its own thread
+        const char *snapshot = std::getenv("PS2X_NOTICE_SNAPSHOT");
+        bool shown = false, hiddenWhileShown = true, drawn = false, snapped = false, seconds = false;
+        const auto started = std::chrono::steady_clock::now();
+        auto firstShown = started;
+        std::string lastDetail;
+        while (std::chrono::steady_clock::now() - started < std::chrono::seconds(120))
+        {
+            GSPcsx2Backend::HostTick();
+            std::string title, detail;
+            float blockStart = 0.0f, blockEnd = 0.0f;
+            const bool notice = GSPcsx2Backend::ShaderNotice(title, detail, blockStart, blockEnd);
+            BeginDrawing();
+            ClearBackground(RlColor{0, 0, 0, 255});
+            if (notice)
+                ps2x::gs::drawShaderNotice(title.c_str(), detail.c_str(), blockStart, blockEnd);
+            EndDrawing();
+            if (notice)
+            {
+                if (!shown)
+                    firstShown = std::chrono::steady_clock::now();
+                shown = true;
+                lastDetail = detail;
+                seconds = seconds || detail.rfind("1 s", 0) == 0;
+                hiddenWhileShown = hiddenWhileShown && !Mapped(display, child);
+                // The bar's row (gs_shader_notice_draw.cpp: from the middle of the window, max(8, height / 60) high):
+                // its grey track or its red block.
+                const long bar = Pixel(display, parent, 0.5f, (224.0f + 4.0f) / 448.0f);
+                drawn = drawn || Near(bar, 60, 60, 60) || Near(bar, 230, 41, 55);
+                if (snapshot && *snapshot && !snapped &&
+                    std::chrono::steady_clock::now() - firstShown > std::chrono::milliseconds(400))
+                    snapped = WritePpm(display, parent, snapshot);
+            }
+            if (firstFrame.load() && GSPcsx2Backend::ShaderNoticeResult(ms, compiled))
+                break;
+        }
+        GSPcsx2Backend::HostTick(); // the notice's end: the child shown again
+        if (!firstFrame.load())
+            std::fprintf(stderr, "[backend-test] FAIL: the GS thread never got its first frame out (waiting for it)\n");
+        stop.store(true);
+        gsThread.join();
+        check(GSPcsx2Backend::ShaderNoticeResult(ms, compiled), "the first frame ends the shader notice");
+        std::fprintf(stderr, "[backend-test] first frame %.0f ms after the open, %lld shaders compiled, notice %s%s%s\n", ms,
+                     static_cast<long long>(compiled), shown ? "shown, last: " : "not shown", lastDetail.c_str(),
+                     snapped ? " (snapshot written)" : "");
+        const long entries = VulkanIndexEntries(cacheDir);
+        check(entries > 0, "the Vulkan shader index has the layout gs_shader_notice.h reads (header + 32-byte entries)");
+        // Counted up to the first present; the present itself may add a couple more (2 on lavapipe) to the index.
+        check(compiled > 0 && compiled <= entries && entries - compiled <= 8,
+              ("an empty cache: the notice counted the shaders PCSX2 compiled (" + std::to_string(entries) + " in the index)").c_str());
+        check(shown, "the notice shows while the GS opens");
+        check(hiddenWhileShown, "the GS window is hidden while the notice shows");
+        check(drawn, "the notice's bar is drawn in the game window");
+        if (ms >= 2500.0)
+            check(seconds, "the notice counts the seconds");
+        check(Mapped(display, child), "after the first frame the GS window shows again");
+        std::string title, detail;
+        float blockStart = 0.0f, blockEnd = 0.0f;
+        check(!GSPcsx2Backend::ShaderNotice(title, detail, blockStart, blockEnd), "after the first frame: no notice");
+    }
 
     {
         GSPcsx2Backend gs;
         gs.Initialize(vram.data(), static_cast<uint32_t>(vram.size()));
+        const uint64_t presentsBefore = GSPcsx2Backend::Presents(); // the first start's above
         for (int i = 0; i < frames / 2; ++i)
             frame(gs);
-        check(GSPcsx2Backend::Presents() == static_cast<uint64_t>(frames / 2), "every vsync presented");
+        check(GSPcsx2Backend::Presents() - presentsBefore == static_cast<uint64_t>(frames / 2), "every vsync presented");
         check(Near(Pixel(display, child, 200.0f / 640, 175.0f / 448), 0xE0, 0x20, 0x20) &&
                   Near(Pixel(display, child, 20.0f / 640, 20.0f / 448), 0x10, 0x30, 0x90),
               "the child window shows the picture");

@@ -30,7 +30,8 @@ The first start
 ---------------
 The launcher opens: point it at your disc image (.iso) once, pick a preset and press Play. It also finds a disc image
 by itself in a "game" folder next to the program, in ~/Games, ~/Downloads, or on an SD card.
-The very first start compiles the graphics for your GPU, so the screen may stay black for a while. Once.
+The very first start compiles the graphics for your GPU, which can take a while: "Preparing shaders" shows with a
+moving bar, the seconds and the shaders done so far. Once.
 
 Steam Deck
 ----------
