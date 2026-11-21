@@ -4,6 +4,7 @@ Newest first, one line per change; the code comments say how.
 
 ## November 21, 2026
 
+- Linux: a Flatpak (GHR-v<version>-Linux-x64.flatpak) next to the AppImage and the tar.gz.
 - Performance: more of the game's model drawing (texture packets, model and light matrices, the visibility test, mesh lookups) runs as native code.
 - Linux and Steam Deck: the first start shows a "Preparing shaders" notice instead of a black screen.
 - Performance: more of the game's vector helpers (normalize, cross product, camera and light matrices, copies) and the queueing of draw packets run as native code.

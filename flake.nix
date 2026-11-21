@@ -8,8 +8,9 @@
 
   # nix develop                      the dev shell: build.py, the portable toolchain, packaging tools
   # nix flake check -L               every gate below (CI runs exactly this: .github/workflows/ci.yml)
-  # nix build .#linux-stub           the AppImage + tar.gz of a build on the stand-in game code (CI artifacts; they
-  #                                  start the launcher but cannot play: real releases need your disc, docs/BUILDING.md)
+  # nix build .#linux-stub           the AppImage, tar.gz and .flatpak of a build on the stand-in game code (CI
+  #                                  artifacts; they start the launcher but cannot play: real releases need your disc,
+  #                                  docs/BUILDING.md)
   # nix run .#package -- --bin DIR   tools/package.py with mksquashfs, objcopy and the AppImage runtime supplied
   outputs = { self, nixpkgs, nixpkgs-2020 }:
     let
@@ -57,7 +58,10 @@
           portable = ghr { portable = true; };
           native = ghr { portable = false; buildTests = true; };
           runtime = runtimeFor pkgs;
-          packagingTools = [ pkgs.squashfsTools pkgs.binutils pkgs.python3 ];
+          # flatpak makes the .flatpak (build-export, build-bundle); ostree and desktop-file-validate only read one back
+          # (tools/linux/check_flatpak.py).
+          packagingTools = [ pkgs.squashfsTools pkgs.binutils pkgs.python3 pkgs.flatpak pkgs.ostree
+            pkgs.desktop-file-utils ];
 
           # tools/package.py over the portable build, as a release is made, with --allow-stub.
           linuxStub = pkgs.runCommand "ghr-linux-stub-${version}" { nativeBuildInputs = packagingTools; } ''
@@ -65,7 +69,15 @@
             export SOURCE_DATE_EPOCH=${toString self.lastModified}
             python3 -I tools/package.py --bin ${portable}/bin --out $out --allow-stub \
               --appimage-runtime ${runtime} --mksquashfs ${pkgs.squashfsTools}/bin/mksquashfs \
-              --objcopy ${pkgs.binutils}/bin/objcopy
+              --objcopy ${pkgs.binutils}/bin/objcopy --flatpak ${pkgs.flatpak}/bin/flatpak
+          '';
+
+          # The stub's .flatpak read back without a Flatpak system (tools/linux/check_flatpak.py): its ref, metadata and
+          # permissions, /app's files, the exported menu entry.
+          flatpakBundle = pkgs.runCommand "ghr-flatpak-bundle" { nativeBuildInputs = packagingTools; } ''
+            export HOME=$TMPDIR
+            python3 -I ${src}/tools/linux/check_flatpak.py ${linuxStub}/GHR-v${version}-stub-Linux-x64.flatpak > $out
+            cat $out
           '';
 
           # The launcher from the packaged tar.gz, on a virtual 1280x800 screen with Mesa's software OpenGL, on a given
@@ -172,6 +184,7 @@
             launcher-glibc-2-31 = launcherGlibc231;
             window-errors = windowErrors;
             packaging-tests = packagingTests;
+            flatpak-bundle = flatpakBundle;
             portable-binary = portableCheck;
           };
           apps.package = {

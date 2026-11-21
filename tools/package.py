@@ -1,8 +1,8 @@
-"""Packs a build of God Hand: Rearmed into the files a release attaches: the Windows zip, the Linux tar.gz and AppImage.
-One packer for both systems, so the two releases ship by the same rules (what goes in, the names, the checks).
+"""Packs a build of God Hand: Rearmed into the files a release attaches: the Windows zip, the Linux tar.gz, AppImage
+and Flatpak. One packer for both systems, so the releases ship by the same rules (what goes in, the names, the checks).
 
     python -I tools/package.py --bin build/port/bin [--out dist] [--formats ...] [--allow-stub]
-                               [--appimage-runtime FILE] [--allow-nonportable]
+                               [--appimage-runtime FILE] [--flatpak FILE] [--allow-nonportable]
     python -I build.py package [the same options]           (--bin build/port/bin given)
 
 The system is the build's: GHR.exe in --bin is a Windows build, an ELF GHR a Linux one (a zip is packed on Windows or
@@ -19,6 +19,10 @@ Linux alike: it needs Python only).
                                              and saves inside it).
   dist/GHR-v<version>-Linux-x64.AppImage One file. Settings and saves go to ~/.local/share/GodHandRearmed, or to a
                                              folder named GHR-data next to the AppImage when there is one (AppRun).
+  dist/GHR-v<version>-Linux-x64.flatpak  A single-file bundle of the app FLATPAK_ID on org.freedesktop.Platform (Flathub
+                                             fetches the runtime at install). /app holds the same program files as
+                                             the AppImage; settings and saves go to the sandbox's own data folder
+                                             (~/.var/app/<id>/data/GodHandRearmed). Permissions: flatpak_metadata().
   dist/GHR-v<version>.debug              GHR's (Linux) debug info, linked by GNU debuglink (not for players).
 
 None carries GHR.ini or controls.ini: GHR writes its defaults at the first start, and a folder updated in place keeps
@@ -26,7 +30,8 @@ the player's. Nor saves, logs, caches, mods/, texture packs, developer tools, sy
 chosen by name (program_files), not by leaving out what a run may have left in the bin folder.
 
 The names are what the launcher's updater looks for (src/kamite/update_archive.cpp, pickAsset): Windows takes the .zip,
-an AppImage the newest "-Linux-x64.AppImage", a Linux folder install the "-Linux-x64.tar.gz".
+an AppImage the newest "-Linux-x64.AppImage", a Linux folder install the "-Linux-x64.tar.gz". A Flatpak is told of
+the "-Linux-x64.flatpak" but never installs it: flatpak owns /app, so Update says to update through Flatpak.
 
 Checks before anything is written (the release is refused when one fails):
 - the build is not one on the stand-in game code (STUB-GAME-CODE.txt from tools/linux/stub_game_code.py), unless
@@ -48,6 +53,11 @@ the same zlib give the same bytes (a Python built with zlib-ng deflates differen
 has CRLF texts in resources/, so it is other input).
 The AppImage is the type2 runtime (pinned below, checked by SHA-256) followed by a squashfs of the AppDir (mksquashfs
 from squashfs-tools; zstd). No appimagetool and no FUSE are needed to build one.
+The Flatpak is the program repackaged, never rebuilt: the build folder (metadata, files/, export/) is written here and
+committed with flatpak build-export (the commit's time is the epoch, so its checksum is the same every run), then
+packed with flatpak build-bundle. Nothing needs an installed runtime or a running Flatpak system. build-bundle stamps
+the time it ran into the bundle's header (ostree's static delta superblock, which ignores SOURCE_DATE_EPOCH): that one
+field is set to the epoch afterwards (set_bundle_timestamp), which makes the bundle reproducible too.
 """
 import argparse
 import gzip
@@ -62,6 +72,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -132,6 +143,70 @@ cp "$HERE/godhandrearmed.png" "$ICONS/godhandrearmed.png"
 } > "$APPS/godhandrearmed.desktop"
 echo "Added: $APPS/godhandrearmed.desktop"
 """
+
+# ---- the Flatpak's facts ---------------------------------------------------------------------------------------------
+# Flathub's form for a project on GitHub (io.github.<owner>.<name>, '-' as '_'). Changing it later makes a different
+# app to flatpak: players would have to install the new one and move their saves.
+FLATPAK_ID = "io.github.God_Hand_Rearmed.GHR"
+FLATPAK_BRANCH = "stable"
+# The runtime's current stable branch (one a year, each kept two years). GHR needs little of it: glibc >= 2.31, the X11
+# libraries GLFW opens, libGL / Vulkan (the GL.default extension: Mesa; NVIDIA's comes to match the host's driver),
+# libpulse, libdbus and libcurl (all opened at run time).
+FLATPAK_RUNTIME = "org.freedesktop.Platform"
+FLATPAK_SDK = "org.freedesktop.Sdk"
+FLATPAK_RUNTIME_BRANCH = "26.08"
+# Where `flatpak install` of the bundle finds the runtime (added as a remote when the player has none that has it).
+FLATPAK_RUNTIME_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+# The sandbox's permissions ([Context] and [Session Bus Policy] of the metadata). Each is the least that keeps one
+# thing working; everything not listed stays out (no home folder, no host, no other D-Bus names).
+FLATPAK_CONTEXT = (
+    # network: the launcher's release check and news (libcurl). ipc: X11's shared memory (MIT-SHM) needs the host's IPC
+    # namespace (flatpak's usual companion of the x11 socket).
+    ("shared", ("network", "ipc")),
+    # x11: the game window is X11 only (GLFW is put on X11 for the renderer: gs_pcsx2_backend.cpp), Xwayland on a
+    # Wayland desktop, so the socket is needed even there (fallback-x11 would withhold it under Wayland). wayland: only
+    # the keep-awake's idle inhibitor (host_keep_awake_linux.cpp, sway and other layer-shell compositors, #12).
+    # pulseaudio: the sound (miniaudio; PipeWire serves it too).
+    ("sockets", ("x11", "wayland", "pulseaudio")),
+    # all, not dri + input: SDL3 reads PlayStation, Switch and other controllers through hidapi's /dev/hidraw* (rumble,
+    # lights, gyro), which only "all" exposes; "input" gives /dev/input alone (and needs flatpak 1.15.6+). all has dri.
+    ("devices", ("all",)),
+    # Read-only, exactly the places GHR looks for a disc image by itself (paths.cpp, discSearchFolders: ~/Games,
+    # ~/Downloads, the SD card or another drive under /run/media). The launcher's file chooser (zenity / kdialog) is
+    # not in the runtime: a disc image elsewhere needs `flatpak override --user --filesystem=<its folder>:ro`.
+    # ~/Downloads by name, as GHR looks there, not xdg-download (the desktop's own Downloads folder, which may be
+    # named otherwise, and is not mounted at all without a user-dirs.dirs).
+    ("filesystems", ("~/Downloads:ro", "~/Games:ro", "/run/media:ro")),
+)
+# The keep-awake's desktop services (#12; runtime/keep_awake.h): KDE's and most desktops', then GNOME's.
+FLATPAK_TALK_NAMES = ("org.freedesktop.ScreenSaver", "org.gnome.SessionManager")
+
+FLATPAK_RUN = """#!/bin/sh
+# God Hand: Rearmed's Flatpak entry point (tools/package.py), /app/bin/ghr. /app is read-only, so GHR's play folder
+# (GHR.ini, controls.ini, memcards, states, logs, mods, texture packs, the game/ folder, the shader cache) is
+# ${XDG_DATA_HOME}/GodHandRearmed, which flatpak points at the app's own ~/.var/app/<id>/data. KAMITE_HOME given by hand
+# (flatpak run --env=KAMITE_HOME=...) wins. GHR reads it (src/kamite/paths.cpp); its resources stay in /app.
+HERE="$(dirname "$(readlink -f "$0")")"
+if [ -z "${KAMITE_HOME:-}" ]; then
+    KAMITE_HOME="${XDG_DATA_HOME:-${HOME:-/tmp}/.local/share}/GodHandRearmed"
+fi
+mkdir -p "$KAMITE_HOME" || { echo "GHR: cannot create the play folder $KAMITE_HOME" >&2; exit 1; }
+export KAMITE_HOME
+cd "$KAMITE_HOME" || exit 1
+exec "$HERE/../lib/ghr/GHR" "$@"
+"""
+
+
+def flatpak_metadata(app_id: str = FLATPAK_ID) -> str:
+    """The build's metadata file (what flatpak build-init and build-finish would write), keys in a fixed order."""
+    lines = ["[Application]", f"name={app_id}",
+             f"runtime={FLATPAK_RUNTIME}/x86_64/{FLATPAK_RUNTIME_BRANCH}",
+             f"sdk={FLATPAK_SDK}/x86_64/{FLATPAK_RUNTIME_BRANCH}",
+             "command=ghr", "", "[Context]"]
+    lines += [f"{key}={';'.join(values)};" for key, values in FLATPAK_CONTEXT]
+    lines += ["", "[Session Bus Policy]"] + [f"{name}=talk" for name in FLATPAK_TALK_NAMES]
+    return "\n".join(lines) + "\n"
 
 
 class PackageError(Exception):
@@ -443,6 +518,106 @@ def build_appimage(bin_dir: Path, out_dir: Path, base: str, version: str, epoch:
     return out
 
 
+def stage_flatpak(bin_dir: Path, build: Path, version: str, stub: bool, objcopy: str | None, debug_out: Path | None,
+                  root: Path = ROOT) -> None:
+    """A Flatpak build folder, as flatpak build-init + build-finish leave one: metadata, files/ (what is /app in the
+    sandbox) and export/ (the desktop entry and icons flatpak puts in the player's menu)."""
+    files = build / "files"
+    program = files / "lib" / "ghr"
+    stage_program(bin_dir, program)
+    if objcopy:
+        strip_debug(program, objcopy, debug_out)
+    if stub:
+        shutil.copy2(bin_dir / "STUB-GAME-CODE.txt", program / "STUB-GAME-CODE.txt")
+    docs = files / "share" / "doc" / "ghr"
+    docs.mkdir(parents=True)
+    stage_docs(docs, readme_text(version, root), root)
+    command = files / "bin" / "ghr"
+    command.parent.mkdir(parents=True)
+    command.write_text(FLATPAK_RUN, encoding="utf-8")
+    command.chmod(0o755)
+    icons = icon_pngs(root / "src" / "kamite" / "ghr.ico")
+    # flatpak exports only files named after the app id.
+    exported = [Path("share") / "applications" / f"{FLATPAK_ID}.desktop"]
+    (files / exported[0]).parent.mkdir(parents=True)
+    (files / exported[0]).write_text(DESKTOP_ENTRY.format(exec="ghr", icon=FLATPAK_ID), encoding="utf-8")
+    for size in ICON_SIZES:
+        if size in icons:
+            exported.append(Path("share") / "icons" / "hicolor" / f"{size}x{size}" / "apps" / f"{FLATPAK_ID}.png")
+            (files / exported[-1]).parent.mkdir(parents=True, exist_ok=True)
+            (files / exported[-1]).write_bytes(icons[size])
+    for rel in exported:
+        (build / "export" / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(files / rel, build / "export" / rel)
+    (build / "metadata").write_text(flatpak_metadata(), encoding="utf-8")
+
+
+def bundle_timestamp_offset(data: bytes) -> int:
+    """Where flatpak build-bundle's time is in a bundle. The file is one GVariant, ostree's static delta superblock
+    "(a{sv}tayay...)": the a{sv} (the bundle's ref, metadata, origin) ends where the last framing offset of the file
+    says (GVariant keeps a tuple's offsets at its end, the first element's last), and the time is the big-endian
+    uint64 at the next multiple of 8."""
+    size = len(data)
+    width = 1 if size <= 0xFF else 2 if size <= 0xFFFF else 4 if size <= 0xFFFFFFFF else 8
+    if size < 16:
+        raise PackageError("not a flatpak bundle (too short)")
+    end = int.from_bytes(data[-width:], "little")
+    at = (end + 7) & ~7
+    if at + 8 > size - width:
+        raise PackageError("a flatpak bundle whose header could not be read")
+    return at
+
+
+def set_bundle_timestamp(path: Path, epoch: int, made_from: int, made_until: int) -> None:
+    """build-bundle's time in the bundle at `path` replaced by `epoch`. Refused when the field there is not a time in
+    [made_from, made_until] (the run's own): a bundle laid out otherwise is never patched blind."""
+    data = bytearray(path.read_bytes())
+    at = bundle_timestamp_offset(bytes(data))
+    stamped = int.from_bytes(data[at:at + 8], "big")
+    if stamped == epoch:  # a flatpak that honours SOURCE_DATE_EPOCH itself
+        return
+    if not made_from <= stamped <= made_until:
+        raise PackageError(f"the flatpak bundle's time field holds {stamped}, not the time it was made "
+                           f"({made_from}..{made_until}): flatpak's bundle layout changed")
+    data[at:at + 8] = epoch.to_bytes(8, "big")
+    path.write_bytes(bytes(data))
+
+
+def write_flatpak(build: Path, out: Path, version: str, epoch: int, flatpak: str) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        # A Flatpak "installation" of its own, so nothing reads or writes the player's (~/.local/share/flatpak).
+        env = dict(os.environ, FLATPAK_USER_DIR=str(Path(tmp) / "user"), FLATPAK_SYSTEM_DIR=str(Path(tmp) / "system"))
+        env.setdefault("HOME", tmp)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+        # --disable-sandbox: the icon check runs without bubblewrap (none in the Nix sandbox); the icons are ours.
+        steps = [[flatpak, "build-export", "--disable-sandbox", "--disable-fsync", "--no-update-summary",
+                  f"--timestamp={stamp}", f"--subject={APP_NAME} {version}", str(repo), str(build), FLATPAK_BRANCH]]
+        steps.append([flatpak, "build-bundle", f"--runtime-repo={FLATPAK_RUNTIME_REPO}", str(repo), str(out),
+                      FLATPAK_ID, FLATPAK_BRANCH])
+        made_from = int(time.time())
+        try:
+            for cmd in steps:
+                result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+                if result.returncode:
+                    raise PackageError(f"flatpak {cmd[1]} failed: {result.stderr.strip() or result.stdout.strip()}")
+            set_bundle_timestamp(out, epoch, made_from, int(time.time()) + 1)
+        except BaseException:
+            out.unlink(missing_ok=True)  # no half-made (unpatched, not reproducible) bundle left in dist/
+            raise
+    out.chmod(0o644)
+
+
+def build_flatpak(bin_dir: Path, out_dir: Path, base: str, version: str, epoch: int, stub: bool, flatpak: str,
+                  objcopy: str | None, root: Path = ROOT) -> Path:
+    with tempfile.TemporaryDirectory() as tmp:
+        build = Path(tmp) / "build"
+        stage_flatpak(bin_dir, build, version, stub, objcopy, out_dir / f"{base}.debug", root)
+        out = out_dir / f"{base}-Linux-x64.flatpak"
+        write_flatpak(build, out, version, epoch, flatpak)
+    return out
+
+
 # ---- Windows --------------------------------------------------------------------------------------------------------
 
 # The debug C runtime: on no player's PC (it comes with Visual Studio only). A shipped binary needing one is a Debug build.
@@ -719,7 +894,7 @@ def detect_system(bin_dir: Path) -> str:
     raise PackageError(f"{bin_dir} holds neither GHR.exe nor GHR (build the kamite target first)")
 
 
-FORMATS = {"windows": {"zip"}, "linux": {"tar", "appimage"}}
+FORMATS = {"windows": {"zip"}, "linux": {"tar", "appimage", "flatpak"}}
 
 
 def package_windows(args, bin_dir: Path, formats: set, base: str, version: str, epoch: int, stub: bool) -> list[Path]:
@@ -745,6 +920,12 @@ def package_linux(args, bin_dir: Path, formats: set, base: str, version: str, ep
     objcopy = None if args.keep_debug else args.objcopy
     if not args.keep_debug and not objcopy:
         raise PackageError("objcopy (binutils) not found: install it, or pass --keep-debug")
+    if "flatpak" in formats and not args.flatpak:
+        if args.formats:
+            raise PackageError("flatpak not found (for the .flatpak): install it, or pass --formats tar,appimage")
+        # Asked for nothing in particular: the forms that can be made, as before the Flatpak existed.
+        print("warning: flatpak not found: no .flatpak this time (install flatpak to make one)")
+        formats = formats - {"flatpak"}
     args.out.mkdir(parents=True, exist_ok=True)
     made = []
     if "tar" in formats:
@@ -752,6 +933,8 @@ def package_linux(args, bin_dir: Path, formats: set, base: str, version: str, ep
     if "appimage" in formats:
         runtime = appimage_runtime(args.appimage_runtime, ROOT / "build" / "cache")
         made.append(build_appimage(bin_dir, args.out, base, version, epoch, stub, runtime, args.mksquashfs, objcopy))
+    if "flatpak" in formats:
+        made.append(build_flatpak(bin_dir, args.out, base, version, epoch, stub, args.flatpak, objcopy))
     debug = args.out / f"{base}.debug"
     if objcopy and debug.exists():
         made.append(debug)
@@ -762,14 +945,15 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bin", required=True, type=Path, help="the build's bin folder (GHR.exe or GHR, resources/)")
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
-    parser.add_argument("--formats", help="comma-separated; Windows: zip; Linux: tar, appimage (default: all of the "
-                                          "build's system)")
+    parser.add_argument("--formats", help="comma-separated; Windows: zip; Linux: tar, appimage, flatpak (default: all "
+                                          "of the build's system)")
     parser.add_argument("--version", help="default: src/kamite/version.h")
     parser.add_argument("--appimage-runtime", default=os.environ.get("KAMITE_APPIMAGE_RUNTIME"),
                         help="the type2 runtime file (default: $KAMITE_APPIMAGE_RUNTIME from nix develop, else "
                              "downloaded once into build/cache)")
     parser.add_argument("--mksquashfs", default=shutil.which("mksquashfs") or "mksquashfs")
     parser.add_argument("--objcopy", default=shutil.which("objcopy"), help="for stripping debug info (binutils)")
+    parser.add_argument("--flatpak", default=shutil.which("flatpak"), help="the flatpak command, for the .flatpak")
     parser.add_argument("--keep-debug", action="store_true", help="Linux: ship the binaries with their debug info")
     parser.add_argument("--allow-stub", action="store_true", help="package a stand-in game code build (names: -stub)")
     parser.add_argument("--allow-nonportable", action="store_true", help="Linux: skip the portability check")

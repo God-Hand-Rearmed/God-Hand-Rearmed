@@ -211,11 +211,33 @@ namespace
         CHECK_EQ(archive::pickAsset({}, Package::WindowsZip), -1);
         // The tester zips stay a zip (Windows' rule as it was).
         CHECK_EQ(archive::pickAsset({"GHR-tester-1a2b3c4-1795100000.zip"}, Package::WindowsZip), 0);
+        // A Flatpak sees only the .flatpak (it is offered, never installed by GHR); no other form takes it.
+        const std::vector<std::string> withFlatpak = {"GHR-v0.7.0-Linux-x64.tar.gz", "GHR-v0.7.0-Linux-x64.AppImage",
+                                                      "GHR-v0.7.0-Linux-x64.flatpak", "GHR-v0.7.0.zip"};
+        CHECK_EQ(archive::pickAsset(withFlatpak, Package::LinuxFlatpak), 2);
+        CHECK_EQ(archive::pickAsset(all, Package::LinuxFlatpak), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-x64.flatpak"}, Package::LinuxFolder), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-x64.flatpak"}, Package::LinuxAppImage), -1);
+        CHECK_EQ(archive::pickAsset({"GHR-v0.7.0-Linux-x64.flatpak"}, Package::WindowsZip), -1);
+        // Which form is running: a sandbox running GHR from /app first, then the AppImage's variable.
+        CHECK(archive::linuxPackage(nullptr, false, "/home/a/God Hand Rearmed/GHR") == Package::LinuxFolder);
+        CHECK(archive::linuxPackage("", false, "/home/a/GHR") == Package::LinuxFolder);
+        CHECK(archive::linuxPackage("/home/a/GHR.AppImage", false, "/tmp/.mount_GHRx/usr/lib/ghr/GHR") == Package::LinuxAppImage);
+        CHECK(archive::linuxPackage(nullptr, true, "/app/lib/ghr/GHR") == Package::LinuxFlatpak);
+        // An $APPIMAGE passed down from whatever started the Flatpak does not make it one.
+        CHECK(archive::linuxPackage("/home/a/Other.AppImage", true, "/app/lib/ghr/GHR") == Package::LinuxFlatpak);
+        // A tar.gz folder that Steam's Flatpak starts is in a sandbox, but not under /app: it still updates itself.
+        CHECK(archive::linuxPackage(nullptr, true, "/home/a/Games/God Hand Rearmed/GHR") == Package::LinuxFolder);
+        CHECK(archive::linuxPackage("/home/a/GHR.AppImage", true, "/tmp/.mount_GHRx/usr/lib/ghr/GHR") == Package::LinuxAppImage);
+        // /app outside a sandbox is just a folder.
+        CHECK(archive::linuxPackage(nullptr, false, "/app/lib/ghr/GHR") == Package::LinuxFolder);
+        CHECK(archive::linuxPackage(nullptr, true, "/application/GHR") == Package::LinuxFolder);
 #if defined(_WIN32)
         CHECK(archive::current() == Package::WindowsZip);
 #else
         const char *appImage = std::getenv("APPIMAGE");
-        CHECK(archive::current() == (appImage && *appImage ? Package::LinuxAppImage : Package::LinuxFolder));
+        if (!std::filesystem::exists("/.flatpak-info"))
+            CHECK(archive::current() == (appImage && *appImage ? Package::LinuxAppImage : Package::LinuxFolder));
 #endif
     }
 

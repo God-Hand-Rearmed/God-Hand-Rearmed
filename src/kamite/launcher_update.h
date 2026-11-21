@@ -8,7 +8,8 @@
 // Release builds check; a dev build (testers build main) only with [Launcher] UpdateTest=1, as version 0.0.0.
 // Linux (update_archive.h picks the download): a tar.gz folder is updated as the zip is (same kept folders, same
 // settings merge, the files' x bits kept); an AppImage ($APPIMAGE set) is downloaded next to itself and renamed over
-// itself. The settings files are the play folder's (paths.h), the rest the program folder's.
+// itself. The settings files are the play folder's (paths.h), the rest the program folder's. A Flatpak is offered
+// the release's .flatpak but never installs it: Update says to update through Flatpak.
 #include <atomic>
 #include <cstdint>
 #include <filesystem>

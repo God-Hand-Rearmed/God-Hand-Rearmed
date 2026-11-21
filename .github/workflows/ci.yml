@@ -32,13 +32,13 @@ jobs:
             accept-flake-config = false
       - name: Gates (unit + renderer tests, packaging tests, portable binary, launcher smoke, glibc 2.31, window errors)
         run: nix flake check -L
-      - name: Package (AppImage + tar.gz on the stand-in game code)
+      - name: Package (AppImage + tar.gz + .flatpak on the stand-in game code)
         run: |
           nix build .#linux-stub -L -o linux-stub
           nix build .#checks.x86_64-linux.launcher-smoke -o launcher-smoke
           nix build .#checks.x86_64-linux.launcher-glibc-2-31 -o launcher-glibc
           mkdir -p artifacts
-          cp linux-stub/*.AppImage linux-stub/*.tar.gz artifacts/
+          cp linux-stub/*.AppImage linux-stub/*.tar.gz linux-stub/*.flatpak artifacts/
           cp launcher-smoke/launcher.png artifacts/launcher-nix.png
           cp launcher-glibc/launcher.png artifacts/launcher-glibc-2-31.png
           ls -la artifacts

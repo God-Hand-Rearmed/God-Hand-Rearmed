@@ -48,8 +48,9 @@ The same steps work on Linux (x86-64). The easiest toolchain is Nix: `nix develo
 CMake, Ninja, GCC, zig, Python, the X11 / Wayland / Vulkan headers and the packaging tools (`flake.nix`). Without Nix,
 install CMake 3.21+, Ninja, a C++20 compiler (GCC 12+ or Clang 16+), Python 3.10+, `pkg-config` and the X11 headers
 (`libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`), plus `zig` 0.16 for the portable build below
-and `squashfs-tools` and `binutils` to package it. Nix is only a convenience: every step below is plain CMake, Ninja
-and Python, and the flake runs those same steps with pinned sources.
+and `squashfs-tools`, `binutils` and `flatpak` (and `ostree` to check a .flatpak) to package it. Nix is only a
+convenience: every step below is plain CMake, Ninja and Python, and the flake runs those same steps with pinned
+sources.
 
 ```sh
 git clone https://github.com/God-Hand-Rearmed/God-Hand-Rearmed.git
@@ -83,8 +84,10 @@ python3 -I build.py build
 python3 -I build.py package      # or: nix run .#package -- --bin build/port/bin
 ```
 
-`dist/` then holds `GHR-v<version>-Linux-x64.tar.gz`, `GHR-v<version>-Linux-x64.AppImage` and
-`GHR-v<version>.debug` (GHR's debug info, for reading crash addresses; not for players). The packer
+`dist/` then holds `GHR-v<version>-Linux-x64.tar.gz`, `GHR-v<version>-Linux-x64.AppImage`,
+`GHR-v<version>-Linux-x64.flatpak` and `GHR-v<version>.debug` (GHR's debug info, for reading crash addresses; not
+for players). `--formats tar,appimage` leaves the Flatpak out (it needs `flatpak`; no runtime has to be installed to
+make one). The packer
 (`tools/package.py`, the same one that makes the Windows zip: [Releases](#releases)) refuses a build that is not
 portable or that was made on the stand-in game code. What players see is `tools/linux/README-linux.txt` (shipped as
 README.txt).
@@ -100,8 +103,9 @@ launcher, renderer, platform code) is compiled, linked and started, and the arti
 |---|---|
 | `native` | GHR builds with GCC on the stand-in code; the C++ unit tests (`tests/unit`, `KAMITE_BUILD_TESTS=ON`) pass |
 | `portable-binary` | the release toolchain's GHR and libraries need glibc 2.31 at most and no library the package lacks |
-| `linux-stub` | `tools/package.py` makes the AppImage and the tar.gz from that build (reproducible: same input, same bytes) |
-| `packaging-tests` | `tools/linux/test_*.py` and `tools/win/test_*.py`: the packer (all three forms), the AppRun play-folder rules, the desktop entry, the stand-in |
+| `linux-stub` | `tools/package.py` makes the AppImage, the tar.gz and the .flatpak from that build (reproducible: same input, same bytes) |
+| `flatpak-bundle` | the .flatpak read back without a Flatpak system (`tools/linux/check_flatpak.py`): its ref, its metadata and permissions exactly as `package.py` wrote them, `/app`'s files and the exported menu entry, nothing a run makes |
+| `packaging-tests` | `tools/linux/test_*.py` and `tools/win/test_*.py`: the packer (all four forms), the AppRun and Flatpak play-folder rules, the Flatpak's permissions, the desktop entry, the stand-in |
 | `launcher-smoke` | the tar.gz's GHR opens its launcher on a 1280x800 virtual screen and draws it (`tools/linux/smoke_launcher.py`) |
 | `launcher-glibc-2-31` | the same on a 2020 userland (nixos-20.09: glibc 2.31, its X11 and Mesa 20.1), the oldest system the package claims |
 | `window-errors` | no display, and an X server without GLX: GHR ends with exit code 1 and says why, instead of crashing |
@@ -207,8 +211,8 @@ options were on (60 FPS, aspect ratio, character).
 - **One build process, both systems:** `build.py configure -DKAMITE_RELEASE=ON`, `build.py build`, `build.py
   package`. The last runs `tools/package.py`, which packs whatever system the build is for into `dist/`: on Windows the
   zip (and `GHR-v<version>.pdb`, GHR.exe's symbols, copied only when its GUID is the one GHR.exe names; they stay
-  with the maintainer), on Linux the tar.gz and the
-  AppImage ([Linux and Steam Deck](#linux-and-steam-deck): add `--toolchain cmake/toolchains/linux-portable.cmake` to
+  with the maintainer), on Linux the tar.gz, the
+  AppImage and the .flatpak ([Linux and Steam Deck](#linux-and-steam-deck): add `--toolchain cmake/toolchains/linux-portable.cmake` to
   the configure). It ships files by name, never "the bin folder minus what a run left there" (on Windows: GHR.exe and
   the DLLs it loads, found from the import tables plus `pcsx2gs.dll` and `shaderc_shared.dll`). It refuses a build on
   the stand-in game code, and on Windows a Debug build (one needing the debug C runtime, which no player has), a
@@ -229,10 +233,20 @@ options were on (60 FPS, aspect ratio, character).
   settings table and the presets: after changing either, run `python -I tools/recomplauncher/gen_manifest.py`
   (`--check` says when it's stale). Its setup step is `GHR.exe --prepare --iso <image>` (no window); started by
   RecompLauncher, the launcher's own update offer stands down.
-- **The Linux files:** `GHR-v<version>-Linux-x64.tar.gz` and `GHR-v<version>-Linux-x64.AppImage`, made by
+- **The Linux files:** `GHR-v<version>-Linux-x64.tar.gz`, `GHR-v<version>-Linux-x64.AppImage` and
+  `GHR-v<version>-Linux-x64.flatpak`, made by
   `build.py package` from a portable release build ([Linux and Steam Deck](#linux-and-steam-deck)) and attached
   to the same release next to the zip. The names are what each updater looks for: Windows takes only the `.zip`, a
   Linux folder the `-Linux-x64.tar.gz`, an AppImage the `-Linux-x64.AppImage` (`src/kamite/update_archive.cpp`,
-  `pickAsset`). Like the zip they carry no `GHR.ini` or
+  `pickAsset`); a Flatpak is told of the `-Linux-x64.flatpak` but never installs it (flatpak owns `/app`), its Update
+  saying to install the new .flatpak. Like the zip they carry no `GHR.ini` or
   `controls.ini`, nor `recomplauncher.json` (its program is `GHR.exe`; RecompLauncher's Linux side is not set up yet).
   The `.debug` file stays with the maintainer.
+- **The Flatpak:** a single-file bundle of `io.github.God_Hand_Rearmed.GHR` on `org.freedesktop.Platform` 26.08,
+  the tar.gz's program files repackaged (never rebuilt) under `/app/lib/ghr`, started by `/app/bin/ghr`, which puts
+  the play folder in the sandbox's `~/.var/app/<id>/data/GodHandRearmed`. Installing it fetches the runtime from
+  Flathub. Its permissions are in `tools/package.py` (`FLATPAK_CONTEXT`, each with its reason): the X11 socket (the
+  window is X11 even on Wayland), Wayland and two D-Bus names only for keeping the screen awake, PulseAudio, every
+  device (SDL reads controllers through `/dev/hidraw*`), the network for the release check, and read-only `~/Games`,
+  `~/Downloads` and `/run/media`, where GHR looks for a disc image by itself. The bundle's bytes are the same on
+  every run: build-bundle's own time is replaced with `SOURCE_DATE_EPOCH`.

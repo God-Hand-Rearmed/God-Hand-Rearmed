@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string_view>
 
 // raylib's own inflate (rcore.c builds sinfl.h with SUPPORT_COMPRESSION_API): the zip's and the gzip's deflate streams.
@@ -118,9 +119,21 @@ namespace kamite::launcher::update::archive
 #if defined(_WIN32)
         return Package::WindowsZip;
 #else
-        const char *appImage = std::getenv("APPIMAGE");
-        return appImage && *appImage ? Package::LinuxAppImage : Package::LinuxFolder;
+        std::error_code error;
+        const std::filesystem::path link = std::filesystem::read_symlink("/proc/self/exe", error);
+        const std::string exe = error ? std::string() : link.string();
+        const bool flatpakInfo = std::filesystem::exists("/.flatpak-info", error);
+        return linuxPackage(std::getenv("APPIMAGE"), flatpakInfo, exe);
 #endif
+    }
+
+    Package linuxPackage(const char *appImage, bool flatpakInfo, const std::string &exe)
+    {
+        if (flatpakInfo && exe.rfind("/app/", 0) == 0)
+            return Package::LinuxFlatpak;
+        if (appImage && *appImage)
+            return Package::LinuxAppImage;
+        return Package::LinuxFolder;
     }
 
     const char *name(Package package)
@@ -133,6 +146,8 @@ namespace kamite::launcher::update::archive
             return "tar.gz";
         case Package::LinuxAppImage:
             return "AppImage";
+        case Package::LinuxFlatpak:
+            return "Flatpak";
         }
         return "?";
     }
@@ -154,6 +169,9 @@ namespace kamite::launcher::update::archive
                 break;
             case Package::LinuxAppImage:
                 fits = endsWith(n, "-linux-x64.appimage");
+                break;
+            case Package::LinuxFlatpak:
+                fits = endsWith(n, "-linux-x64.flatpak");
                 break;
             }
             if (fits)

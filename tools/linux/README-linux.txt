@@ -11,8 +11,8 @@ What you need
 - Linux with glibc 2.31 or newer (SteamOS, Debian 11+, Ubuntu 20.04+, Fedora, Arch, ...).
 - A Vulkan driver for the game's renderer (Mesa's RADV/ANV, or NVIDIA's). The launcher itself uses OpenGL.
 
-Two ways to run it
-------------------
+Three ways to run it
+--------------------
 The AppImage (one file):
     chmod +x GHR-v{version}-Linux-x64.AppImage
     ./GHR-v{version}-Linux-x64.AppImage
@@ -25,6 +25,15 @@ The folder (GHR-v{version}-Linux-x64.tar.gz):
     "God Hand Rearmed/GHR"
   Unpack it anywhere you can write to. Settings and saves live inside the folder, like the Windows version.
   ./install-desktop-entry.sh adds it to your application menu.
+
+The Flatpak (GHR-v{version}-Linux-x64.flatpak):
+    flatpak install --user GHR-v{version}-Linux-x64.flatpak
+    flatpak run io.github.God_Hand_Rearmed.GHR
+  The first install also fetches the Freedesktop runtime from Flathub. It runs in Flatpak's sandbox: settings and
+  saves go to ~/.var/app/io.github.God_Hand_Rearmed.GHR/data/GodHandRearmed, and it can read your disc image only from
+  ~/Games, ~/Downloads or an SD card / USB drive (it has no file chooser yet: it finds the image there by itself). For
+  a disc image elsewhere:
+    flatpak override --user --filesystem=/path/to/its/folder:ro io.github.God_Hand_Rearmed.GHR
 
 The first start
 ---------------
@@ -39,12 +48,14 @@ Steam Deck
    ~/Games.
 2. Start it once from the file manager, choose the disc image, then press "Add to Steam" in the launcher (close Steam
    first if it asks). It adds God Hand: Rearmed to your library with its artwork.
+   The Flatpak can't reach Steam from its sandbox: add it with Steam's own "Add a Non-Steam Game" instead.
 3. Back in Game Mode it is in your library under Non-Steam. Fullscreen and the Deck's 16:10 screen are picked for you.
 The Deck's controls work through Steam Input with the Xbox-style layout; the button prompts follow your controller.
 
 Where things are
 ----------------
 AppImage: ~/.local/share/GodHandRearmed (or GHR-data next to it).  Folder: inside the folder.
+Flatpak: ~/.var/app/io.github.God_Hand_Rearmed.GHR/data/GodHandRearmed.
   GHR.ini          every option (the launcher writes it)
   controls.ini     your controls
   memcards/mc0     the game's saves        states/   save states (F5 / F9)
@@ -52,7 +63,8 @@ AppImage: ~/.local/share/GodHandRearmed (or GHR-data next to it).  Folder: insid
   textures/SLUS-21503   an HD texture pack in PCSX2's format
 
 Updates: the launcher says when a new version is out and installs it in place (the AppImage replaces itself; the folder
-updates its files). Your settings, saves and mods are never touched.
+updates its files). Your settings, saves and mods are never touched. The Flatpak only says so: install the new .flatpak
+the same way as the first (flatpak install --user ...), which keeps your settings and saves.
 
 Bugs: https://github.com/God-Hand-Rearmed/God-Hand-Rearmed/issues (attach logs/kamite.log).
 

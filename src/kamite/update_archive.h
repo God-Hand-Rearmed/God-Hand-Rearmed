@@ -14,9 +14,15 @@ namespace kamite::launcher::update::archive
         WindowsZip,    // GHR-v<ver>.zip
         LinuxFolder,   // GHR-v<ver>-Linux-x64.tar.gz (a writable folder, like the zip)
         LinuxAppImage, // GHR-v<ver>-Linux-x64.AppImage (one file, replaced whole)
+        LinuxFlatpak,  // GHR-v<ver>-Linux-x64.flatpak (flatpak owns /app: updated through flatpak, never by GHR)
     };
-    // Windows: the zip. Linux: the AppImage when $APPIMAGE is set (the AppImage runtime sets it), else the tar.gz.
+    // Windows: the zip. Linux: linuxPackage() of $APPIMAGE, /.flatpak-info and /proc/self/exe.
     Package current();
+    // Linux's rule: a Flatpak when the sandbox's /.flatpak-info exists and the program runs from /app (a tar.gz folder
+    // or an AppImage started by Steam's own Flatpak is in a sandbox too, but not under /app; an $APPIMAGE inherited
+    // from whatever started the Flatpak is not ours); else an AppImage when $APPIMAGE is set (the AppImage runtime
+    // sets it); else the tar.gz.
+    Package linuxPackage(const char *appImage, bool flatpakInfo, const std::string &exe);
     const char *name(Package package);
 
     // The index of the release asset (by its file name, any case) `package` installs, -1 when there is none. The

@@ -151,7 +151,7 @@ namespace kamite::launcher::update
                 if (!newer(f.version, current))
                     continue;
                 // The download this build installs (archive::pickAsset: Windows the .zip; Linux the tar.gz, or the
-                // AppImage when it runs as one).
+                // AppImage or the .flatpak when it runs as one).
                 if (const Json *assets = item["assets"]; assets && assets->kind == Json::Kind::Array)
                 {
                     std::vector<std::string> names;
@@ -497,6 +497,11 @@ namespace kamite::launcher::update
                 installer.stage.store(static_cast<int>(Stage::Failed));
             };
             const archive::Package package = archive::current();
+            // flatpak owns /app (read-only to the app, its files checked against the installed commit): the offer
+            // stays so the player learns of the release, and Update says where updates come from.
+            if (package == archive::Package::LinuxFlatpak)
+                return fail("This is the Flatpak: update it through Flatpak (install the release's new .flatpak "
+                            "over it: flatpak install --user GHR-...-Linux-x64.flatpak).");
             if (package == archive::Package::LinuxAppImage)
                 return installAppImage(installer, release, fail);
             std::vector<uint8_t> zip;
