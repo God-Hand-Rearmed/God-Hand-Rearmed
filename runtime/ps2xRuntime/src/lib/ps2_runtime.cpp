@@ -753,9 +753,12 @@ namespace
 }
 
 void ps2xHostVsyncSetWindow(void *window) noexcept; // Kernel/host_vsync.cpp
+// Kernel/host_window_win32.cpp; Linux: Kernel/host_keep_awake_linux.cpp (runtime/keep_awake.h). Issue #12.
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+void ps2xHostKeepDisplayAwake() noexcept;
+#endif
 #if defined(_WIN32)
 bool ps2xHostReplacesLauncherWindow() noexcept; // Kernel/host_window_win32.cpp
-void ps2xHostKeepDisplayAwake() noexcept;
 void ps2xHostHandoffCoverShow(void *window) noexcept;
 void ps2xHostHandoffCoverHide() noexcept;
 #endif
@@ -1323,7 +1326,7 @@ void ps2_host_display::openHostWindow(const char *title)
     }
     else if (!showWhenShaped)
         SetWindowTitle(title);
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     ps2xHostKeepDisplayAwake(); // the screen timeout ignores controllers (issue #12)
 #endif
     // Window size (PS2X_WINDOW_SIZE): "auto" (default) = the internal resolution's height (448 x PS2X_GS_SCALE, at most

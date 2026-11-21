@@ -5,6 +5,7 @@ Newest first, one line per change; the code comments say how.
 ## November 21, 2026
 
 - Fixed the monitor turning off mid-game when playing with a controller (Windows' screen timeout) (#12).
+- Linux and Steam Deck: the screen no longer blanks mid-game when playing with a controller either (#12). The desktop is asked not to (the freedesktop ScreenSaver inhibit, which KDE and the Deck's Desktop Mode have, else GNOME's session manager), and the X server's own screensaver timer is reset every 30 s. Not yet on a Wayland desktop that has neither (sway and the like).
 - Performance: the game's matrix, rotation and sine / cosine helpers (libvu0's MulMatrix, ApplyMatrix, RotMatrixX / Y / Z, ecossin) run as native code.
 - Controls: Swap Sticks (Controls > Controller) for left-handed play.
 - Launcher: the window follows Display Mode at once and switches on F11, as the game does.
