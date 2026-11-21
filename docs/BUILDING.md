@@ -47,7 +47,9 @@ Your settings are in `build\port\bin\GHR.ini` (every launcher option is a line t
 The same steps work on Linux (x86-64). The easiest toolchain is Nix: `nix develop` at the top of the checkout gives
 CMake, Ninja, GCC, zig, Python, the X11 / Wayland / Vulkan headers and the packaging tools (`flake.nix`). Without Nix,
 install CMake 3.21+, Ninja, a C++20 compiler (GCC 12+ or Clang 16+), Python 3.10+, `pkg-config` and the X11 headers
-(`libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`), plus `zig` 0.16 for the portable build below.
+(`libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`), plus `zig` 0.16 for the portable build below
+and `squashfs-tools` and `binutils` to package it. Nix is only a convenience: every step below is plain CMake, Ninja
+and Python, and the flake runs those same steps with pinned sources.
 
 ```sh
 git clone https://github.com/God-Hand-Rearmed/God-Hand-Rearmed.git
