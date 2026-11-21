@@ -1045,10 +1045,14 @@ int main(int argc, char *argv[])
     // button reaches the game. Same PADMAN quirk Urban found. Hidden runs 2026-10-17 06:30-06:47: pad 0 mode 0x79,
     // padArea+0x70 = 6 (STABLE), title menus and gameplay take input. Still overridable.
     setDefaultEnv("PS2X_SIO2_RECV1", "2");
-    // Audio time-stretch off by default (2026-10-17): during a slowdown the WSOLA stretch repeats 5-20 ms slices, which the
-    // user heard as sounds "playing twice". With VU1 AOT + GPU GS the game holds 60 fps, so a rare stall now gives a short
-    // dropout instead. PS2X_AUDIO_STRETCH=1 turns it back on.
-    setDefaultEnv("PS2X_AUDIO_STRETCH", "0");
+    // Audio time-stretch: the runtime's default (on) since issue #5. It was off here from 2026-10-17: a load hitch switched
+    // it on for seconds and the WSOLA stretch repeated 5-20 ms slices ("sounds playing twice"), and the game held 60 FPS
+    // on the PCs it was tried on. A slower PC (a 4-core Haswell) runs 60 FPS mode at 96-99%: with the stretch off the
+    // music cut out dozens of times a minute. It now switches on only from the scheduler's exact speed (under 99.5% for
+    // 2 s and over the last 5 s, the sound queue short; stalls left out: audio_stretch_control.h): losses in short
+    // bursts seldom switch it on. Switching on costs one cut of ~50-80 ms: the queue is short by then and the stretch
+    // needs 55 ms of sound before it plays (it takes the queue's tail back as its first input, which shortens the cut
+    // only where the queue still held most of that). PS2X_AUDIO_STRETCH=0 still turns it off.
     GSThreadedBackend::SetEnabledByDefault(true);
     GSThreadedBackend::SetGpuByDefault(true);
     GSGpuBackend::SetAsyncPresentDefault(true);

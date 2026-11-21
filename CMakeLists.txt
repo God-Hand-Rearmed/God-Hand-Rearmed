@@ -46,6 +46,13 @@ option(KAMITE_STEAM_SHORTCUT "Add to Steam in the launcher" ${KAMITE_STEAM_SHORT
 set(PS2X_ENABLE_AGRESSIVE_LOGS OFF CACHE BOOL "" FORCE)
 set(PS2X_ENABLE_SCCACHE OFF CACHE BOOL "" FORCE)
 
+# The tests, run with ctest: runtime/ps2xRuntime/test/vsync_lock_test.cpp (the vblank lock on simulated displays, issue
+# #1) and audio_stretch_test.cpp (the audio's time-stretch on a PC below full speed, issue #5).
+option(KAMITE_BUILD_TESTS "Build and register the tests (ctest)" OFF)
+if(KAMITE_BUILD_TESTS)
+    enable_testing()
+endif()
+
 add_subdirectory(runtime EXCLUDE_FROM_ALL)
 add_subdirectory(src)
 

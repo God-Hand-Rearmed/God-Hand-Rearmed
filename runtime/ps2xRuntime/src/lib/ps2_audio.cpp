@@ -2,6 +2,7 @@
 #include "runtime/ps2_memory.h"
 #include "ps2_host_backend.h"
 #include "runtime/ps2_time_control.h"
+#include "runtime/audio_stretch_control.h"
 #include <atomic>
 #include <algorithm>
 #include <cmath>
@@ -209,7 +210,11 @@ struct PS2AudioBackend::Impl
         uint32_t sampleKey;
     };
     std::vector<TrackedSound> activeSounds;
-    static constexpr size_t kRingSamples = 16384u;
+    // 341 ms of room (32768 samples). The queue is held near kRateTargetSamples (85 ms): the room only matters while
+    // the game runs faster than the card plays (the vsync lock following a display up to 0.5% fast, a burst of audio).
+    // At 16384 the drop (queued + a 512-frame submit over the ring) came at fill 0.875, below the rate control's
+    // full 0.5% at fill 1: a game held 0.44% fast skipped ~117 ms every minute or two.
+    static constexpr size_t kRingSamples = 32768u;
     std::array<int16_t, kRingSamples> ring{};
     size_t read = 0u;
     size_t queued = 0u;
@@ -220,15 +225,14 @@ struct PS2AudioBackend::Impl
     int32_t fadePosition = 0;
     int32_t gapRemaining = 0;
     double readFraction = 0.0; // PS2X_AUDIO_RATE_CONTROL: position between the frame at read and the next
-    // PS2X_AUDIO_STRETCH: production speed (frames made per real second / 48000, smoothed) and the stretcher.
+    // PS2X_AUDIO_STRETCH: when to stretch (the game's speed from the scheduler, audio_stretch_control.h) and the
+    // stretcher.
     TimeStretch stretch;
     std::vector<int16_t> stretched;
+    ps2x::StretchControl stretchControl;
     bool stretching = false;
     double speed = 1.0;
-    uint64_t rateFrames = 0u;
-    std::chrono::steady_clock::time_point rateStart{};
     std::chrono::steady_clock::time_point lastSubmit{};
-    uint32_t slowWindows = 0u;
     uint64_t gaps = 0u;      // PS2X_AUDIO_STATS: submissions after more than 50 ms without audio
     double longestGap = 0.0; // and the longest such pause (s), per stats line
     std::array<int16_t, 2> lastOutput{};
@@ -271,7 +275,8 @@ struct PS2AudioBackend::Impl
             owner->fadeSource = owner->lastOutput;
         }
         // PS2X_AUDIO_RATE_CONTROL (default on): play up to 0.5% faster or slower to keep the queue near
-        // kRateTargetSamples (~85 ms, half the ring: the IOP thread makes audio in bursts and 43 ms ran dry now and then).
+        // kRateTargetSamples (~85 ms, a quarter of the ring: the IOP thread makes audio in bursts and 43 ms ran dry now and
+        // then).
         // The emulated SPU2 makes 48 kHz of emulated time, which never matches the sound card exactly: the game runs a
         // little under or (locked to a 59.997 Hz monitor, PROGRESS §67) over real time. Without this the queue drained
         // (underruns) or filled up its 170 ms and ~127 ms were dropped at once.
@@ -443,10 +448,8 @@ void PS2AudioBackend::resetPcm()
     m_impl->stretch.reset();
     m_impl->stretching = false;
     m_impl->speed = 1.0;
-    m_impl->rateFrames = 0u;
-    m_impl->rateStart = {};
+    m_impl->stretchControl.reset();
     m_impl->lastSubmit = {};
-    m_impl->slowWindows = 0u;
     m_impl->primed = false;
     m_impl->fadePosition = 0;
     m_impl->gapRemaining = 0;
@@ -473,8 +476,9 @@ void PS2AudioBackend::submitPcm(std::span<const int16_t> samples)
     if (!m_impl->streamReady)
         return;
     m_impl->producedFrames += samples.size() / 2u;
-    // PS2X_AUDIO_STRETCH (default on): below ~97% speed (measured from how fast the emulated SPU2 makes audio over
-    // 0.5 s windows) the audio goes through TimeStretch; back above 99% it is passed through untouched again.
+    // PS2X_AUDIO_STRETCH (default on): while the game runs below full speed (under 99.5% for 2 s, measured exactly from
+    // the emulated time the scheduler loses to late vblanks: audio_stretch_control.h, issue #5) the audio goes through
+    // TimeStretch; back at full speed with the queue near its target, it is passed through untouched again.
     static const bool stretchEnabled = [] { const char *v = std::getenv("PS2X_AUDIO_STRETCH"); return !(v && *v == '0'); }();
     // A stall (loading, a shader compile: no audio for over 50 ms, while the SPU2 hands over 512 frames = 10.7 ms at
     // a time) is a gap. Counted for the stats whether or not the stretch is on (round 10: with the stretch off by
@@ -494,56 +498,57 @@ void PS2AudioBackend::submitPcm(std::span<const int16_t> samples)
     {
         Impl &d = *m_impl;
         const auto now = std::chrono::steady_clock::now();
-        // The stall restarts the speed window: counted in, one ~40 ms load hitch pulled a 0.5 s window under 0.925 and
-        // switched the stretch on for seconds: every sound's attack played twice, 5-20 ms apart (hidden run 2026-10-17
-        // 09:01, 131 repeats of 5-50 ms in the output). The stall is now a short underrun.
-        if (d.rateStart == std::chrono::steady_clock::time_point{} || gap)
-        {
-            d.rateStart = now;
-            d.rateFrames = 0u;
-        }
-        else
-            d.rateFrames += samples.size() / 2u;
-        const double window = std::chrono::duration<double>(now - d.rateStart).count();
+        // A stall (no audio for over 50 ms) restarts the speed window: counted in, one ~40 ms load hitch switched the
+        // stretch on for seconds and every sound's attack played twice, 5-20 ms apart (hidden run 2026-10-17 09:01). The
+        // stall is a short gap instead; the scheduler's count leaves such drops out as well.
+        if (gap)
+            d.stretchControl.restartWindow();
+        const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        // The playable queue (what the sound card will play next), not the stretcher's held input (23-55 ms): steering
+        // the sum kept the playable part at 30-60 ms, which ran dry (audio_stretch_control.h).
+        const double queueFill = (static_cast<double>(d.queued) - static_cast<double>(Impl::kRateTargetSamples)) /
+                                 static_cast<double>(Impl::kRateTargetSamples);
+        const bool wanted = d.stretchControl.update(nowNs, ps2xEmulatedTimeLostNs(), queueFill);
+        d.speed = std::clamp(d.stretchControl.speed(), 0.5, 1.1);
         bool leaving = false;
-        if (window >= 0.5)
+        if (wanted && !d.stretching)
         {
-            const double measured = static_cast<double>(d.rateFrames) / (window * 48000.0);
-            // A window with almost no audio (loading, pause) says nothing about the speed.
-            if (measured > 0.2)
+            d.stretching = true;
+            d.stretch.reset();
+            // Pull the queue's tail back into the stretcher: it needs kSeek + kSequence frames (55 ms) before its first
+            // piece, and fed only what comes next it held all of that back while the card played the queue out. The
+            // queue's last frames (up to that much, all but 64) become its first input instead, continuing from what is
+            // left in the queue (nothing played twice, no splice): no hole where the queue still held ~46 ms or more. A
+            // slowdown has usually drained it below that by the time the stretch comes on, and then a hole of the rest
+            // remains (one cut at switch-on).
+            const size_t hold = (TimeStretch::kSeek + TimeStretch::kSequence) * 2u;
+            const size_t pulled = std::min(d.queued > 128u ? d.queued - 128u : 0u, hold) & ~size_t{1};
+            if (pulled > 0u)
             {
-                d.speed = std::min(1.1, d.speed * 0.6 + measured * 0.4);
-                d.slowWindows = measured < 0.97 ? d.slowWindows + 1u : 0u;
+                std::vector<int16_t> tail(pulled);
+                const size_t start = (d.read + d.queued - pulled) % Impl::kRingSamples;
+                for (size_t i = 0u; i < pulled; ++i)
+                    tail[i] = d.ring[(start + i) % Impl::kRingSamples];
+                d.queued -= pulled;
+                d.stretch.push(tail);
             }
-            d.rateFrames = 0u;
-            d.rateStart = now;
-            // On only after two slow windows in a row (1 s): a real slowdown, not a single dip.
-            if (!d.stretching && d.speed < 0.97 && d.slowWindows >= 2u)
-            {
-                d.stretching = true;
-                d.stretch.reset();
-                if (d.statsEnabled)
-                    std::fprintf(stderr, "[audio] time-stretch on (speed %.2f)\n", d.speed);
-            }
-            // Off only once the queue is back near its target too: leaving at 140 ms (after a state load) the fine
-            // rate control (0.5%) took minutes to bring it back, the sound lagging the picture meanwhile; the stretch
-            // drains it at up to 5% in about a second.
-            else if (d.stretching && d.speed > 0.99 &&
-                     std::abs(static_cast<double>(d.queued + d.stretch.heldSamples()) -
-                              static_cast<double>(Impl::kRateTargetSamples)) < 0.25 * static_cast<double>(Impl::kRateTargetSamples))
-            {
-                d.stretching = false;
-                leaving = true;
-                if (d.statsEnabled)
-                    std::fprintf(stderr, "[audio] time-stretch off (speed %.2f)\n", d.speed);
-            }
+            if (d.statsEnabled)
+                std::fprintf(stderr, "[audio] time-stretch on (speed %.3f)\n", d.speed);
+        }
+        // Off only once the queue is back near its target too (StretchControl): leaving at 140 ms (after a state load)
+        // the fine rate control (0.5%) took minutes to bring it back, the sound lagging the picture meanwhile; the
+        // stretch drains it at up to 5% in about a second.
+        else if (!wanted && d.stretching)
+        {
+            d.stretching = false;
+            leaving = true;
+            if (d.statsEnabled)
+                std::fprintf(stderr, "[audio] time-stretch off (speed %.3f)\n", d.speed);
         }
         if (d.stretching)
         {
-            // Tempo = speed, nudged by up to 10% to bring the queue back to its target.
-            const double fill = (static_cast<double>(d.queued + d.stretch.heldSamples()) - static_cast<double>(Impl::kRateTargetSamples)) /
-                                static_cast<double>(Impl::kRateTargetSamples);
-            const double tempo = std::clamp(d.speed * (1.0 + std::clamp(0.2 * fill, -0.1, 0.1)), 0.5, 1.05);
+            // Tempo = speed, nudged by up to 10% to bring the playable queue back to its target.
+            const double tempo = std::clamp(d.speed * (1.0 + std::clamp(0.2 * queueFill, -0.1, 0.1)), 0.5, 1.05);
             d.stretched.clear();
             d.stretch.push(samples);
             d.stretch.process(tempo, d.stretched);

@@ -681,3 +681,26 @@ endif()
 install(DIRECTORY include/
     DESTINATION include
 )
+
+# The tests (KAMITE_BUILD_TESTS=ON, ctest). The emulated vblank's lock to the host display on simulated displays, judged by the sound queue (test/vsync_lock_test.cpp:
+# issue #1, the music skipping on a variable-refresh display). A plain program with only the lock's arithmetic: no
+# window, no game code. Built by default when tests are on (this folder is EXCLUDE_FROM_ALL from the top level).
+if(KAMITE_BUILD_TESTS)
+    add_executable(vsync_lock_test test/vsync_lock_test.cpp src/lib/Kernel/vsync_lock.cpp)
+    target_include_directories(vsync_lock_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    set_target_properties(vsync_lock_test PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    if(MSVC)
+        target_compile_options(vsync_lock_test PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME vsync_lock_test COMMAND vsync_lock_test)
+
+    # When the audio goes through the time-stretch, on a simulated PC below full speed (test/audio_stretch_test.cpp:
+    # issue #5, the music cutting out at 60 FPS on a slower PC). Header-only control: nothing else is linked.
+    add_executable(audio_stretch_test test/audio_stretch_test.cpp)
+    target_include_directories(audio_stretch_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    set_target_properties(audio_stretch_test PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    if(MSVC)
+        target_compile_options(audio_stretch_test PRIVATE /W3 /utf-8)
+    endif()
+    add_test(NAME audio_stretch_test COMMAND audio_stretch_test)
+endif()
