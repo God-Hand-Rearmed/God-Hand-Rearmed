@@ -4,14 +4,21 @@
 #include "runtime/keep_awake.h"
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <mutex>
 #include <thread>
 #include <type_traits>
+#include <utility>
 
 namespace ps2x::keepawake
 {
@@ -335,6 +342,507 @@ namespace ps2x::keepawake
         return true;
     }
     }
+
+    namespace
+    {
+        // libwayland-client's C ABI (wayland-util.h, wayland-client-core.h; stable since 1.0, the constructor calls since
+        // 1.4 and 1.10: wl_proxy_marshal_flags, 1.20, isn't needed). Protocol objects are made the way
+        // wayland-scanner's generated inline functions make them; the two protocols' tables are written out below.
+        struct WlProxy;
+        struct WlInterface;
+        struct WlMessage
+        {
+            const char *name;
+            const char *signature;
+            const WlInterface **types;
+        };
+        struct WlInterface
+        {
+            const char *name;
+            int version;
+            int method_count;
+            const WlMessage *methods;
+            int event_count;
+            const WlMessage *events;
+        };
+        using WlHandler = void (*)(void);
+
+        // Types for arguments that take no object (unused) and for get_popup (never sent).
+        const WlInterface *gNoTypes[8] = {};
+
+        // idle-inhibit-unstable-v1 (wayland-protocols), version 1.
+        const WlMessage kInhibitorRequests[] = {{"destroy", "", gNoTypes}};
+        const WlInterface gInhibitor = {"zwp_idle_inhibitor_v1", 1, 1, kInhibitorRequests, 0, nullptr};
+        const WlInterface *gInhibitManagerTypes[2] = {&gInhibitor, nullptr}; // [1] wl_surface: libwayland's, at load
+        const WlMessage kInhibitManagerRequests[] = {{"destroy", "", gNoTypes},
+                                                     {"create_inhibitor", "no", gInhibitManagerTypes}};
+        const WlInterface gInhibitManager = {"zwp_idle_inhibit_manager_v1", 1, 2, kInhibitManagerRequests, 0, nullptr};
+
+        // wlr-layer-shell-unstable-v1 (wlr-protocols), bound at version 1: the requests and events version 1 has.
+        const WlMessage kLayerSurfaceRequests[] = {{"set_size", "uu", gNoTypes},
+                                                   {"set_anchor", "u", gNoTypes},
+                                                   {"set_exclusive_zone", "i", gNoTypes},
+                                                   {"set_margin", "iiii", gNoTypes},
+                                                   {"set_keyboard_interactivity", "u", gNoTypes},
+                                                   {"get_popup", "o", gNoTypes},
+                                                   {"ack_configure", "u", gNoTypes},
+                                                   {"destroy", "", gNoTypes}};
+        const WlMessage kLayerSurfaceEvents[] = {{"configure", "uuu", gNoTypes}, {"closed", "", gNoTypes}};
+        const WlInterface gLayerSurface = {"zwlr_layer_surface_v1", 1, 8, kLayerSurfaceRequests, 2, kLayerSurfaceEvents};
+        // get_layer_surface(new_id, wl_surface, ?wl_output, uint layer, string namespace): [1] at load; [2] left
+        // empty, as the output sent is always null (the compositor picks one).
+        const WlInterface *gLayerShellTypes[5] = {&gLayerSurface, nullptr, nullptr, nullptr, nullptr};
+        const WlMessage kLayerShellRequests[] = {{"get_layer_surface", "no?ous", gLayerShellTypes}};
+        const WlInterface gLayerShell = {"zwlr_layer_shell_v1", 1, 1, kLayerShellRequests, 0, nullptr};
+
+        // Request opcodes (the order in each protocol's XML).
+        enum : uint32_t
+        {
+            kDisplayGetRegistry = 1,
+            kRegistryBind = 0,
+            kCompositorCreateSurface = 0,
+            kCompositorCreateRegion = 1,
+            kSurfaceDestroy = 0,
+            kSurfaceAttach = 1,
+            kSurfaceDamage = 2,
+            kSurfaceSetInputRegion = 5,
+            kSurfaceCommit = 6,
+            kRegionDestroy = 0,
+            kShmCreatePool = 0,
+            kShmPoolCreateBuffer = 0,
+            kShmPoolDestroy = 1,
+            kInhibitorDestroy = 0,
+            kInhibitManagerCreateInhibitor = 1,
+            kLayerShellGetLayerSurface = 0,
+            kLayerSurfaceSetSize = 0,
+            kLayerSurfaceSetAnchor = 1,
+            kLayerSurfaceAckConfigure = 6,
+            kLayerSurfaceDestroy = 7,
+        };
+        constexpr uint32_t kLayerBackground = 0;         // zwlr_layer_shell_v1.layer.background
+        constexpr uint32_t kAnchorTopLeft = 1u | 4u;     // zwlr_layer_surface_v1.anchor.top | .left
+        constexpr uint32_t kShmFormatArgb8888 = 0;       // wl_shm.format.argb8888
+        constexpr int kSurfaceRetryFirstMs = 1000, kSurfaceRetryMaxMs = 60000;
+
+        struct LibWayland
+        {
+            WlProxy *(*connect_to_fd)(int) = nullptr; // a wl_display is a wl_proxy (wayland-client-core.h)
+            void (*disconnect)(WlProxy *) = nullptr;
+            int (*roundtrip)(WlProxy *) = nullptr;
+            int (*dispatch)(WlProxy *) = nullptr;
+            int (*get_error)(WlProxy *) = nullptr;
+            void (*marshal)(WlProxy *, uint32_t, ...) = nullptr;
+            WlProxy *(*construct)(WlProxy *, uint32_t, const WlInterface *, ...) = nullptr;
+            WlProxy *(*constructVersioned)(WlProxy *, uint32_t, const WlInterface *, uint32_t, ...) = nullptr;
+            int (*add_listener)(WlProxy *, WlHandler *, void *) = nullptr;
+            void (*destroy)(WlProxy *) = nullptr;
+            const WlInterface *registry = nullptr, *compositor = nullptr, *surface = nullptr, *region = nullptr,
+                              *shm = nullptr, *shmPool = nullptr, *buffer = nullptr;
+
+            bool load(std::string &error)
+            {
+                void *lib = dlopen("libwayland-client.so.0", RTLD_NOW | RTLD_LOCAL);
+                if (!lib)
+                {
+                    const char *why = dlerror();
+                    error = std::string("libwayland-client.so.0 did not load (") + (why ? why : "?") + ")";
+                    return false;
+                }
+                bool all = true;
+                auto get = [&](auto &p, const char *symbol)
+                {
+                    p = reinterpret_cast<std::remove_reference_t<decltype(p)>>(dlsym(lib, symbol));
+                    all = all && p != nullptr;
+                };
+                get(connect_to_fd, "wl_display_connect_to_fd");
+                get(disconnect, "wl_display_disconnect");
+                get(roundtrip, "wl_display_roundtrip");
+                get(dispatch, "wl_display_dispatch");
+                get(get_error, "wl_display_get_error");
+                get(marshal, "wl_proxy_marshal");
+                get(construct, "wl_proxy_marshal_constructor");
+                get(constructVersioned, "wl_proxy_marshal_constructor_versioned");
+                get(add_listener, "wl_proxy_add_listener");
+                get(destroy, "wl_proxy_destroy");
+                get(registry, "wl_registry_interface");
+                get(compositor, "wl_compositor_interface");
+                get(surface, "wl_surface_interface");
+                get(region, "wl_region_interface");
+                get(shm, "wl_shm_interface");
+                get(shmPool, "wl_shm_pool_interface");
+                get(buffer, "wl_buffer_interface");
+                if (!all)
+                {
+                    error = "libwayland-client.so.0 lacks a function it needs (older than 1.10?)";
+                    return false;
+                }
+                gInhibitManagerTypes[1] = surface;
+                gLayerShellTypes[1] = surface;
+                return true;
+            }
+        };
+
+        // The connection, its globals, and the surface the inhibitor is on. Used by its own thread only (start, then
+        // run), and never freed: the inhibit lasts as long as the connection.
+        class WaylandInhibit
+        {
+        public:
+            explicit WaylandInhibit(const LibWayland &wl) : m_wl(wl) {}
+
+            bool start(std::string &error)
+            {
+                // The socket by hand, not wl_display_connect: that would take $WAYLAND_SOCKET first (an fd handed to the
+                // process, not ours to use up) and unsetenv it from this thread while others may read the environment.
+                const char *name = std::getenv("WAYLAND_DISPLAY"), *runtime = std::getenv("XDG_RUNTIME_DIR");
+                std::string path = name; // set: startWaylandInhibitOnce checked
+                if (path[0] != '/') // libwayland's rule: relative to $XDG_RUNTIME_DIR, else a path of its own
+                {
+                    if (!runtime || !*runtime)
+                    {
+                        error = "no Wayland compositor ($XDG_RUNTIME_DIR unset)";
+                        return false;
+                    }
+                    path = std::string(runtime) + "/" + path;
+                }
+                sockaddr_un where{};
+                where.sun_family = AF_UNIX;
+                if (path.size() >= sizeof(where.sun_path))
+                {
+                    error = "no Wayland compositor (its socket path is too long)";
+                    return false;
+                }
+                std::memcpy(where.sun_path, path.c_str(), path.size() + 1);
+                const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+                if (fd < 0 || ::connect(fd, reinterpret_cast<sockaddr *>(&where), sizeof(where)) != 0)
+                {
+                    error = "no Wayland compositor at " + path + " (" + std::strerror(errno) + ")";
+                    if (fd >= 0)
+                        ::close(fd);
+                    return false;
+                }
+                m_display = m_wl.connect_to_fd(fd); // libwayland owns fd now (on failure too: never closed twice)
+                if (!m_display)
+                {
+                    error = std::string("libwayland didn't take the connection (") + std::strerror(errno) + ")";
+                    return false;
+                }
+                if (!startConnected(error))
+                {
+                    m_wl.disconnect(m_display); // nothing of ours is left on it: the proxies made are only memory
+                    m_display = nullptr;
+                    return false;
+                }
+                return true;
+            }
+
+            // Dispatches the connection for the life of the process (the layer surface's configure and closed
+            // events). Making a new surface when the compositor closes ours; stopping when the connection is gone.
+            void run()
+            {
+                int waitMs = kSurfaceRetryFirstMs;
+                // m_closed before each wait: a close read in makeSurface's own dispatching may leave no event behind to
+                // wake the dispatch here (today the surface's delete_id replies do; this doesn't count on them).
+                for (;;)
+                {
+                    if (!m_closed)
+                    {
+                        if (m_wl.dispatch(m_display) == -1)
+                            break;
+                        continue;
+                    }
+                    dropSurface();
+                    std::fprintf(stderr, "[window] Wayland: the compositor closed the keep-awake surface; another in "
+                                         "%d s\n", waitMs / 1000);
+                    for (;;)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+                        std::string error;
+                        if (makeSurface(error))
+                        {
+                            std::fprintf(stderr, "[window] Wayland idle inhibit held again (a new layer surface)\n");
+                            waitMs = kSurfaceRetryFirstMs;
+                            break;
+                        }
+                        if (m_wl.get_error(m_display) != 0)
+                            break; // the connection is gone: the dispatch above says so and ends the loop
+                        waitMs = waitMs * 2 > kSurfaceRetryMaxMs ? kSurfaceRetryMaxMs : waitMs * 2;
+                        std::fprintf(stderr, "[window] Wayland: no keep-awake surface (%s); again in %d s\n",
+                                     error.c_str(), waitMs / 1000);
+                    }
+                }
+                std::fprintf(stderr, "[window] Wayland idle inhibit stopped: the compositor connection is gone (%s)\n",
+                             std::strerror(m_wl.get_error(m_display)));
+            }
+
+        private:
+            bool startConnected(std::string &error)
+            {
+                static WlHandler registryListener[2] = {reinterpret_cast<WlHandler>(&onGlobal),
+                                                        reinterpret_cast<WlHandler>(&onGlobalRemove)};
+                WlProxy *registry = m_wl.construct(m_display, kDisplayGetRegistry, m_wl.registry, nullptr);
+                if (!registry || m_wl.add_listener(registry, registryListener, this) != 0 ||
+                    m_wl.roundtrip(m_display) == -1)
+                {
+                    error = "the Wayland registry didn't answer (" + lastError() + ")";
+                    return false;
+                }
+                std::string missing;
+                for (const auto &[proxy, what] : {std::pair<WlProxy *, const char *>{m_compositor, "wl_compositor"},
+                                                  {m_shm, "wl_shm"},
+                                                  {m_manager, "zwp_idle_inhibit_manager_v1"},
+                                                  {m_layerShell, "zwlr_layer_shell_v1"}})
+                    if (!proxy)
+                        missing += std::string(missing.empty() ? "" : ", ") + what;
+                if (!missing.empty())
+                {
+                    error = "the compositor lacks " + missing;
+                    return false;
+                }
+                if (!makeBuffer(error))
+                    return false;
+                if (makeSurface(error))
+                    return true;
+                if (m_wl.get_error(m_display) != 0)
+                    return false;
+                // The connection lives, the surface was closed (its output gone as it was made): run() makes another,
+                // as it does for a later close.
+                std::fprintf(stderr, "[window] Wayland: no keep-awake surface yet (%s); trying again\n", error.c_str());
+                m_closed = true;
+                return true;
+            }
+
+            // One transparent ARGB pixel in shared memory, attached to every surface made.
+            bool makeBuffer(std::string &error)
+            {
+                const int fd = ::memfd_create("ghr-keep-awake", MFD_CLOEXEC);
+                if (fd < 0 || ::ftruncate(fd, 4) != 0) // a new memfd reads as zeros: alpha 0
+                {
+                    error = std::string("no shared memory for the surface (") + std::strerror(errno) + ")";
+                    if (fd >= 0)
+                        ::close(fd);
+                    return false;
+                }
+                WlProxy *pool = m_wl.construct(m_shm, kShmCreatePool, m_wl.shmPool, nullptr, fd, 4);
+                ::close(fd); // libwayland sent a copy of it
+                if (!pool)
+                {
+                    error = "out of memory";
+                    return false;
+                }
+                m_buffer = m_wl.construct(pool, kShmPoolCreateBuffer, m_wl.buffer, nullptr, 0, 1, 1, 4,
+                                          kShmFormatArgb8888);
+                m_wl.marshal(pool, kShmPoolDestroy); // the buffer keeps the memory
+                m_wl.destroy(pool);
+                if (!m_buffer)
+                {
+                    error = "out of memory";
+                    return false;
+                }
+                return true;
+            }
+
+            // The layer surface, mapped (its first configure acked, the pixel attached), then the inhibitor on it.
+            // In that order: sway weighs an inhibitor when it is made (and again only after a transaction or a lock),
+            // and an unmapped layer surface doesn't count; on an idle session nothing else would make it look again.
+            bool makeSurface(std::string &error)
+            {
+                static WlHandler layerListener[2] = {reinterpret_cast<WlHandler>(&onConfigure),
+                                                     reinterpret_cast<WlHandler>(&onClosed)};
+                m_configured = m_closed = false;
+                m_surface = m_wl.construct(m_compositor, kCompositorCreateSurface, m_wl.surface, nullptr);
+                WlProxy *region = m_wl.construct(m_compositor, kCompositorCreateRegion, m_wl.region, nullptr);
+                if (!m_surface || !region)
+                {
+                    error = "out of memory";
+                    return false;
+                }
+                m_wl.marshal(m_surface, kSurfaceSetInputRegion, region); // empty: clicks go through it
+                m_wl.marshal(region, kRegionDestroy);
+                m_wl.destroy(region);
+                m_layer = m_wl.construct(m_layerShell, kLayerShellGetLayerSurface, &gLayerSurface, nullptr, m_surface,
+                                         nullptr, kLayerBackground, kWaylandNamespace);
+                if (!m_layer || m_wl.add_listener(m_layer, layerListener, this) != 0)
+                {
+                    error = "out of memory";
+                    return false;
+                }
+                m_wl.marshal(m_layer, kLayerSurfaceSetSize, 1u, 1u);
+                m_wl.marshal(m_layer, kLayerSurfaceSetAnchor, kAnchorTopLeft);
+                m_wl.marshal(m_surface, kSurfaceCommit); // no buffer yet: asks for the first configure
+                while (!m_configured && !m_closed)
+                    if (m_wl.dispatch(m_display) == -1)
+                    {
+                        error = "the compositor connection is gone (" + lastError() + ")";
+                        return false;
+                    }
+                if (m_closed)
+                {
+                    error = "the compositor closed the layer surface at once (no output?)";
+                    dropSurface();
+                    return false;
+                }
+                m_wl.marshal(m_surface, kSurfaceAttach, m_buffer, 0, 0);
+                m_wl.marshal(m_surface, kSurfaceDamage, 0, 0, 1, 1);
+                m_wl.marshal(m_surface, kSurfaceCommit);
+                m_mapped = true;
+#ifdef PS2X_KEEP_AWAKE_TEST_PAUSE_AFTER_MAP // keep_awake_test_pause only: a window for the output to go (the test's)
+                if (m_pauseOnce)
+                {
+                    m_pauseOnce = false;
+                    m_wl.roundtrip(m_display); // the map reaches sway before the output goes
+                    std::fprintf(stderr, "test: paused after the map\n");
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                    m_drainOnce = true;
+                }
+#endif
+                m_inhibitor = m_wl.construct(m_manager, kInhibitManagerCreateInhibitor, &gInhibitor, nullptr, m_surface);
+                if (!m_inhibitor || m_wl.roundtrip(m_display) == -1)
+                {
+                    error = m_inhibitor ? "the compositor refused it (" + lastError() + ")" : "out of memory";
+                    return false;
+                }
+#ifdef PS2X_KEEP_AWAKE_TEST_PAUSE_AFTER_MAP
+                if (m_drainOnce) // every event of the output's going read here: none left to wake run()'s dispatch
+                {
+                    m_drainOnce = false;
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    m_wl.roundtrip(m_display);
+                }
+#endif
+                if (m_closed) // closed meanwhile (its output gone between the configure and now): not held
+                {
+                    error = "the compositor closed the layer surface as it was shown";
+                    dropSurface();
+                    return false;
+                }
+                return true;
+            }
+
+            void dropSurface()
+            {
+                if (m_inhibitor)
+                {
+                    m_wl.marshal(m_inhibitor, kInhibitorDestroy);
+                    m_wl.destroy(m_inhibitor);
+                }
+                if (m_layer)
+                {
+                    m_wl.marshal(m_layer, kLayerSurfaceDestroy);
+                    m_wl.destroy(m_layer);
+                }
+                if (m_surface)
+                {
+                    m_wl.marshal(m_surface, kSurfaceDestroy);
+                    m_wl.destroy(m_surface);
+                }
+                m_inhibitor = m_layer = m_surface = nullptr;
+                m_mapped = false;
+            }
+
+            std::string lastError() const
+            {
+                const int code = m_wl.get_error(m_display);
+                return code ? std::strerror(code) : "no error";
+            }
+
+            WlProxy *bind(WlProxy *registry, uint32_t name, const WlInterface *interface)
+            {
+                const uint32_t version = 1; // every request used is in version 1 of each
+                return m_wl.constructVersioned(registry, kRegistryBind, interface, version, name, interface->name,
+                                               version, nullptr);
+            }
+
+            static void onGlobal(void *data, WlProxy *registry, uint32_t name, const char *interface, uint32_t)
+            {
+                auto *self = static_cast<WaylandInhibit *>(data);
+                auto take = [&](WlProxy *&slot, const WlInterface *what)
+                {
+                    if (!slot && std::strcmp(interface, what->name) == 0)
+                        slot = self->bind(registry, name, what);
+                };
+                take(self->m_compositor, self->m_wl.compositor);
+                take(self->m_shm, self->m_wl.shm);
+                take(self->m_manager, &gInhibitManager);
+                take(self->m_layerShell, &gLayerShell);
+            }
+            static void onGlobalRemove(void *, WlProxy *, uint32_t) {}
+
+            static void onConfigure(void *data, WlProxy *layer, uint32_t serial, uint32_t, uint32_t)
+            {
+                auto *self = static_cast<WaylandInhibit *>(data);
+                self->m_wl.marshal(layer, kLayerSurfaceAckConfigure, serial);
+                if (self->m_mapped) // a later configure (output change): the same pixel, committed again
+                    self->m_wl.marshal(self->m_surface, kSurfaceCommit);
+                self->m_configured = true;
+            }
+            static void onClosed(void *data, WlProxy *) { static_cast<WaylandInhibit *>(data)->m_closed = true; }
+
+            const LibWayland &m_wl;
+            WlProxy *m_display = nullptr, *m_compositor = nullptr, *m_shm = nullptr, *m_manager = nullptr,
+                    *m_layerShell = nullptr, *m_buffer = nullptr, *m_surface = nullptr, *m_layer = nullptr,
+                    *m_inhibitor = nullptr;
+            bool m_configured = false, m_closed = false, m_mapped = false;
+#ifdef PS2X_KEEP_AWAKE_TEST_PAUSE_AFTER_MAP
+            bool m_pauseOnce = true, m_drainOnce = false;
+#endif
+        };
+
+        bool startWaylandInhibitOnce(std::string &error)
+        {
+            const char *name = std::getenv("WAYLAND_DISPLAY");
+            if (!name || !*name)
+            {
+                // Unset: libwayland's "wayland-0" default isn't tried, never a compositor the session didn't name.
+                error = "no Wayland compositor ($WAYLAND_DISPLAY unset)";
+                return false;
+            }
+            static LibWayland wl;
+            if (!wl.load(error))
+                return false;
+            auto *inhibit = new WaylandInhibit(wl); // never freed: see WaylandInhibit
+            if (!inhibit->start(error))
+            {
+                delete inhibit;
+                return false;
+            }
+            try
+            {
+                std::thread([inhibit]
+                            {
+                                try // nothing may leave this thread: an exception here would std::terminate the game
+                                {
+                                    inhibit->run();
+                                }
+                                catch (...)
+                                {
+                                    std::fprintf(stderr, "[window] Wayland idle inhibit stopped (out of memory)\n");
+                                }
+                            })
+                    .detach();
+            }
+            catch (...)
+            {
+                // Held, undispatched: it lasts until the compositor's buffer for us fills and it drops the connection.
+                error = "no thread to dispatch it";
+                return false;
+            }
+            return true;
+        }
+    }
+
+    bool startWaylandInhibit(std::string &error)
+    {
+        // Once per process, as startX11Reset: a second inhibitor would be harmless but a second connection and thread.
+        static std::mutex mutex;
+        static int state = 0; // 0 not tried, 1 held, 2 failed
+        static std::string firstError;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (state == 0)
+            state = startWaylandInhibitOnce(firstError) ? 1 : 2;
+        if (state == 2)
+            error = firstError;
+        return state == 1;
+    }
 }
 
 void ps2xHostKeepDisplayAwake() noexcept
@@ -344,6 +852,24 @@ void ps2xHostKeepDisplayAwake() noexcept
         return;
     try
     {
+        // The Wayland inhibit on a thread of its own: a compositor that never answers holds only it.
+        std::thread([]
+                    {
+                        try
+                        {
+                            std::string error;
+                            if (ps2x::keepawake::startWaylandInhibit(error))
+                                std::fprintf(stderr, "[window] keeping the display awake: Wayland idle inhibit (a "
+                                                     "layer surface of its own)\n");
+                            else
+                                std::fprintf(stderr, "[window] no Wayland idle inhibit: %s\n", error.c_str());
+                        }
+                        catch (...)
+                        {
+                            std::fprintf(stderr, "[window] the Wayland idle inhibit stopped (out of memory)\n");
+                        }
+                    })
+            .detach();
         std::thread([]
                     {
                       try // nothing may leave this thread: an exception here would std::terminate the game

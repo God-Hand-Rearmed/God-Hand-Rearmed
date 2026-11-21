@@ -2,7 +2,7 @@
 
 // Keeping the display awake on Linux while the game runs (issue #12; Windows: Kernel/host_window_win32.cpp,
 // SetThreadExecutionState). A controller's input doesn't count as the user being active, so a desktop's "blank the
-// screen after N minutes" turned the monitor off mid-game. Two things handled here blank a Linux screen:
+// screen after N minutes" turned the monitor off mid-game. Three things handled here blank a Linux screen:
 //
 //   - the desktop (KDE, so the Steam Deck's Desktop Mode, GNOME, and others with either service): asked over the
 //     session D-Bus not to,
@@ -14,15 +14,19 @@
 //     restarts its DPMS timer from the same reset, which the tests don't check):
 //     XResetScreenSaver every 30 s, as SDL does, on a connection of our own.
 //
-// libdbus-1 and libX11 are opened at run time (dlopen): nothing is linked or shipped for this, and a system without one
+// libdbus-1, libX11 and libwayland-client are opened at run time (dlopen): nothing is linked or shipped for this, and a system without one
 // just skips that part (with a log line). The Steam Deck's Game Mode needs neither: Steam keeps the screen on while a
 // game runs.
 //
-// Not covered: a Wayland compositor with neither D-Bus service (sway, river, niri with swayidle and the like). The game
-// window is X11 (GLFW is put on X11 for the renderer: gs_pcsx2_backend.cpp), so it runs under Xwayland there, and
-// neither XResetScreenSaver on Xwayland nor any D-Bus call reaches the compositor's idle timer; Wayland's idle-inhibit
-// protocol needs a Wayland surface of the game's own. There the screen can still blank (swayidle's own inhibit rules,
-// e.g. for fullscreen windows, apply).
+//   - a Wayland compositor with neither D-Bus service (sway with swayidle and the like): Wayland's idle-inhibit
+//     protocol, below (startWaylandInhibit). The game window is X11 (GLFW is put on X11 for the renderer:
+//     gs_pcsx2_backend.cpp), so it runs under Xwayland, and neither XResetScreenSaver on Xwayland nor a D-Bus call
+//     reaches the compositor's idle timer. Its window's wl_surface is Xwayland's, not ours, so the inhibitor goes on a
+//     surface of our own: a 1x1 transparent layer-shell surface on the background layer that takes no input. Sway
+//     (1.12, sway/desktop/idle_inhibit_v1.c) counts an inhibitor only on a visible window or a mapped layer surface on
+//     an enabled output; a bare surface with no role no longer counts there. Tested on sway 1.12 (headless); other
+//     compositors with both protocols (river, Hyprland, niri, labwc, KDE) decide for themselves and are untested.
+//     GNOME has no layer shell: its idle inhibit is the D-Bus one.
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -90,9 +94,25 @@ namespace ps2x::keepawake
     // that path is untested, though this thread makes no call after its connection is found gone. An older libX11's
     // exit() stays (the game's own window is gone with that X server anyway).
     bool startX11Reset(int periodMs, std::string &error);
+
+    // The layer surface's namespace (what `swaymsg -t get_outputs` and compositor rules see).
+    constexpr const char *kWaylandNamespace = "ghr-keep-awake";
+
+    // An idle inhibitor (zwp_idle_inhibit_manager_v1) on a 1x1 transparent zwlr_layer_shell_v1 surface (background
+    // layer, empty input region) of our own, on its own connection to $WAYLAND_DISPLAY (libwayland-client.so.0,
+    // dlopen'ed; $WAYLAND_SOCKET is left alone), held for the life of the process by a thread that dispatches it; the
+    // compositor drops it when the process ends. If the compositor closes the layer surface (its output gone), a new
+    // one is made for the compositor to place, after 1 s, then 2, 4, up to 60 s between tries. It holds whether the
+    // game's window is visible or not (another workspace, minimized), as the D-Bus inhibit does. Once per process,
+    // later calls answering as the first did. True once held, or when the first surface was closed as it was made (the
+    // thread then makes another, as for a later close, and logs it). False (and `error`) without $WAYLAND_DISPLAY or
+    // libwayland-client, or a compositor lacking either protocol. Blocks until the compositor answers (the first
+    // configure): call it on a thread that may wait.
+    bool startWaylandInhibit(std::string &error);
 }
 
 // Once, from the game window's thread (ps2_runtime.cpp): the X11 reset, then the D-Bus inhibit, on a background thread
-// so a slow or hung session bus never holds up the window, nor the X11 reset (a hung bus holds only that thread).
+// so a slow or hung session bus never holds up the window, nor the X11 reset (a hung bus holds only that thread). The
+// Wayland inhibit has a thread of its own, so neither a hung bus nor a hung compositor holds up the other.
 // Linux: this file's implementation (Kernel/host_keep_awake_linux.cpp); Windows: host_window_win32.cpp.
 void ps2xHostKeepDisplayAwake() noexcept;

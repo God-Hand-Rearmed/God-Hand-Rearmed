@@ -738,7 +738,9 @@ if(KAMITE_BUILD_TESTS)
     # against a private dbus-daemon with fake desktop services, and the game's own call (test/keep_awake_bus.py; skipped
     # without dbus-daemon or python3's jeepney); keep_awake_x11: the X server's idle time reset, on Xvfb (the renderer
     # tests' run_smoke.sh, which fails without a display or xvfb-run; skipped without libXss); keep_awake_x11_lost: the reset's X server going away doesn't end
-    # the process, another connection's still does (test/keep_awake_x11_lost.sh; skipped without Xvfb). Every skip is a
+    # the process, another connection's still does (test/keep_awake_x11_lost.sh; skipped without Xvfb); keep_awake_wayland:
+    # the Wayland idle inhibit under a headless sway, swayidle judging (test/keep_awake_wayland.sh; skipped without
+    # sway, swaymsg or swayidle). Every skip is a
     # failure under KAMITE_REQUIRE_ALL_TESTS=1 (the Nix check).
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
         find_package(Threads REQUIRED)
@@ -767,5 +769,16 @@ if(KAMITE_BUILD_TESTS)
         add_test(NAME keep_awake_x11_lost
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/keep_awake_x11_lost.sh" "$<TARGET_FILE:keep_awake_test>")
         set_tests_properties(keep_awake_x11_lost PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+        # keep_awake_test_pause: the same with a 2 s pause between the Wayland surface's map and the inhibitor's
+        # roundtrip, for an output to go in (keep_awake_wayland.sh's step 6).
+        add_executable(keep_awake_test_pause test/keep_awake_test.cpp src/lib/Kernel/host_keep_awake_linux.cpp)
+        target_include_directories(keep_awake_test_pause PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        target_compile_definitions(keep_awake_test_pause PRIVATE PS2X_KEEP_AWAKE_TEST_PAUSE_AFTER_MAP)
+        target_link_libraries(keep_awake_test_pause PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+        set_target_properties(keep_awake_test_pause PROPERTIES EXCLUDE_FROM_ALL FALSE)
+        add_test(NAME keep_awake_wayland
+            COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test/keep_awake_wayland.sh" "$<TARGET_FILE:keep_awake_test>"
+                    "$<TARGET_FILE:keep_awake_test_pause>")
+        set_tests_properties(keep_awake_wayland PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90)
     endif()
 endif()

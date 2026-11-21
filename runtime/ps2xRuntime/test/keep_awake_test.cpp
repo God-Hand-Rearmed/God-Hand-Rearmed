@@ -13,6 +13,8 @@
 //   keep_awake_test x11        on $DISPLAY: the X server's idle time (MIT-SCREEN-SAVER, libXss) goes back to ~0 once
 //                              startX11Reset runs, and again after each period; exit 77 (skipped) without a display or
 //                              libXss (1 instead when KAMITE_REQUIRE_ALL_TESTS=1)
+//   keep_awake_test wayland [s]  startWaylandInhibit on $WAYLAND_DISPLAY: "held" or "failed <why>", then [s] seconds
+//                              holding it (test/keep_awake_wayland.sh: a headless sway, swayidle judging)
 #include "runtime/keep_awake.h"
 
 #include <chrono>
@@ -108,6 +110,38 @@ namespace
         CHECK(r.error.find("org.freedesktop.ScreenSaver: org.freedesktop.DBus.Error.ServiceUnknown") != std::string::npos);
         CHECK(r.error.find("; org.gnome.SessionManager: ") != std::string::npos);
         CHECK(std::strcmp(name(Inhibitor::None), "none") == 0);
+    }
+
+    // startWaylandInhibit with no compositor named: false and why, without trying libwayland's "wayland-0" default,
+    // and a second call answers as the first did.
+    void testWaylandNone()
+    {
+        ::unsetenv("WAYLAND_DISPLAY");
+        ::unsetenv("WAYLAND_SOCKET");
+        std::string first, second;
+        CHECK(!startWaylandInhibit(first));
+        CHECK(first == "no Wayland compositor ($WAYLAND_DISPLAY unset)");
+        ::setenv("WAYLAND_DISPLAY", "wayland-ghr-none", 1);
+        CHECK(!startWaylandInhibit(second));
+        CHECK(second == first); // once per process: not tried again
+        CHECK(std::strcmp(kWaylandNamespace, "ghr-keep-awake") == 0); // what keep_awake_wayland.sh looks for
+    }
+
+    // "wayland [seconds]": startWaylandInhibit on $WAYLAND_DISPLAY, "held" or "failed <why>", then [seconds] (default 4)
+    // holding it, then "alive" (test/keep_awake_wayland.sh runs it under a headless sway with swayidle watching).
+    int runWayland(int seconds)
+    {
+        std::string error;
+        if (!startWaylandInhibit(error))
+        {
+            std::printf("failed %s\n", error.c_str());
+            return 1;
+        }
+        std::printf("held\n");
+        std::fflush(stdout);
+        std::this_thread::sleep_for(std::chrono::seconds(seconds));
+        std::printf("alive\n");
+        return 0;
     }
 
     int runBus()
@@ -342,6 +376,8 @@ int main(int argc, char **argv)
         std::printf("alive\n");
         return 0;
     }
+    if (argc > 1 && std::strcmp(argv[1], "wayland") == 0)
+        return runWayland(argc > 2 ? std::atoi(argv[2]) : 4);
     if (argc > 1 && std::strcmp(argv[1], "missing-python") == 0)
     {
         std::fprintf(stderr, "skipped: CMake found no python3 for keep_awake_bus.py\n");
@@ -357,6 +393,7 @@ int main(int argc, char **argv)
     {
         testOrder();
         testX11ResetOnce();
+        testWaylandNone();
     }
     std::fprintf(stderr, "%d checks, %d failed\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

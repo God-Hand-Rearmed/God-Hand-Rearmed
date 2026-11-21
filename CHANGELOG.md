@@ -8,7 +8,7 @@ Newest first, one line per change; the code comments say how.
 - Launcher: clicks in the Options book no longer land on the row above (or below) the one under the mouse.
 - Performance: the draw data sent to the PS2's vector unit each frame is gathered in one pass (about twice as fast in crowded scenes).
 - Fixed the monitor turning off mid-game when playing with a controller (Windows' screen timeout) (#12).
-- Linux and Steam Deck: the screen no longer blanks mid-game when playing with a controller either (#12). The desktop is asked not to (the freedesktop ScreenSaver inhibit, which KDE and the Deck's Desktop Mode have, else GNOME's session manager), and the X server's own screensaver timer is reset every 30 s. Not yet on a Wayland desktop that has neither (sway and the like).
+- Linux and Steam Deck: the screen no longer blanks mid-game when playing with a controller either (#12). The desktop is asked not to (the freedesktop ScreenSaver inhibit, which KDE and the Deck's Desktop Mode have, else GNOME's session manager), and the X server's own screensaver timer is reset every 30 s. On sway (and other Wayland compositors with swayidle and no such service) the game holds Wayland's idle inhibit, on an invisible 1x1 layer surface of its own since its window is Xwayland's; it holds while the game runs, even with its window on another workspace. Tested on sway 1.12, untested on river, Hyprland, niri and labwc.
 - Performance: the game's matrix, rotation and sine / cosine helpers (libvu0's MulMatrix, ApplyMatrix, RotMatrixX / Y / Z, ecossin) run as native code.
 - Controls: Swap Sticks (Controls > Controller) for left-handed play.
 - Launcher: the window follows Display Mode at once and switches on F11, as the game does.

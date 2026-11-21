@@ -50,16 +50,18 @@ pkgs.stdenv.mkDerivation {
   # The renderer's tests (pcsx2_gs_smoke, gs_pcsx2_backend_test) open an X11 window and render with Vulkan: a fresh
   # Xvfb and Mesa's lavapipe (software Vulkan), with the X / GL / Vulkan libraries GLFW and the loader dlopen.
   # The keep-awake tests (issue #12) talk to a private dbus-daemon through libdbus, with fake desktop services in
-  # python3 + jeepney (checkPython), read the X server's idle time through libXss, and kill an Xvfb of their own;
+  # python3 + jeepney (checkPython), read the X server's idle time through libXss, kill an Xvfb of their own, and hold
+  # a Wayland idle inhibit under a headless sway with swayidle as the judge (libwayland-client dlopen'ed);
   # KAMITE_REQUIRE_ALL_TESTS=1 makes a skip fail.
-  nativeCheckInputs = lib.optionals buildTests [ pkgs.xvfb-run pkgs.xvfb pkgs.dbus pkgs.procps checkPython ];
+  nativeCheckInputs = lib.optionals buildTests [ pkgs.xvfb-run pkgs.xvfb pkgs.dbus pkgs.procps checkPython
+    pkgs.sway-unwrapped pkgs.swayidle ];
   checkPhase = ''
     runHook preCheck
     export HOME=$TMPDIR KAMITE_SMOKE_XVFB=1 KAMITE_REQUIRE_ALL_TESTS=1
     export VK_DRIVER_FILES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
     export VK_ICD_FILENAMES=$VK_DRIVER_FILES __GLX_VENDOR_LIBRARY_NAME=mesa LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
     export LD_LIBRARY_PATH=${lib.makeLibraryPath (with pkgs; [ vulkan-loader libglvnd mesa libx11 libxext libxrandr
-      libxinerama libxcursor libxi libxrender libxfixes libxcb libxscrnsaver dbus.lib ])}
+      libxinerama libxcursor libxi libxrender libxfixes libxcb libxscrnsaver dbus.lib wayland ])}
     ctest --test-dir build --output-on-failure
     runHook postCheck
   '';
