@@ -143,6 +143,7 @@
           } ''
             cp -r ${src} source && chmod -R u+w source && cd source
             cp ${./flake.nix} flake.nix
+            mkdir -p nix && cp ${./nix/deps.nix} nix/deps.nix # test_deps_pins: the pins against the CMake files
             python3 -I -m unittest discover -s tools/linux -p "test_*.py" -v
             python3 -I -m unittest discover -s tools/win -p "test_*.py" -v
             touch $out
@@ -185,6 +186,9 @@
             packages = toolsFor pkgs ++ libsFor pkgs ++ packagingTools ++ (with pkgs; [ gcc zig ]);
             shellHook = ''
               export KAMITE_APPIMAGE_RUNTIME=${runtime}
+              # Every FetchContent source pinned (nix/deps.nix): build.py configure passes it as cmake -C, so a build
+              # here uses the flake's trees and downloads nothing at configure time.
+              export KAMITE_CMAKE_INIT=${deps.cmakeInit}
               # build.py starts the portable tools it builds (ps2_recomp, vu1_recomp) through this loader where the
               # system has no /lib64 one (NixOS, NixOS-WSL).
               export KAMITE_HOST_LOADER=${pkgs.glibc}/lib/ld-linux-x86-64.so.2

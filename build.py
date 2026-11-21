@@ -654,13 +654,20 @@ def configure(extra=()):
             "-DKAMITE_LTO=OFF"]
     # KAMITE_DEPS: an already downloaded FetchContent _deps folder (raylib-src, ...) to reuse instead of downloading.
     # Default: the PS2Recomp checkout's out/rel/_deps next to this port, when it exists.
-    deps = os.environ.get("KAMITE_DEPS") or (str(DEFAULT_DEPS) if DEFAULT_DEPS.is_dir() else "")
+    # Not with KAMITE_CMAKE_INIT (below): its pins must win, and a -D here would override them.
+    cmake_init = os.environ.get("KAMITE_CMAKE_INIT")
+    deps = "" if cmake_init else (os.environ.get("KAMITE_DEPS") or (str(DEFAULT_DEPS) if DEFAULT_DEPS.is_dir() else ""))
     if deps:
         for name in ("raylib", "sdl3", "imgui", "rlimgui", "nlohmann_json", "fmt", "elfio", "toml11", "libdwarf",
                      "rabbitizer"):
             src = Path(deps) / f"{name}-src"
             if src.is_dir():
                 args.append(f"-DFETCHCONTENT_SOURCE_DIR_{name.upper()}={src.as_posix()}")
+    # KAMITE_CMAKE_INIT: a CMake initial cache naming every FetchContent source (`nix develop` sets it to the flake's
+    # pinned trees, nix/deps.nix). It also turns downloads off for good, whatever KAMITE_ALLOW_DOWNLOADS says: a new
+    # FetchContent dependency fails until nix/deps.nix pins it (docs/BUILDING.md).
+    if cmake_init:
+        args[1:1] = ["-C", cmake_init]
     # Never download at configure time unless asked: a missing dependency fails instead.
     if os.environ.get("KAMITE_ALLOW_DOWNLOADS") != "1":
         args.append("-DFETCHCONTENT_FULLY_DISCONNECTED=ON")

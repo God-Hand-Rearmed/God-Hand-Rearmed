@@ -6,15 +6,52 @@
 #   SDL3                        runtime/ps2xRuntime/CMakeLists.txt (controllers; a release tarball, fetchzip)
 #   libchdr                     runtime/ps2xRuntime/CMakeLists.txt (CHD disc images)
 #   shaderc, glslang, SPIRV-*   thirdparty/pcsx2-gs/shaderc.cmake (the Vulkan renderer's shader compiler; zips)
+#   ELFIO, toml11, fmt, libdwarf, rabbitizer   runtime/ps2xRecomp/CMakeLists.txt (the recompiler, built by
+#                               `build.py generate`: the tags it names, pinned here to the commits they point at)
 # stb_image.h is no FetchContent: thirdparty/pcsx2-gs/CMakeLists.txt downloads it into KAMITE_STB_DIR (stbDir below).
 # A changed revision there and here together; the hash comes from
 #   nix-prefetch-url --unpack https://github.com/<owner>/<repo>/archive/<rev>.tar.gz
+#
+# cmakeInit: all of the above as one CMake initial cache (cmake -C). The flake's builds configure with it, and
+# `nix develop` exports it as KAMITE_CMAKE_INIT, which build.py's configure passes on: a build in the dev shell uses the
+# same trees as the flake's and downloads nothing at configure time.
 { pkgs }:
 let
   gh = owner: repo: rev: sha256: pkgs.fetchFromGitHub { inherit owner repo rev sha256; };
   zip = url: sha256: pkgs.fetchzip { inherit url sha256; };
+  lib = pkgs.lib;
 in
-{
+rec {
+  # The recompiler's (KAMITE_BUILD_RECOMP=ON only; the flake's own builds never make it: they have no disc).
+  recompFetchContent = {
+    # tag Release_3.12
+    ELFIO = gh "serge1" "ELFIO" "8ae6cec5d60495822ecd57d736f66149da9b1830"
+      "0zl5jbmbimz0j50mrgzw9am72wzjgsyvvl02cbhgsbrnrfql2d5l";
+    # tag v4.4.0 (its submodules are only its own tests and docs, off by default)
+    TOML11 = gh "ToruNiina" "toml11" "be08ba2be2a964edcdb3d3e3ea8d100abc26f286"
+      "0d15b50cf9jgvh3w99xh6crh03bn2dmv9bdyvzq6knsk2diql1dj";
+    # tag 12.1.0
+    FMT = gh "fmtlib" "fmt" "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f"
+      "17b1iwmmpd9cb1g3lzn5pjky73i3268kldmdqpjv6s8rzl73aqk6";
+    # tag v2.2.0
+    LIBDWARF = gh "davea42" "libdwarf-code" "2e088b983562860f497b4fd789a3e61524eb857c"
+      "1aqi8m3qhqxk4sggc5x1awgw95s8krgwq2dnrk5d0r0qvfn6361w";
+    # tag 1.14.3
+    RABBITIZER = gh "Decompollaborate" "rabbitizer" "d5804fa488474830a47fbf9f3693048ec1e45589"
+      "0w5mqjvm5m0f7q1wm8k6pmpcf5pm34mf9spdfa6m6br0gkajkyh6";
+  };
+
+  # Every pinned tree as a CMake initial cache (see the header). FORCE: an existing build tree that once downloaded is
+  # switched over too.
+  cmakeInit = pkgs.writeText "ghr-pinned-deps.cmake" (lib.concatStrings (
+    lib.mapAttrsToList (name: path: ''
+      set(FETCHCONTENT_SOURCE_DIR_${name} "${path}" CACHE PATH "pinned by nix/deps.nix" FORCE)
+    '') (fetchContent // recompFetchContent)
+    ++ [ ''
+      set(KAMITE_STB_DIR "${stbDir}" CACHE PATH "pinned by nix/deps.nix" FORCE)
+      set(FETCHCONTENT_FULLY_DISCONNECTED ON CACHE BOOL "every source is pinned (nix/deps.nix)" FORCE)
+    '' ]));
+
   # -DKAMITE_STB_DIR: a folder holding stb_image.h at the commit and SHA-256 the CMake file names.
   stbDir = pkgs.linkFarm "stb" [{
     name = "stb_image.h";

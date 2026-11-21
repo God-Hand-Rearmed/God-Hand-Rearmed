@@ -11,8 +11,6 @@ let
   # The keep-awake tests' fake desktop services (runtime/ps2xRuntime/test/keep_awake_bus.py). CMake is pointed at it:
   # the plain python3 of nativeBuildInputs comes first on PATH and has no jeepney.
   checkPython = pkgs.python3.withPackages (p: [ p.jeepney ]);
-  fetchContentFlags = lib.mapAttrsToList (name: path: "-DFETCHCONTENT_SOURCE_DIR_${name}=${path}") deps.fetchContent
-    ++ [ "-DKAMITE_STB_DIR=${deps.stbDir}" ];
 in
 pkgs.stdenv.mkDerivation {
   pname = if portable then "ghr-portable-stub" else "ghr-native-stub";
@@ -31,12 +29,12 @@ pkgs.stdenv.mkDerivation {
     export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-cache
     python3 -I tools/linux/stub_game_code.py $TMPDIR/generated
     mkdir -p $TMPDIR/no-modules
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    # The pinned sources (nix/deps.nix cmakeInit: the same file `nix develop` hands build.py), no network.
+    cmake -C ${deps.cmakeInit} -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       ${lib.optionalString portable "--toolchain cmake/toolchains/linux-portable.cmake"} \
       -DKAMITE_GENERATED_DIR=$TMPDIR/generated -DKAMITE_MODULES_DIR=$TMPDIR/no-modules \
       -DKAMITE_RELEASE=ON -DKAMITE_BUILD_TESTS=${if buildTests then "ON" else "OFF"} \
-      ${lib.optionalString buildTests "-DPython3_EXECUTABLE=${checkPython}/bin/python3"} \
-      -DFETCHCONTENT_FULLY_DISCONNECTED=ON ${lib.concatStringsSep " " fetchContentFlags}
+      ${lib.optionalString buildTests "-DPython3_EXECUTABLE=${checkPython}/bin/python3"}
     runHook postConfigure
   '';
 
