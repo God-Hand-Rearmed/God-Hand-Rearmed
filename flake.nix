@@ -10,7 +10,7 @@
   # nix flake check -L               every gate below (CI runs exactly this: .github/workflows/ci.yml)
   # nix build .#linux-stub           the AppImage + tar.gz of a build on the stand-in game code (CI artifacts; they
   #                                  start the launcher but cannot play: real releases need your disc, docs/BUILDING.md)
-  # nix run .#package -- --bin DIR   tools/linux/package.py with mksquashfs, objcopy and the AppImage runtime supplied
+  # nix run .#package -- --bin DIR   tools/package.py with mksquashfs, objcopy and the AppImage runtime supplied
   outputs = { self, nixpkgs, nixpkgs-2020 }:
     let
       systems = [ "x86_64-linux" ];
@@ -21,7 +21,8 @@
         root = ./.;
         fileset = lib.fileset.unions [
           ./CMakeLists.txt ./GHR.ini ./LICENSE ./cmake ./src ./runtime ./thirdparty ./resources ./tests
-          ./tools/linux ./tools/readme ./docs/licenses ./assets/characters ./recomplauncher.json
+          ./tools/linux ./tools/package.py ./tools/win/README-windows.txt ./tools/win/test_package_zip.py ./tools/readme
+          ./docs/licenses ./assets/characters ./recomplauncher.json
         ];
       };
 
@@ -36,7 +37,7 @@
       ];
       toolsFor = pkgs: with pkgs; [ cmake ninja pkg-config python3 git ];
 
-      # The AppImage runtime tools/linux/package.py pins (same URL, same SHA-256; test_package.py compares them).
+      # The AppImage runtime tools/package.py pins (same URL, same SHA-256; test_package.py compares them).
       runtimeFor = pkgs: pkgs.fetchurl {
         url = "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64";
         sha256 = "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d";
@@ -58,11 +59,11 @@
           runtime = runtimeFor pkgs;
           packagingTools = [ pkgs.squashfsTools pkgs.binutils pkgs.python3 ];
 
-          # tools/linux/package.py over the portable build, as a release is made, with --allow-stub.
+          # tools/package.py over the portable build, as a release is made, with --allow-stub.
           linuxStub = pkgs.runCommand "ghr-linux-stub-${version}" { nativeBuildInputs = packagingTools; } ''
             cp -r ${src} source && chmod -R u+w source && cd source
             export SOURCE_DATE_EPOCH=${toString self.lastModified}
-            python3 -I tools/linux/package.py --bin ${portable}/bin --out $out --allow-stub \
+            python3 -I tools/package.py --bin ${portable}/bin --out $out --allow-stub \
               --appimage-runtime ${runtime} --mksquashfs ${pkgs.squashfsTools}/bin/mksquashfs \
               --objcopy ${pkgs.binutils}/bin/objcopy
           '';
@@ -143,13 +144,14 @@
             cp -r ${src} source && chmod -R u+w source && cd source
             cp ${./flake.nix} flake.nix
             python3 -I -m unittest discover -s tools/linux -p "test_*.py" -v
+            python3 -I -m unittest discover -s tools/win -p "test_*.py" -v
             touch $out
           '';
 
           # GHR's own binaries must need nothing newer than glibc 2.31 and no library the package lacks.
           portableCheck = pkgs.runCommand "ghr-portable-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             cd ${src}
-            python3 -I -c 'import sys; sys.path.insert(0, "tools/linux"); import package
+            python3 -I -c 'import sys; sys.path.insert(0, "tools"); import package
             problems = package.check_portable(__import__("pathlib").Path("${portable}/bin"))
             print("\n".join(problems) or "portable: GHR and its libraries need glibc <= 2.31 and nothing unshipped")
             sys.exit(1 if problems else 0)'
@@ -176,7 +178,7 @@
             type = "app";
             program = toString (pkgs.writeShellScript "ghr-package" ''
               export PATH=${lib.makeBinPath packagingTools}:$PATH
-              exec python3 -I tools/linux/package.py --appimage-runtime ${runtime} "$@"
+              exec python3 -I tools/package.py --appimage-runtime ${runtime} "$@"
             '');
           };
           devShells.default = pkgs.mkShell {

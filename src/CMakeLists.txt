@@ -379,7 +379,7 @@ add_custom_target(kamite_resources
     COMMENT "Copying the port's resources")
 add_dependencies(kamite kamite_resources)
 # A build on the stand-in game code (tools/linux/stub_game_code.py: CI, packaging tests) says so next to the binary,
-# and tools/linux/package.py refuses to make a release of it. A real build removes a marker a stub build left.
+# and tools/package.py refuses to make a release of it. A real build removes a marker a stub build left.
 set(KAMITE_STUB_NOTE "${CMAKE_BINARY_DIR}/bin/STUB-GAME-CODE.txt")
 if(EXISTS "${KAMITE_GENERATED_DIR}/KAMITE_STUB")
     message(STATUS "Kamite: building on the STAND-IN game code (${KAMITE_GENERATED_DIR}); this GHR cannot play the game")

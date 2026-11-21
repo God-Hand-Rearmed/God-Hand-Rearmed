@@ -1,4 +1,5 @@
-"""Gate tests of the Linux packaging (tools/linux/package.py, stub_game_code.py, the AppRun contract).
+"""Gate tests of the Linux packaging (tools/package.py's tar.gz and AppImage, stub_game_code.py, the AppRun contract;
+tools/win/test_package_zip.py tests the same packer's Windows zip).
 
     python -I -m unittest discover -s tools/linux -p "test_*.py" -v
 
@@ -20,6 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))  # tools/package.py
 
 import package  # noqa: E402
 import stub_game_code  # noqa: E402

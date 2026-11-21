@@ -1,6 +1,7 @@
 # CI. Linux and Steam Deck: every gate runs through Nix (flake.nix), then the packaged AppImage and tar.gz are started
 # on stock distributions. Windows: GHR.exe built with MSVC (Visual Studio 2022) through build.py, as the release is,
-# plus the unit tests. The game itself needs the player's own disc, which CI never has: every build here uses the
+# plus the unit tests, then packed into the release zip by the same packer as Linux (tools/package.py) and started from
+# it. One build process on either system: build.py configure, build, package. The game itself needs the player's own disc, which CI never has: every build here uses the
 # stand-in game code (tools/linux/stub_game_code.py) and is named "-stub"; it starts the launcher and nothing more.
 name: CI
 
@@ -114,6 +115,27 @@ jobs:
           Get-ChildItem $bin -File | Format-Table Name, Length
           $p = Start-Process -FilePath "$bin/GHR.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { Write-Error "GHR.exe --help exited $($p.ExitCode)"; exit 1 }
+      - name: Package (the release zip, through the same packer as Linux)
+        shell: pwsh
+        run: |
+          python -I -m unittest discover -s tools/win -p "test_*.py" -v
+          if ($LASTEXITCODE) { exit 1 }
+          python -I build.py package --allow-stub
+          if ($LASTEXITCODE) { exit 1 }
+          $zip = Get-ChildItem dist/GHR-v*-stub-Windows-x64.zip
+          if (-not $zip) { Write-Error "no zip in dist/"; exit 1 }
+          # Unpacked as a player would (Windows' own unzip), GHR.exe starts from the unpacked folder.
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath unpacked
+          $p = Start-Process -FilePath "unpacked/God Hand Rearmed/GHR.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { Write-Error "the zip's GHR.exe --help exited $($p.ExitCode)"; exit 1 }
+          foreach ($f in "GHR.ini", "controls.ini", "GHR.pdb", "logs") {
+            if (Test-Path "unpacked/God Hand Rearmed/$f") { Write-Error "the zip ships $f"; exit 1 }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-stub
+          path: dist/*-Windows-x64.zip
+          if-no-files-found: error
       - if: always()
         uses: actions/upload-artifact@v4
         with:

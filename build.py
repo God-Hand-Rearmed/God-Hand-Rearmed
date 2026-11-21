@@ -17,13 +17,15 @@
     python -I build.py boot [--seconds N] [--iso X]   one hidden, time-capped run; output in build/port/bin/logs
     python -I build.py run [args]                     a normal run in a window (arguments go to GHR.exe)
     python -I build.py status                         what exists so far
+    python -I build.py package [--allow-stub] [...]   the release files from build/port/bin into dist/ (tools/package.py:
+                                                      the Windows zip, or the Linux tar.gz and AppImage)
 
 Needs Python 3.10+, your own disc image (USA, SLUS-21503) in game/ (or KAMITE_ISO / --iso) and a C++ toolchain.
 Windows: Visual Studio 2022 with C++ (cl, CMake and Ninja come with it; VSROOT if it is not in the default folder;
 tools/win/vsenv.cmd sets it up). Linux: CMake, Ninja and GCC or Clang (`nix develop` gives all of it); for a build that
 runs on other Linux machines (the Steam Deck, the release), configure with
 --toolchain cmake/toolchains/linux-portable.cmake (docs/BUILDING.md, "Linux and Steam Deck").
-Adapted from the Urban Reign port's build.py and tools/generate.py (one file here; no menu, release or bench).
+Adapted from the Urban Reign port's build.py and tools/generate.py (one file here; no menu or bench).
 """
 import hashlib
 import os
@@ -922,6 +924,12 @@ def characters(args=()):
     return build_characters.build(str(iso), str(BIN), tuple(args))
 
 
+def package(args=()):
+    """The release files from build/port/bin (tools/package.py): GHR-v<version>-Windows-x64.zip on Windows, the
+    -Linux-x64.tar.gz and .AppImage on Linux, into dist/. Configure with -DKAMITE_RELEASE=ON for a release."""
+    return subprocess.run([sys.executable, "-I", str(ROOT / "tools" / "package.py"), "--bin", str(BIN), *args]).returncode
+
+
 COMMANDS = {
     "generate": generate,
     "characters": characters,
@@ -935,6 +943,7 @@ COMMANDS = {
     "play": play,
     "keep-play-log": keep_play_log,
     "status": status,
+    "package": package,
 }
 
 

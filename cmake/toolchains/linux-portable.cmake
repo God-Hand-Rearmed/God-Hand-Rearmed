@@ -1,7 +1,7 @@
 # The portable Linux build: GHR and its libraries for any x86-64 Linux with glibc 2.31 or newer (the Steam Deck,
 # SteamOS, Debian 11+, Ubuntu 20.04+). zig's clang links against glibc 2.31's symbol versions and its own libc++
 # statically, so the binary carries no dependency on the build machine's glibc or libstdc++ (a Nix store, a newer
-# distro). Used by the flake's packages (flake.nix) and tools/linux/package.py; needs `zig` on PATH.
+# distro). Used by the flake's packages (flake.nix) and tools/package.py; needs `zig` on PATH.
 #   cmake -S . -B build/linux -G Ninja --toolchain cmake/toolchains/linux-portable.cmake
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)

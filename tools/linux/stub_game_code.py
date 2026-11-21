@@ -8,7 +8,7 @@ two headers the precompiled header names. A GHR built on it runs its launcher an
 (exit code 5, "missing function"); it can never play the game.
 
 The folder also gets a KAMITE_STUB marker. src/CMakeLists.txt sees it, puts STUB-GAME-CODE.txt next to the binary, and
-tools/linux/package.py refuses to package such a build unless told it is a test (--allow-stub, which also names the
+tools/package.py refuses to package such a build unless told it is a test (--allow-stub, which also names the
 archives "-stub"), so a stand-in can never be published as a release by mistake.
 """
 import sys
