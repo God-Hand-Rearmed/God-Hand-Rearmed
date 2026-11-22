@@ -49,17 +49,14 @@ CMake, Ninja, GCC, zig, Python, the X11 / Wayland / Vulkan headers and the packa
 install CMake 3.21+, Ninja, a C++20 compiler (GCC 12+ or Clang 16+), Python 3.10+, `pkg-config` and the X11 headers
 (`libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`), plus `zig` 0.16 for the portable build below
 and `squashfs-tools` and `binutils` to package it. Nix is only a convenience: every step below is plain CMake, Ninja
-and Python, and the flake runs those same steps with pinned sources. Inside `nix develop`, `build.py configure` uses
-those same pinned library sources (`nix/deps.nix`, through `KAMITE_CMAKE_INIT`) and downloads nothing; a library added
-to the CMake files fails to configure there until `nix/deps.nix` pins it (`tools/linux/test_deps_pins.py` checks the
-two agree). A build tree configured in the shell points at `/nix/store` paths: configure it again outside the shell.
+and Python, and the flake runs those same steps with pinned sources.
 
 ```sh
 git clone https://github.com/God-Hand-Rearmed/God-Hand-Rearmed.git
 cd God-Hand-Rearmed
 nix develop                     # or have the tools above installed
 cp /path/to/your-disc.iso game/
-export KAMITE_ALLOW_DOWNLOADS=1 # the first configure downloads raylib, SDL3, imgui, shaderc...
+export KAMITE_ALLOW_DOWNLOADS=1 # without Nix: the first configure downloads raylib, SDL3, imgui, shaderc...
 python3 -I build.py generate
 python3 -I tools/snr2/snr2.py --iso game/your-disc.iso extract
 python3 -I tools/snr2/gen_modules.py
@@ -71,6 +68,10 @@ python3 -I build.py characters
 build/port/bin/GHR              # or: python3 -I build.py run
 ```
 
+- Inside `nix develop`, `build.py configure` uses the flake's pinned library sources (`nix/deps.nix`, through
+  `KAMITE_CMAKE_INIT`) and downloads nothing; a library added to the CMake files fails to configure there until
+  `nix/deps.nix` pins it (`tools/linux/test_deps_pins.py` checks the two agree). A build tree configured in the shell
+  points at `/nix/store` paths: configure it again outside the shell.
 - `--toolchain cmake/toolchains/linux-portable.cmake` builds with zig against glibc 2.31 and a static libc++: the
   result runs on any x86-64 Linux with glibc 2.31 or newer (SteamOS, Debian 11+, Ubuntu 20.04+), not only on the
   machine that built it. Leave it out to build with your system's compiler for that machine alone.
