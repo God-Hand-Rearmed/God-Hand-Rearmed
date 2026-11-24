@@ -205,14 +205,16 @@ namespace ps2x::keepawake
         const char *address = std::getenv("DBUS_SESSION_BUS_ADDRESS");
         if (!address || !*address)
         {
-            // libdbus's own default when the address is unset ($XDG_RUNTIME_DIR/bus, systemd's user bus); without
-            // that socket it would try X11 autolaunch (dbus-launch: the X display's bus if it has one, else one of
-            // its own that no desktop hears).
+            // libdbus's own default when the address is unset ($XDG_RUNTIME_DIR/bus, systemd's user bus), which it
+            // takes only when that is a socket the user owns (_dbus_lookup_user_bus); anything else there and it would
+            // try X11 autolaunch (dbus-launch: the X display's bus if it has one, else one of its own that no desktop
+            // hears). So exactly libdbus's test, or no bus.
             const char *runtime = std::getenv("XDG_RUNTIME_DIR");
             struct stat st{};
-            if (!runtime || !*runtime || ::stat((std::string(runtime) + "/bus").c_str(), &st) != 0)
+            if (!runtime || !*runtime || ::stat((std::string(runtime) + "/bus").c_str(), &st) != 0 ||
+                !S_ISSOCK(st.st_mode) || st.st_uid != ::getuid())
             {
-                error = "no session bus ($DBUS_SESSION_BUS_ADDRESS unset, no $XDG_RUNTIME_DIR/bus)";
+                error = "no session bus ($DBUS_SESSION_BUS_ADDRESS unset, no $XDG_RUNTIME_DIR/bus socket of ours)";
                 return nullptr;
             }
         }

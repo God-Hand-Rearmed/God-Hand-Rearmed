@@ -210,6 +210,15 @@ check(rest == "alive" and code == 0, f"no address run: {rest!r} {code}")
 launches_after = autolaunches()
 check(launches_before is None or launches_after <= launches_before, "a dbus-launch was started")
 
+# 5b2. No address, and $XDG_RUNTIME_DIR/bus is no socket (a plain file): libdbus would skip it and autolaunch, so the
+#      keep-awake must refuse before libdbus is asked (its own message, not a dbus-launch error).
+not_socket = tempfile.mkdtemp()
+open(os.path.join(not_socket, "bus"), "w").close()
+first, rest, code, out = run_test("", env_extra={"DBUS_SESSION_BUS_ADDRESS": None, "XDG_RUNTIME_DIR": not_socket,
+                                                 "DISPLAY": ":65000"})
+check(first.startswith("nobus no session bus ($DBUS_SESSION_BUS_ADDRESS unset"), f"a bus that is no socket: {first}")
+check(rest == "alive" and code == 0, f"a bus that is no socket run: {rest!r} {code}")
+
 # 5c. No address, but $XDG_RUNTIME_DIR/bus (systemd's user bus, libdbus's own default): that bus is the one used.
 runtime_dir = tempfile.mkdtemp()
 daemon, address = bus(listen=f"unix:path={runtime_dir}/bus")
