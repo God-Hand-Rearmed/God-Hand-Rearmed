@@ -305,9 +305,15 @@ int main(int argc, char *argv[])
         check(!ec && learnedSize > 16u, "the pipelines built were learned (ghr_warm_vulkan.bin)");
         const std::filesystem::path resources2 = work / "resources";
         std::filesystem::copy(exeDir / "resources", resources2, std::filesystem::copy_options::recursive, ec);
+        check(!ec, "the program's resources copied for the second open");
         std::filesystem::create_directories(resources2 / "gs_warm", ec);
-        std::filesystem::copy_file(learned, resources2 / "gs_warm" / "vulkan.bin", ec);
+        // Over the list GHR ships (resources/gs_warm/vulkan.bin, the Steam Deck's since 20586a6): without
+        // overwrite_existing the copy fails on it, and the second open would warm the shipped list, not this run's.
+        std::filesystem::copy_file(learned, resources2 / "gs_warm" / "vulkan.bin",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        check(!ec, "the learned list shipped as resources/gs_warm/vulkan.bin");
         std::filesystem::create_directories(work / "cache2", ec);
+        check(!ec, "a fresh cache folder for the second open");
         const std::string resourcesText = resources2.string(), cacheText = (work / "cache2").string();
         params.resources = resourcesText.c_str();
         params.cache = cacheText.c_str();
