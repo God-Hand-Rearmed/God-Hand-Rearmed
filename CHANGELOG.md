@@ -7,7 +7,6 @@ Newest first, one line per change; the code comments say how.
 - 60 FPS: the building in stage 2 that sends out enemies sends them at the PS2's pace (it ran twice as fast).
 - 60 FPS: the roulette target's flash (an effect light circling the model) circles at the PS2's speed.
 - Target Select: the flash moves to the new target at once.
-- 60 FPS: effects that follow the slow motion keep the PS2's speed in the roulette and the roulette moves.
 - Options: Inverse Roulette (Gameplay > Roulette Charrette): up spins the wheel forward, down back.
 - Shader warm-up: the first shipped list (1023 pipelines from a PC and a Steam Deck, which share one feature tag); GPUs with other features learn theirs as they play.
 - Target Select: the moved flash lights the new target (its light is set on the new model).
