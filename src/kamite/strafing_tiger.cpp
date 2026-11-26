@@ -40,6 +40,8 @@ namespace kamite::strafing_tiger
         constexpr float kWalkSideSpeed = 1.74f, kRunSideSpeed = 4.0f; // m/s (K, Nov 25-26)
         constexpr float kEaseSeconds = 0.1f;                          // the side weight's ease (a KBM key's 45 deg steps)
         constexpr int64_t kStillMs = 250;                             // no blend this long: the next one starts at its weight
+        constexpr int64_t kLetGoMs = 300; // the stick let go: the side-steps ease out while his loop still plays (K, Nov 26:
+                                          // stopping snapped into his idle), no longer than this
 
         using strafe_motions::Side;
 
@@ -77,7 +79,7 @@ namespace kamite::strafing_tiger
             float speed = 0.0f;
         } g_forward[2];
         float g_weight = 0.0f; // the side's weight, + = his left
-        int64_t g_lastMs = -100000;
+        int64_t g_lastMs = -100000, g_stickMs = -100000; // the last blend; the last one with the stick out
         uint32_t g_loads = 0u;
         struct Track // the side clock at the last addNullSpeed (its root delta between two)
         {
@@ -107,11 +109,12 @@ namespace kamite::strafing_tiger
         }
         float wrapTo(float t, float span) { return t - std::floor(t / span) * span; }
 
-        // Gene walking, running or back-pedalling under Tiger with the stick out: mode 0, phase 1 / 2 / 3.
+        // Gene walking, running or back-pedalling under Tiger with the stick out (or let go a moment ago): mode 0,
+        // phase 1 / 2 / 3.
         bool moving(const uint8_t *rdram, uint32_t obj)
         {
-            if (!g_setting.load(std::memory_order_relaxed) || !g_slide.load(std::memory_order_relaxed) || !inRam(obj, 0x600u) ||
-                obj != rd32(rdram, kPlayerPointer))
+            if (!g_setting.load(std::memory_order_relaxed) || !inRam(obj, 0x600u) || obj != rd32(rdram, kPlayerPointer) ||
+                (!g_slide.load(std::memory_order_relaxed) && nowMs() - g_stickMs >= kLetGoMs))
                 return false;
             const uint8_t major = rdram[obj + kMajor], sub = rdram[obj + kSub];
             return major == 0u && sub >= 1u && sub <= 3u;
@@ -198,8 +201,11 @@ namespace kamite::strafing_tiger
             const bool back = rdram[obj + kSub] == 3u;
             const float angle = g_angle.load(std::memory_order_relaxed);
             const float along = std::cos(angle), lateral = (back ? -1.0f : 1.0f) * std::sin(angle);
-            const float target = std::fabs(lateral) < 1e-4f ? 0.0f : std::copysign(std::fmin(std::fabs(angle) / kQuarterTurn, 1.0f), lateral);
+            const bool stick = g_slide.load(std::memory_order_relaxed);
+            const float target = !stick || std::fabs(lateral) < 1e-4f ? 0.0f : std::copysign(std::fmin(std::fabs(angle) / kQuarterTurn, 1.0f), lateral);
             const int64_t now = nowMs();
+            if (stick)
+                g_stickMs = now;
             const uint32_t loads = ps2x::savestate::loadCount();
             if (now - g_lastMs > kStillMs || loads != g_loads)
                 g_weight = target, g_track.valid = false;

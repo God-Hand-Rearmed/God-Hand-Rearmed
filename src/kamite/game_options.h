@@ -32,6 +32,8 @@ namespace kamite
     // [Sound] MusicVolume / EffectsVolume / VoicesVolume in percent (any thread): the streams' gains (taken at their next
     // volume change: reapplyStreamVolumes makes that now) and the SPU2's voice gain (at once).
     void setVolumes(int music, int effects, int voices);
+    // The Sound Effects volume's gain (any thread): for the port's own sounds (style_sfx).
+    float effectsGain();
     // Game thread: every playing stream asks for its volume again, so a Music / Voices change is heard at once.
     void reapplyStreamVolumes(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
     // The F2 menu (any thread): Tension is Placable and Off the Cuff, live (the next R2 press).

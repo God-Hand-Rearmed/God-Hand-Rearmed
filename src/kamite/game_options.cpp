@@ -236,7 +236,7 @@ namespace kamite
         }
 
         // The volumes as gains: the player's percent squared (an audio taper: 50 % is about -12 dB).
-        std::atomic<float> g_musicGain{1.0f}, g_voicesGain{1.0f};
+        std::atomic<float> g_musicGain{1.0f}, g_voicesGain{1.0f}, g_effectsGain{1.0f};
         float gainOf(int percent)
         {
             const float v = static_cast<float>(std::clamp(percent, 0, 100)) / 100.0f;
@@ -1709,8 +1709,11 @@ namespace kamite
     {
         g_musicGain.store(gainOf(music), std::memory_order_relaxed);
         g_voicesGain.store(gainOf(voices), std::memory_order_relaxed);
+        g_effectsGain.store(gainOf(effects), std::memory_order_relaxed);
         ps2x::iop::setVoiceGain(gainOf(effects));
     }
+
+    float effectsGain() { return g_effectsGain.load(std::memory_order_relaxed); }
 
     void reapplyStreamVolumes(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {

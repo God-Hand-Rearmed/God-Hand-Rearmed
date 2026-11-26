@@ -411,7 +411,9 @@ namespace kamite::radar_glow
     void install(uint8_t *rdram)
     {
         g_ram = rdram;
-        if (!g_ram || !modern::enabled())
+        // Always (each vblank asks for the free camera): the device in use at start may be one whose style isn't
+        // Modern (K, Nov 26: controller Rambler, keyboard Classic, started on the keyboard: no glow all game).
+        if (!g_ram)
             return;
         prepareFromDisc();
         ps2x::pnach::addFrameHook(&onVblank);

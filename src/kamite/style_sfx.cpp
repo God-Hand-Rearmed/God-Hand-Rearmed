@@ -1,6 +1,7 @@
 #include "kamite/style_sfx.h"
 #include "kamite/paths.h"
 
+#include "kamite/game_options.h"
 #include "kamite/hd_textures.h"
 #include "kamite/log.h"
 
@@ -34,7 +35,6 @@ namespace kamite::style_sfx
             else
             {
                 g_sound = LoadSoundFromWave(wave); // copies the samples
-                SetSoundVolume(g_sound, kVolume);
                 g_loaded = true;
             }
             UnloadWave(wave);
@@ -42,6 +42,9 @@ namespace kamite::style_sfx
         // Not PlaySound: GHR.exe links winmm with /FORCE:MULTIPLE and winmm's PlaySound takes the call (launcher.cpp).
         // raylib's PlaySound is exactly this; on a sound still playing it starts it again from the top.
         if (g_loaded)
+        {
+            SetSoundVolume(g_sound, kVolume * kamite::effectsGain()); // the Sound Effects slider, as it is now
             PlayAudioStream(g_sound.stream);
+        }
     }
 }
