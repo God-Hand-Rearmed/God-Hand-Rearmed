@@ -134,6 +134,7 @@ namespace kamite::modern
         std::atomic<bool> g_holdL1{false};      // Hold: brawl mode by L1 (Hold to Brawl: L1 held; Hold to Cam: L1 not held long)
         std::atomic<float> g_stickX{0.0f}, g_stickY{0.0f};
         std::atomic<bool> g_moving{false};      // the left stick asks for a direction (Modern movement)
+        std::atomic<bool> g_sprinting{false};   // Strafing Tiger: Gene sprints (a dash and the run after it)
         // The game has Gene's controls off (0x747A78: 0x02000000 KeyStop, 0x80000000 / 0x40000000 player off): menus
         // in the room (the fight ring's sign-up, T2's case Nov 4: KeyStop from the talk on), talks, events. The left
         // stick then goes to the game as it is: turned to the camera it read as other directions as Gene turned.
@@ -412,21 +413,18 @@ namespace kamite::modern
             if (strafing_tiger::enabled())
             {
                 // Strafing Tiger (prototype): he keeps facing the camera (the camera side turns him); the game gets
-                // his walk / run forward, or the back-pedal for the stick's back three eighths (past 112.5 degrees
-                // from the camera's forward, +-10 of stickiness: straight sideways stays a walk, K Nov 26), at the
-                // stick's magnitude (walk or run as before), and the root delta is turned the rest of the way to
-                // where the stick points (strafing_tiger.cpp). Forward / back is judged on the stick against the
-                // camera, never against his yaw, which lags a turning camera.
-                static bool s_back = false;
+                // his walk / run forward at the stick's magnitude (walk or run as before) whichever way it points, and
+                // strafing_tiger.cpp blends the side-steps and the back-pedal on top and moves him where the stick
+                // points (K, Nov 26: the game's own back-pedal made a circle jerk at the switch). The angle is judged
+                // against his yaw, which follows the camera. Sprinting (a dash and the run after it): no strafing, he
+                // runs where the camera points.
                 const float relative = wrapAngle(desired - g_geneYaw.load(std::memory_order_relaxed));
-                const float edge = (s_back ? 102.5f : 122.5f) * (3.14159265f / 180.0f);
-                s_back = std::fabs(std::atan2(lx, -ly)) > edge;
                 g_moveYaw = g_cameraYaw.load(std::memory_order_relaxed);
                 g_moving = true;
-                strafing_tiger::setSlide(s_back ? wrapAngle(relative - 3.14159265f) : relative);
-                const float up = s_back ? -magnitude : magnitude;
+                if (!g_sprinting.load(std::memory_order_relaxed))
+                    strafing_tiger::setSlide(relative);
                 state.leftX = 0x80u;
-                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(128.0f - up * 127.0f, 0.0f), 255.0f)));
+                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(128.0f - magnitude * 127.0f, 0.0f), 255.0f)));
                 return;
             }
             g_moveYaw = desired;
@@ -903,8 +901,18 @@ namespace kamite::modern
             // Strafing Tiger: he faces the camera, standing too (the game turns him on the spot).
             const uint32_t player = ram32(rdram, kPlayerPointer);
             const bool tiger = strafing_tiger::enabled();
+            // Strafing Tiger: a dash (phase 6) and the run it carries into are a sprint until he stops or walks.
+            const bool dashing = validPointer(player) && rdram[(player + 0x2F4u) & PS2_RAM_MASK] == 0u && rdram[(player + 0x2F5u) & PS2_RAM_MASK] == 6u;
+            if (validPointer(player))
+            {
+                const uint8_t sub = rdram[(player + 0x2F5u) & PS2_RAM_MASK];
+                const bool sprint = tiger && rdram[(player + 0x2F4u) & PS2_RAM_MASK] == 0u &&
+                                    (sub == 6u || (sub == 2u && g_sprinting.load(std::memory_order_relaxed)));
+                g_sprinting.store(sprint, std::memory_order_relaxed);
+                strafing_tiger::setSprint(sprint);
+            }
             if ((tiger || g_moving.load(std::memory_order_relaxed)) && validPointer(player) &&
-                (geneMoves(rdram, player) || (tiger && backPedals(rdram, player))))
+                (geneMoves(rdram, player) || (tiger && (backPedals(rdram, player) || dashing))))
             {
                 const float target = tiger ? g_yaw : g_moveYaw.load(std::memory_order_relaxed);
                 const float step = std::fmin(std::fmax(wrapAngle(target - geneYaw), -kTurnRate * dt), kTurnRate * dt);

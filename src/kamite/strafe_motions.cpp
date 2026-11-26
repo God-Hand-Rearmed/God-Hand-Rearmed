@@ -177,7 +177,7 @@ namespace kamite::strafe_motions
 
         // strafe_bake.py bake(): the sources (one, or two windows a cycle apart, averaged) on frames 0..span, the steps
         // scaled about their means to `travel` per loop.
-        bool bake(const Src &m, const std::vector<Warp> &warps, int span, float travel, bool close, Motion &out)
+        bool bake(const Src &m, const std::vector<Warp> &warps, int span, float travel, bool close, Motion &out, int axis = 0)
         {
             const size_t frames = static_cast<size_t>(span) + 1u, n = warps.size();
             out.span = span;
@@ -230,7 +230,9 @@ namespace kamite::strafe_motions
                     out.rot[span * kBones + b] = out.rot[b];
                 for (int j = 0; j < kTranslated; ++j)
                     out.tr[span * kTranslated + j] = out.tr[j];
-                out.root[span][1] = out.root[0][1], out.root[span][2] = out.root[0][2];
+                for (int c = 0; c < 3; ++c)
+                    if (c != axis)
+                        out.root[span][c] = out.root[0][c];
             }
             for (int j = 0; j < kTranslated; ++j)
                 for (int c = 0; c < 3; ++c)
@@ -240,42 +242,54 @@ namespace kamite::strafe_motions
                         sum += out.tr[f * kTranslated + j][c];
                     out.mean[j][c] = sum / static_cast<float>(span);
                 }
-            const float native = std::fabs(out.root[span][0] - out.root[0][0]);
+            const float native = std::fabs(out.root[span][axis] - out.root[0][axis]);
             if (!(native > 1e-3f))
                 return false;
             const float k = travel / native;
             for (size_t f = 0; f < frames; ++f)
             {
                 for (int j = 0; j < kTranslated; ++j)
-                    out.tr[f * kTranslated + j][0] = out.mean[j][0] + k * (out.tr[f * kTranslated + j][0] - out.mean[j][0]);
-                out.root[f][0] *= k;
+                    out.tr[f * kTranslated + j][axis] = out.mean[j][axis] + k * (out.tr[f * kTranslated + j][axis] - out.mean[j][axis]);
+                out.root[f][axis] *= k;
             }
-            out.travel = out.root[span][0] - out.root[0][0];
+            out.axis = axis;
+            out.travel = out.root[span][axis] - out.root[0][axis];
             return true;
         }
 
         // The recipe (strafe_round2.py on the US disc; K's picks W2 / R2, Nov 26): the source sizes and every touchdown.
-        constexpr uint32_t kWalk = 3450u, kRun = 2044u; // his right; his left = mirrored
-        constexpr uint32_t kHashes[2] = {0xB9D8E5E3u, 0xE14A1A60u};
+        constexpr uint32_t kWalk = 3450u, kRun = 2044u; // em00: his right; his left = mirrored
+        constexpr uint32_t kBack = 23u, kGuard = 9u;     // pl00: his back-pedal, his idle (the guard)
+        constexpr uint32_t kHashes[4] = {0xB9D8E5E3u, 0xE14A1A60u, 0xBD72D879u, 0x4CD3A493u};
         constexpr float kWalkSize = 0.998343871f, kRunSize = 1.167537936f, kRunHips = 0.03f;
         constexpr int kWalkSpan = 56, kRunSpan = 13; // his walk (pl00 21) and run (25 / 428)
         constexpr float kWalkSpeed = 1.74f, kRunSpeed = 3.0f;
     }
 
-    bool build(const Fetch &fetch, std::array<Motion, kSides> &out, std::string &why)
+    bool build(const Fetch &em00, const Fetch &pl00, Set &set, std::string &why)
     {
-        const uint32_t indices[2] = {kWalk, kRun};
-        Game game[2];
-        for (int i = 0; i < 2; ++i)
+        auto &out = set.motions;
+        const struct
         {
-            if (!fetch(indices[i], game[i].bytes) || !mot_sample::valid(game[i].bytes.data(), game[i].bytes.size()))
+            const Fetch &fetch;
+            const char *file;
+            uint32_t index, hash;
+        } sources[4] = {{em00, "em00.dat", kWalk, kHashes[0]},
+                        {em00, "em00.dat", kRun, kHashes[1]},
+                        {pl00, "pl00.dat", kBack, kHashes[2]},
+                        {pl00, "pl00.dat", kGuard, kHashes[3]}};
+        Game game[4];
+        for (int i = 0; i < 4; ++i)
+        {
+            const std::string name = std::string(sources[i].file) + " motion " + std::to_string(sources[i].index);
+            if (!sources[i].fetch(sources[i].index, game[i].bytes) || !mot_sample::valid(game[i].bytes.data(), game[i].bytes.size()))
             {
-                why = "em00.dat motion " + std::to_string(indices[i]) + " not read";
+                why = name + " not read";
                 return false;
             }
-            if (fnv(game[i].bytes) != kHashes[i])
+            if (fnv(game[i].bytes) != sources[i].hash)
             {
-                why = "em00.dat motion " + std::to_string(indices[i]) + " is not the one the recipe was made on";
+                why = name + " is not the one the recipe was made on";
                 return false;
             }
             game[i].span = static_cast<float>(mot_sample::frames(game[i].bytes.data())) - 1.0f;
@@ -306,6 +320,20 @@ namespace kamite::strafe_motions
             why = "the run didn't build";
             return false;
         }
+        // back: his back-pedal's foot-24 landings onto the walk's (1.74 m/s), and its two cycles averaged onto one of
+        // his run's (3.0 m/s); along z
+        if (!bake(game[2], {Warp{{22.25f, 50.25f, 78.25f}, {6.75f, 27.75f, 48.75f}, float(kWalkSpan)}}, kWalkSpan, walkTravel, false,
+                  out[BackWalk], 2) ||
+            !bake(game[2], {Warp{{10.5f, 23.5f}, {6.75f, 27.75f}, float(kRunSpan)}, Warp{{10.5f, 23.5f}, {27.75f, 48.75f}, float(kRunSpan)}},
+                  kRunSpan, runTravel, true, out[BackRun], 2))
+        {
+            why = "the back-pedal didn't build";
+            return false;
+        }
+        set.guarded = 0u;
+        for (uint32_t b = 0; b < static_cast<uint32_t>(kBones); ++b)
+            if (game[3].rot(b, 0.0f, set.guard[b]))
+                set.guarded |= 1u << b;
         return true;
     }
 
@@ -321,16 +349,16 @@ namespace kamite::strafe_motions
             const auto &a = m.tr[f0 * kTranslated + j], &b = m.tr[f1 * kTranslated + j];
             for (int c = 0; c < 3; ++c)
                 out.tr[j][c] = a[c] + (b[c] - a[c]) * u;
-            out.tr[j][0] = m.mean[j][0] + stride * (out.tr[j][0] - m.mean[j][0]);
+            out.tr[j][m.axis] = m.mean[j][m.axis] + stride * (out.tr[j][m.axis] - m.mean[j][m.axis]);
         }
     }
 
-    float rootX(const Motion &m, float t, float stride)
+    float rootAt(const Motion &m, float t, float stride)
     {
         const float span = static_cast<float>(m.span), n = std::floor(t / span), f = t - n * span;
-        const int f0 = std::min(static_cast<int>(f), m.span - 1);
+        const int f0 = std::min(static_cast<int>(f), m.span - 1), a = m.axis;
         const float u = f - static_cast<float>(f0);
-        const float x = m.root[f0][0] + (m.root[f0 + 1][0] - m.root[f0][0]) * u;
-        return (x + n * m.travel - m.root[0][0]) * stride;
+        const float x = m.root[f0][a] + (m.root[f0 + 1][a] - m.root[f0][a]) * u;
+        return (x + n * m.travel - m.root[0][a]) * stride;
     }
 }

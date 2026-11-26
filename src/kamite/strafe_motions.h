@@ -17,7 +17,9 @@
 //   with every foot touchdown moved onto his (a piecewise-linear time warp), the steps scaled about each foot's mean to
 //   1.74 m/s;
 // - run: 2044 (cell 11's boxing shuffle, his right) and it mirrored, sized, hips 3 cm lower, one of its cycles on one
-//   of his run's 14 frames (pl00 25 / 428), touchdowns warped onto his, steps x2.2 for 3.0 m/s.
+//   of his run's 14 frames (pl00 25 / 428), touchdowns warped onto his, steps x2.2 for 3.0 m/s;
+// - back: his own back-pedal (pl00 23) on the walk's grid (1.74 m/s) and, its two cycles averaged, on the run's
+//   (3.0 m/s) (round 3, strafe_round3.py: the game keeps walking / running forward and the back-pedal is blended too).
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
 // slerps; frame span = frame 0 but for the root's travel.
 namespace kamite::strafe_motions
@@ -31,6 +33,8 @@ namespace kamite::strafe_motions
         WalkRight,
         RunLeft,
         RunRight,
+        BackWalk, // his own back-pedal (pl00 23) on his walk's grid, 1.74 m/s
+        BackRun,  // its two cycles averaged onto his run's, 3.0 m/s
         kSides
     };
 
@@ -42,7 +46,8 @@ namespace kamite::strafe_motions
         std::vector<std::array<float, 3>> tr;         // (span + 1) x kTranslated
         std::vector<std::array<float, 3>> root;       // span + 1, from 0 at frame 0
         std::array<std::array<float, 3>, kTranslated> mean{}; // each translation's mean over the loop
-        float travel = 0.0f;                          // the root's x over one loop
+        int axis = 0;                                 // the steps' direction: 0 x (sideways), 2 z (the back-pedal)
+        float travel = 0.0f;                          // the root along it over one loop
     };
 
     struct Pose
@@ -51,13 +56,20 @@ namespace kamite::strafe_motions
         float tr[kTranslated][3];
     };
 
-    // em00.dat's entry `index` (from its offset to the next one), false when it can't be read.
-    using Fetch = std::function<bool(uint32_t index, std::vector<uint8_t> &bytes)>;
-    // The four, or false (and why) when em00.dat's motions aren't the ones the recipe was made on.
-    bool build(const Fetch &fetch, std::array<Motion, kSides> &out, std::string &why);
+    struct Set
+    {
+        std::array<Motion, kSides> motions;
+        mot_sample::Quat guard[kBones]; // his guard (pl00 9, his idle, frame 0)
+        uint32_t guarded = 0;           // bit b: the guard turns part b
+    };
 
-    // Frame t (any: wrapped onto the loop); the translations' x scaled by stride about their means.
+    // A .dat's entry `index` (from its offset to the next one), false when it can't be read.
+    using Fetch = std::function<bool(uint32_t index, std::vector<uint8_t> &bytes)>;
+    // From em00.dat and pl00.dat, or false (and why) when their motions aren't the ones the recipe was made on.
+    bool build(const Fetch &em00, const Fetch &pl00, Set &out, std::string &why);
+
+    // Frame t (any: wrapped onto the loop); the translations along the motion's axis scaled by stride about their means.
     void sample(const Motion &m, float t, float stride, Pose &out);
-    // The root's x at frame t, unwound (one loop's travel per loop), times stride.
-    float rootX(const Motion &m, float t, float stride);
+    // The root along the motion's axis at frame t, unwound (one loop's travel per loop), times stride.
+    float rootAt(const Motion &m, float t, float stride);
 }

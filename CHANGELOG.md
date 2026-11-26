@@ -32,6 +32,7 @@ Newest first, one line per change; the code comments say how.
 - F2 > Controls: Strafing Tiger prototype (off by default).
 - Strafing Tiger prototype: real side-steps (built from the disc at start), blended with Gene's walk, run and back-pedal by the stick's angle; the camera holds still during moves.
 - Strafing Tiger prototype: letting go of the stick eases out of the side-steps (it snapped into the idle).
+- Strafing Tiger prototype: the back-pedal is blended like the side-steps, so going round in a circle is smooth; no strafing while sprinting (he runs where the camera points); stopping eases into the idle; the sideways run keeps his guard up.
 - Signal Style Switch's sound follows the Sound Effects volume.
 - Modern: the radar's free-camera glow shows again when the game started on a device whose style isn't Modern.
 - Performance: enemies whose upper body twists (most of them) keep their bones' passes in native code (they fell back to the recompiled code every frame).
