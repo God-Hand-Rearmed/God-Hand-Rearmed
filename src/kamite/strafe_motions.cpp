@@ -98,36 +98,22 @@ namespace kamite::strafe_motions
             }
         };
 
-        bool upper(uint32_t b) { return (b >= 1u && b <= 16u) || b == 26u || b == 29u; }
-
-        // The frame of foot target 24's lowest point (strafe_mix.plant).
-        float lowest(const Src &m)
+        // The hips lowered by d (the foot targets stay: the knees bend more; K's run, Nov 26: the longer steps in reach).
+        struct Drop : Src
         {
-            float best = 1e30f, at = 0.0f;
-            for (int f = 0; f < static_cast<int>(m.span); ++f)
+            const Src &m;
+            float d;
+            Drop(const Src &m_, float d_) : m(m_), d(d_) { span = m.span; }
+            bool rot(uint32_t b, float t, Quat &q) const override { return m.rot(b, t, q); }
+            bool tr(uint32_t b, float t, float v[3]) const override
             {
-                float v[3];
-                if (m.tr(24u, static_cast<float>(f), v) && v[1] < best)
-                    best = v[1], at = static_cast<float>(f);
+                if (!m.tr(b, t, v))
+                    return false;
+                if (b == 0u)
+                    v[1] -= d;
+                return true;
             }
-            return at;
-        }
-
-        // legs' hips, legs and root + upper's spine, arms and head, the upper loop once per `per` of the legs' loop,
-        // phased on foot 24's lowest frame of each.
-        struct Mix : Src
-        {
-            const Src &legs, &up;
-            float pl, pu, sl, su;
-            Mix(const Src &legs_, const Src &up_, float per) : legs(legs_), up(up_)
-            {
-                span = legs.span;
-                pl = lowest(legs), pu = lowest(up), sl = legs.span * per, su = up.span;
-            }
-            float tu(float t) const { return wrap((t - pl) / sl * su + pu, su); }
-            bool rot(uint32_t b, float t, Quat &q) const override { return upper(b) ? up.rot(b, tu(t), q) : legs.rot(b, t, q); }
-            bool tr(uint32_t b, float t, float v[3]) const override { return legs.tr(b, t, v); }
-            void root(float t, float v[3]) const override { legs.root(t, v); }
+            void root(float t, float v[3]) const override { m.root(t, v); }
         };
 
         // Left for right: his right arm 5-10 / left 11-16, right leg 18-21 / left 22-25 swapped, x mirrored.
@@ -268,19 +254,19 @@ namespace kamite::strafe_motions
             return true;
         }
 
-        // The recipe (strafe_bake.py on the US disc, Nov 26): the source sizes and every touchdown.
-        constexpr uint32_t kWalkLeft = 3452u, kWalkRight = 3450u, kRunLegs = 837u, kRunUpper = 2044u;
-        constexpr uint32_t kHashes[4] = {0x7525C81Au, 0xB9D8E5E3u, 0x4AE9D2D4u, 0xE14A1A60u};
-        constexpr float kWalkSize = 0.998343871f, kRunSize = 1.440726171f;
+        // The recipe (strafe_round2.py on the US disc; K's picks W2 / R2, Nov 26): the source sizes and every touchdown.
+        constexpr uint32_t kWalk = 3450u, kRun = 2044u; // his right; his left = mirrored
+        constexpr uint32_t kHashes[2] = {0xB9D8E5E3u, 0xE14A1A60u};
+        constexpr float kWalkSize = 0.998343871f, kRunSize = 1.167537936f, kRunHips = 0.03f;
         constexpr int kWalkSpan = 56, kRunSpan = 13; // his walk (pl00 21) and run (25 / 428)
-        constexpr float kWalkSpeed = 1.74f, kRunSpeed = 4.0f;
+        constexpr float kWalkSpeed = 1.74f, kRunSpeed = 3.0f;
     }
 
     bool build(const Fetch &fetch, std::array<Motion, kSides> &out, std::string &why)
     {
-        const uint32_t indices[4] = {kWalkLeft, kWalkRight, kRunLegs, kRunUpper};
-        Game game[4];
-        for (int i = 0; i < 4; ++i)
+        const uint32_t indices[2] = {kWalk, kRun};
+        Game game[2];
+        for (int i = 0; i < 2; ++i)
         {
             if (!fetch(indices[i], game[i].bytes) || !mot_sample::valid(game[i].bytes.data(), game[i].bytes.size()))
             {
@@ -294,25 +280,28 @@ namespace kamite::strafe_motions
             }
             game[i].span = static_cast<float>(mot_sample::frames(game[i].bytes.data())) - 1.0f;
         }
-        const Scaled walkLeft(game[0], kWalkSize), walkRight(game[1], kWalkSize), legs(game[2], kRunSize);
-        const std::vector<float> walkRef = {22.25f, 36.75f, 50.25f, 64.75f, 78.25f}; // feet 24, 20, 24, 20, 24
+        // walk: 3450 (cell 16's right) and it mirrored, on his walk's grid (feet 24, 20, 24, 20, 24)
+        const Scaled walkRight(game[0], kWalkSize);
+        const Mirror walkLeft(walkRight);
+        const std::vector<float> walkRef = {22.25f, 36.75f, 50.25f, 64.75f, 78.25f};
         const float walkTravel = kWalkSpeed * kWalkSpan / 30.0f;
-        if (!bake(walkLeft, {Warp{walkRef, {38.0f, 62.75f, 82.5f, 109.5f, 126.0f}, float(kWalkSpan)}}, kWalkSpan, walkTravel,
-                  false, out[WalkLeft]) ||
-            !bake(walkRight, {Warp{walkRef, {19.5f, 39.5f, 68.5f, 90.5f, 118.5f}, float(kWalkSpan)}}, kWalkSpan, walkTravel,
-                  false, out[WalkRight]))
+        if (!bake(walkRight, {Warp{walkRef, {19.5f, 39.5f, 68.5f, 90.5f, 118.5f}, float(kWalkSpan)}}, kWalkSpan, walkTravel, false,
+                  out[WalkRight]) ||
+            !bake(walkLeft, {Warp{walkRef, {39.5f, 68.5f, 90.5f, 118.5f, 138.5f}, float(kWalkSpan)}}, kWalkSpan, walkTravel, false,
+                  out[WalkLeft]))
         {
             why = "the walk didn't build";
             return false;
         }
-        const Mix right(legs, game[3], 0.5f);
-        const Mirror left(right);
-        const std::vector<float> runRef = {10.5f, 17.0f, 23.5f}; // feet 24, 20, 24
+        // run: 2044 (cell 11's right: the boxing shuffle) and it mirrored, hips 3 cm lower, one of its cycles on one of
+        // his run's (feet 24, 20, 24), 1.85x its own pace
+        const Scaled sized(game[1], kRunSize);
+        const Drop runRight(sized, kRunHips);
+        const Mirror runLeft(runRight);
+        const std::vector<float> runRef = {10.5f, 17.0f, 23.5f};
         const float runTravel = kRunSpeed * kRunSpan / 30.0f;
-        if (!bake(right, {Warp{runRef, {4.75f, 11.25f, 18.75f}, float(kRunSpan)}, Warp{runRef, {18.75f, 25.0f, 32.75f}, float(kRunSpan)}},
-                  kRunSpan, runTravel, true, out[RunRight]) ||
-            !bake(left, {Warp{runRef, {11.25f, 18.75f, 25.0f}, float(kRunSpan)}, Warp{runRef, {25.0f, 32.75f, 39.25f}, float(kRunSpan)}},
-                  kRunSpan, runTravel, true, out[RunLeft]))
+        if (!bake(runRight, {Warp{runRef, {17.75f, 27.75f, 41.75f}, float(kRunSpan)}}, kRunSpan, runTravel, false, out[RunRight]) ||
+            !bake(runLeft, {Warp{runRef, {3.75f, 17.75f, 27.75f}, float(kRunSpan)}}, kRunSpan, runTravel, false, out[RunLeft]))
         {
             why = "the run didn't build";
             return false;

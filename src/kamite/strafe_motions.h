@@ -9,14 +9,15 @@
 #include <vector>
 
 // Strafing Tiger's side motions (the tech deck's strafing-tiger.md "Step 2 plan"; its k-pc/strafing-tiger/
-// strafe_bake.py is the recipe this follows and the reference it is checked against; K's picks walk A / run B, Nov 26).
+// strafe_bake.py / strafe_round2.py are the recipe this follows and the reference it is checked against; K's picks W2 /
+// R2, Nov 26).
 // Built at start from em00.dat's motions read off the player's disc (nothing of the game's is shipped), on the grid of
 // Gene's own loops so that a side motion's frame is his clock:
-// - walk: 3452 (his left) / 3450 (his right), sized onto Gene, on his walk's 57 frames (pl00 21: two cycles) with
-//   every foot touchdown moved onto his (a piecewise-linear time warp), the steps scaled about each foot's mean to
+// - walk: 3450 (his right) and it mirrored (his left), sized onto Gene, on his walk's 57 frames (pl00 21: two cycles)
+//   with every foot touchdown moved onto his (a piecewise-linear time warp), the steps scaled about each foot's mean to
 //   1.74 m/s;
-// - run: 837's legs (sized) + 2044's upper body once per leg cycle, his left = the right mirrored, the two leg cycles
-//   averaged into one on his run's 14 frames (pl00 25 / 428), touchdowns warped onto his, 4.0 m/s.
+// - run: 2044 (cell 11's boxing shuffle, his right) and it mirrored, sized, hips 3 cm lower, one of its cycles on one
+//   of his run's 14 frames (pl00 25 / 428), touchdowns warped onto his, steps x2.2 for 3.0 m/s.
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
 // slerps; frame span = frame 0 but for the root's travel.
 namespace kamite::strafe_motions

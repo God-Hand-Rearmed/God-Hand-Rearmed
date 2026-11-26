@@ -37,7 +37,7 @@ namespace kamite::strafing_tiger
                            kMotion = 0x428u, kClock = 0x430u, kDelta = 0x330u;
         constexpr uint32_t kPartRotation = 0x100u, kPartAnchor = 0xD0u;
         constexpr float kHalfTurn = 3.14159265f, kQuarterTurn = 1.57079633f;
-        constexpr float kWalkSideSpeed = 1.74f, kRunSideSpeed = 4.0f; // m/s (K, Nov 25-26)
+        constexpr float kWalkSideSpeed = 1.74f, kRunSideSpeed = 3.0f; // m/s (K, Nov 25-26; R2: 3.0)
         constexpr float kEaseSeconds = 0.1f;                          // the side weight's ease (a KBM key's 45 deg steps)
         constexpr int64_t kStillMs = 250;                             // no blend this long: the next one starts at its weight
         constexpr int64_t kLetGoMs = 300; // the stick let go: the side-steps ease out while his loop still plays (K, Nov 26:
