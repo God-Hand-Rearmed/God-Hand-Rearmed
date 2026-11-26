@@ -646,7 +646,7 @@ namespace kamite::modern
                 checkbox(ui, "Auto Brawl: fighting starts brawl mode (the middle click switches back)##kbmauto", g_kbmAuto);
             ui->text_disabled("The style in effect is the device used last. Strafing Tiger: planned (the prototype below).");
             checkbox(ui, "Strafing Tiger (prototype): in Modern's free camera Gene faces the camera and the left stick "
-                         "strafes (his walk slides for now)##tiger", strafing_tiger::setting());
+                         "strafes##tiger", strafing_tiger::setting());
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)
             {
@@ -884,6 +884,14 @@ namespace kamite::modern
                 const float perWidth = g_touchSensitivity.load(std::memory_order_relaxed) * kDegToRad;
                 yawStep += touch.x * perWidth * (g_invertX.load() ? -1.0f : 1.0f);
                 pitchStep += touch.y * perWidth * (g_invertY.load() ? -1.0f : 1.0f);
+            }
+            if (strafing_tiger::enabled())
+            {
+                // Strafing Tiger (later.md round 2, first build): the camera keeps still while a move holds his
+                // facing (an attack, a dodge, a throw...): it turns again once he stands, walks, runs or back-pedals.
+                const uint32_t gene = ram32(rdram, kPlayerPointer);
+                if (validPointer(gene) && !geneMoves(rdram, gene) && !backPedals(rdram, gene))
+                    yawStep = 0.0f, pitchStep = 0.0f;
             }
             g_yaw = wrapAngle(g_yaw - yawStep);
             const float floor = std::fmax(kPitchMin, std::fmin(g_pitchFloor.load(std::memory_order_relaxed), 0.0f));

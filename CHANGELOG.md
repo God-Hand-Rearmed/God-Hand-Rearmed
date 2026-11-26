@@ -30,6 +30,7 @@ Newest first, one line per change; the code comments say how.
 - Keyboard: duck, back flip and both sidesteps can be bound to keys on the in-game BUTTON MAPPING page.
 - New help texts for BUTTON MAPPING and Swap Sticks.
 - F2 > Controls: Strafing Tiger prototype (off by default).
+- Strafing Tiger prototype: real side-steps (built from the disc at start), blended with Gene's walk, run and back-pedal by the stick's angle; the camera holds still during moves.
 - Performance: enemies whose upper body twists (most of them) keep their bones' passes in native code (they fell back to the recompiled code every frame).
 
 ## November 25, 2026

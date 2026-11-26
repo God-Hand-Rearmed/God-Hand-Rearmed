@@ -2,6 +2,7 @@
 
 #include "kamite/function_hooks.h"
 #include "kamite/log.h"
+#include "kamite/mot_sample.h"
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/ee_scheduler.h"
@@ -76,155 +77,12 @@ namespace kamite::style_pose
             return inRam(motion, 8u) && std::memcmp(g_ram + motion, "mtb3", 4) == 0 ? motion : 0u;
         }
 
-        // ---- the motion's curves (mtb3: u16 frames, u8 records, u8 loop; 12-byte records: u8 bone, u8 channel (high
-        // nibble 0x00 constant f32 payload / 0x10 Hermite curve at motion + payload; low nibble 0..5 = t xyz, r xyz),
-        // u16 key count, u32 flags, u32 payload; curve: six half floats (value, value step, in tangent, its step, out
-        // tangent, its step), then 4-byte keys (frames since the last, value step, in step, out step)) ----
-        float half(uint16_t v)
-        {
-            const uint32_t sign = (v >> 15) & 1u, expo = (v >> 9) & 0x3Fu, mant = v & 0x1FFu;
-            if (expo == 0u && mant == 0u)
-                return 0.0f;
-            const uint32_t bits = (sign << 31) | ((expo - 47u + 127u) << 23) | (mant << 14);
-            float f = 0.0f;
-            std::memcpy(&f, &bits, 4);
-            return f;
-        }
-        uint16_t rd16(uint32_t a)
-        {
-            uint16_t v = 0;
-            std::memcpy(&v, g_ram + (a & PS2_RAM_MASK), 2);
-            return v;
-        }
-        // The rotation of `bone` at frame t: out[c] set where the motion keys component c (found[c]).
+        // The rotation of `bone` at frame t of the motion in RAM (mot_sample.h: the shared decoder): out[c] set where
+        // the motion keys component c (found[c]).
         void sampleRotation(uint32_t motion, uint32_t bone, float t, float out[3], bool found[3])
         {
-            found[0] = found[1] = found[2] = false;
-            const uint32_t records = g_ram[motion + 6u];
-            for (uint32_t i = 0; i < records; ++i)
-            {
-                const uint32_t r = motion + 8u + 12u * i;
-                const uint32_t channel = g_ram[r + 1u];
-                if (channel == 0xFFu)
-                    break;
-                const uint32_t component = channel & 0x0Fu;
-                if (g_ram[r] != bone || component < 3u || component > 5u)
-                    continue;
-                const uint32_t keys = rd16(r + 2u), payload = rd32(r + 8u);
-                float value = 0.0f;
-                if ((channel & 0xF0u) == 0x00u)
-                    std::memcpy(&value, &payload, 4);
-                else if ((channel & 0xF0u) == 0x10u && keys > 0u && inRam(motion + payload, 12u + 4u * keys))
-                {
-                    const uint32_t c = motion + payload;
-                    const float p = half(rd16(c)), dp = half(rd16(c + 2u)), m0 = half(rd16(c + 4u)),
-                                dm0 = half(rd16(c + 6u)), m1 = half(rd16(c + 8u)), dm1 = half(rd16(c + 10u));
-                    float f0 = 0.0f, v0 = 0.0f, out0 = 0.0f;
-                    uint32_t frame = 0u;
-                    bool done = false;
-                    for (uint32_t k = 0; k < keys && !done; ++k)
-                    {
-                        const uint8_t *key = g_ram + c + 12u + 4u * k;
-                        frame += key[0];
-                        const float f = static_cast<float>(frame), v = p + dp * key[1], in = m0 + dm0 * key[2],
-                                    o = m1 + dm1 * key[3];
-                        if (k == 0u)
-                            value = v;
-                        if (k > 0u && f > t && f > f0)
-                        {
-                            const float u = (t - f0) / (f - f0), u2 = u * u, u3 = u2 * u;
-                            value = (2 * u3 - 3 * u2 + 1) * v0 + (u3 - 2 * u2 + u) * out0 + (-2 * u3 + 3 * u2) * v +
-                                    (u3 - u2) * in;
-                            done = true;
-                        }
-                        else if (f <= t)
-                            value = v; // at or past this key (the last key holds)
-                        f0 = f, v0 = v, out0 = o;
-                    }
-                }
-                else
-                    continue; // an encoding not known here: leave the component to the game's pose
-                out[component - 3u] = value;
-                found[component - 3u] = true;
-            }
-        }
-
-        // ---- rotations (as frame_patches.cpp's half-frame poses: Euler R = Rz Ry Rx, radians) ----
-        struct Quat
-        {
-            float w, x, y, z;
-        };
-        void eulerMatrix(const float e[3], float r[3][3])
-        {
-            const float cx = std::cos(e[0]), sx = std::sin(e[0]), cy = std::cos(e[1]), sy = std::sin(e[1]),
-                        cz = std::cos(e[2]), sz = std::sin(e[2]);
-            r[0][0] = cy * cz, r[0][1] = sx * sy * cz - cx * sz, r[0][2] = cx * sy * cz + sx * sz;
-            r[1][0] = cy * sz, r[1][1] = sx * sy * sz + cx * cz, r[1][2] = cx * sy * sz - sx * cz;
-            r[2][0] = -sy, r[2][1] = sx * cy, r[2][2] = cx * cy;
-        }
-        Quat matrixQuat(const float r[3][3])
-        {
-            Quat q;
-            q.w = std::sqrt(std::max(0.0f, 1.0f + r[0][0] + r[1][1] + r[2][2])) * 0.5f;
-            q.x = std::copysign(std::sqrt(std::max(0.0f, 1.0f + r[0][0] - r[1][1] - r[2][2])) * 0.5f, r[2][1] - r[1][2]);
-            q.y = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] + r[1][1] - r[2][2])) * 0.5f, r[0][2] - r[2][0]);
-            q.z = std::copysign(std::sqrt(std::max(0.0f, 1.0f - r[0][0] - r[1][1] + r[2][2])) * 0.5f, r[1][0] - r[0][1]);
-            const float n = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
-            return n > 0.0f ? Quat{q.w / n, q.x / n, q.y / n, q.z / n} : Quat{1.0f, 0.0f, 0.0f, 0.0f};
-        }
-        void quatMatrix(const Quat &q, float r[3][3])
-        {
-            const float w = q.w, x = q.x, y = q.y, z = q.z;
-            r[0][0] = 1 - 2 * (y * y + z * z), r[0][1] = 2 * (x * y - w * z), r[0][2] = 2 * (x * z + w * y);
-            r[1][0] = 2 * (x * y + w * z), r[1][1] = 1 - 2 * (x * x + z * z), r[1][2] = 2 * (y * z - w * x);
-            r[2][0] = 2 * (x * z - w * y), r[2][1] = 2 * (y * z + w * x), r[2][2] = 1 - 2 * (x * x + y * y);
-        }
-        Quat quatSlerp(const Quat &a, Quat b, float u)
-        {
-            float d = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;
-            if (d < 0.0f)
-                b = {-b.w, -b.x, -b.y, -b.z}, d = -d;
-            float ka = 1.0f - u, kb = u;
-            if (d < 0.9995f)
-            {
-                const float th = std::acos(d), s = std::sin(th);
-                ka = std::sin((1.0f - u) * th) / s, kb = std::sin(u * th) / s;
-            }
-            Quat q{ka * a.w + kb * b.w, ka * a.x + kb * b.x, ka * a.y + kb * b.y, ka * a.z + kb * b.z};
-            const float n = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
-            return Quat{q.w / n, q.x / n, q.y / n, q.z / n};
-        }
-        float windNear(float a, float near)
-        {
-            constexpr float kTurn = 6.2831853f;
-            return a + kTurn * std::round((near - a) / kTurn);
-        }
-        bool eulerNear(const float r[3][3], const float near[3], float out[3])
-        {
-            const float x0 = std::atan2(r[2][1], r[2][2]);
-            const float xs[3] = {x0, x0 + 3.14159265f, near[0]};
-            float best = 1e30f;
-            for (const float x : xs)
-            {
-                const float c = std::cos(x), s = std::sin(x);
-                const float p01 = r[0][1] * c - r[0][2] * s, p11 = r[1][1] * c - r[1][2] * s;
-                const float p20 = r[2][0], p22 = r[2][1] * s + r[2][2] * c;
-                const float e[3] = {windNear(x, near[0]), windNear(std::atan2(-p20, p22), near[1]),
-                                    windNear(std::atan2(-p01, p11), near[2])};
-                float check[3][3];
-                eulerMatrix(e, check);
-                float err = 0.0f;
-                for (int i = 0; i < 3; ++i)
-                    for (int j = 0; j < 3; ++j)
-                        err = std::max(err, std::fabs(check[i][j] - r[i][j]));
-                const float distance = std::fabs(e[0] - near[0]) + std::fabs(e[1] - near[1]) + std::fabs(e[2] - near[2]);
-                if (err < 1e-3f && distance < best)
-                {
-                    best = distance;
-                    std::copy(e, e + 3, out);
-                }
-            }
-            return best < 1e30f;
+            for (uint32_t c = 0; c < 3u; ++c)
+                found[c] = mot_sample::sample(g_ram + motion, PS2_RDRAM_SIZE - motion, bone, 3u + c, t, out[c]);
         }
 
         void poseWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -279,12 +137,10 @@ namespace kamite::style_pose
                 for (int c = 0; c < 3; ++c)
                     if (!found[c])
                         target[c] = e[c]; // not keyed by the turn: the game's
-                float ra[3][3], rb[3][3], rc[3][3], ec[3];
-                eulerMatrix(e, ra);
-                eulerMatrix(target, rb);
+                float rc[3][3], ec[3];
                 const float share = i < kFirstArm ? kTorsoShare : 1.0f;
-                quatMatrix(quatSlerp(matrixQuat(ra), matrixQuat(rb), weight * share), rc);
-                if (eulerNear(rc, e, ec))
+                mot_sample::quatMatrix(mot_sample::slerp(mot_sample::eulerQuat(e), mot_sample::eulerQuat(target), weight * share), rc);
+                if (mot_sample::eulerNear(rc, e, ec))
                     std::memcpy(g_ram + part[i] + 0x100u, ec, 12);
             }
         }

@@ -1248,8 +1248,10 @@ int main(int argc, char *argv[])
         kamite::options_screen::install(runtime, exeDir); // the title and pause Options open God Hand: Rearmed's own screen
         kamite::hotkeys::install(exeDir / "GHR.ini"); // [Hotkeys]: the port's shortcut keys
         kamite::dev_menu::install(exeDir / "GHR.ini"); // F2: the dev menu's tab order, Display and Gameplay
+        // Strafing Tiger (prototype, F2 > Controls): hooks addNullSpeed and the motion pose 0x158328, the pose first of
+        // all its wrappers (the innermost: style_pose's arm swing and the 60 FPS half frames go on top)
+        kamite::strafing_tiger::install(runtime);
         kamite::style_presets::install(runtime); // style presets: d-pad swaps in play, the Techniques screen's style row and L2 / R2
-        kamite::strafing_tiger::install(runtime); // Strafing Tiger (prototype, F2 > Controls): hooks addNullSpeed
         kamite::mash_assist::install(runtime);   // [Game] MashAssist: held input mashes in struggles and mash moves
         kamite::buck_breaker::install(runtime);  // [Game] BuckBreaker: the stun punish per style (the Techniques screen's punish slot)
         kamite::punish_fit::install(runtime, exeDir); // with it: the punishes fitted to every body (resources/punish_fit.txt)
