@@ -91,7 +91,7 @@ namespace kamite::strafing_tiger
         // blend +0x27C; moveMotion counts +0x438 down by the step). Under Tiger the new loop starts at the step the
         // side motion was at instead (by its touchdowns); the game's blend stays (harness: with the step matched it is
         // harmless, and cancelled the switches jumped more) but in spin mode (it dragged the spin's steps and lean).
-        constexpr uint32_t kBlendLeft = 0x438u, kBlendLen = 0x43Cu;
+        constexpr uint32_t kBlendLeft = 0x438u, kBlendLen = 0x43Cu, kRootLast = 0x320u;
         constexpr int64_t kSpinEaseMs = 150;   // spin mode in / out
         constexpr float kSpinOffShare = 0.7f;  // spin mode ends under this share of its threshold
         constexpr float kSpinRateSeconds = 0.1f; // the stick's turning rate, smoothed
@@ -969,6 +969,22 @@ namespace kamite::strafing_tiger
         // Before moveMotion steps: a walk / run <-> back-pedal flip that setMotionInfo has just started (its blend still
         // whole) starts at the step the last pose's side motion was at; a spin just over puts his loop's clock at the
         // spin's step (once).
+        // His clock moved to t: the root delta's base too (K, Nov 27: he teleported at the flips; moveMotion's delta is
+        // the pose's root +0x310 less the last one +0x320, which setMotionInfo zeroes: from frame 0 to t in one frame).
+        // The root's x is negated in a mirrored motion (+0x434 bit 1, as the pose).
+        void setClock(uint8_t *rdram, uint32_t obj, uint32_t motion, float t)
+        {
+            wrF(rdram, obj + kClock, t);
+            uint16_t flags = 0;
+            std::memcpy(&flags, rdram + ((obj + 0x434u) & PS2_RAM_MASK), 2);
+            for (uint32_t c = 0; c < 3u; ++c)
+            {
+                float v = 0.0f;
+                mot_sample::sample(rdram + motion, PS2_RDRAM_SIZE - motion, 255u, c, t, v);
+                wrF(rdram, obj + kRootLast + 4u * c, c == 0u && ((flags >> 1) & 1u) ? -v : v);
+            }
+        }
+
         void handOver(uint8_t *rdram, uint32_t obj)
         {
             uint32_t motion = 0u;
@@ -982,12 +998,12 @@ namespace kamite::strafing_tiger
                 nowMs() - last.ms < kStillMs && left > 0.0f && left == rdF(rdram, obj + kBlendLen))
             {
                 const float was = touchPhase(*last.side, gridClock(*last.loop, last.clock, static_cast<float>(last.side->span)));
-                wrF(rdram, obj + kClock, loopClock(*loop, touchFrame(next, was)));
+                setClock(rdram, obj, motion, loopClock(*loop, touchFrame(next, was)));
                 if (g_spin.weight > 0.0f) // spin mode's pose runs on its own clock through the flips: the game's fade
                     wrF(rdram, obj + kBlendLeft, 0.0f); // toward the pose at each would drag it (moveMotion: blend 0)
             }
             else if (g_spin.rephase && last.loop == loop)
-                wrF(rdram, obj + kClock, loopClock(*loop, touchFrame(next, touchPhase(spinMotion(), g_spin.sigma))));
+                setClock(rdram, obj, motion, loopClock(*loop, touchFrame(next, touchPhase(spinMotion(), g_spin.sigma))));
             g_spin.rephase = false;
         }
         void noteMove(const uint8_t *rdram, uint32_t obj)
