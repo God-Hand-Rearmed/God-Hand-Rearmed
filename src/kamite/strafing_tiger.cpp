@@ -311,8 +311,8 @@ namespace kamite::strafing_tiger
             b.sideRun = b.front && b.run && g_set.sideRunBuilt && rs.legs.load(std::memory_order_relaxed) == 0;
             if (b.sideRun)
             {
-                b.sideMotion = &g_set.sideRun[left ? 0 : 1];
-                b.side += 1024;
+                b.sideMotion = &g_set.sideRun[rs.flip.load(std::memory_order_relaxed) ? 1 : 0][left ? 0 : 1];
+                b.side += 1024 + (rs.flip.load(std::memory_order_relaxed) ? 2048 : 0); // the delta's track restarts on a switch
             }
             // The arms' side in his back-pedal: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
             // across doesn't flip it; averaging the two mirrored swings cancelled them, K Nov 27), eased on a switch.

@@ -137,6 +137,23 @@ namespace kamite::strafe_motions
             }
         };
 
+        // A motion played backward (K, Nov 27: the side-run flipped, the other shoulder leading: backward it travels the
+        // other way, so the mirror backward goes the same way as the clip with the body turned the other way).
+        struct Reverse : Src
+        {
+            const Src &m;
+            explicit Reverse(const Src &m_) : m(m_) { span = m.span; }
+            bool rot(uint32_t b, float t, Quat &q) const override { return m.rot(b, -t, q); }
+            bool tr(uint32_t b, float t, float v[3]) const override { return m.tr(b, -t, v); }
+            void root(float t, float v[3]) const override
+            {
+                float a[3], z[3];
+                m.root(-t, a), m.root(0.0f, z);
+                for (int c = 0; c < 3; ++c)
+                    v[c] = a[c] - z[c];
+            }
+        };
+
         // A motion on a reference grid: ref anchors (rising, the last = the first + refSpan) onto the source's (the
         // last = the same foot's next landing), piecewise linear, continuous over [0, refSpan].
         struct Warp
@@ -386,15 +403,20 @@ namespace kamite::strafe_motions
             if (strafe(right, c.right, c.left, set.walks[c.source], set.runs[c.source], set.backs[c.source]))
                 set.walksBuilt |= 1u << c.source;
         }
-        { // the run's sideways stride at 3 / 9 (his right as made, mirrored for his left), at its own steps
+        { // the run's sideways stride at 3 / 9 (his right as made, mirrored for his left), at its own steps; flipped:
+          // backward (his right = the mirror backward, his left = the clip backward)
             const SideRun right;
             const Mirror left(right);
-            set.sideRunBuilt = bake(left, {Warp{runRef, {strafe_run::kLeftTouch[0], strafe_run::kLeftTouch[1], strafe_run::kLeftTouch[2]}, float(kRunSpan)}},
-                                    kRunSpan, 0.0f, false, set.sideRun[0]) &&
-                               bake(right, {Warp{runRef, {strafe_run::kRightTouch[0], strafe_run::kRightTouch[1], strafe_run::kRightTouch[2]}, float(kRunSpan)}},
-                                    kRunSpan, 0.0f, false, set.sideRun[1]);
-            for (Motion &m : set.sideRun)
-                m.sourceRate = strafe_run::kSourceRate;
+            const Reverse flipRight(left), flipLeft(right);
+            auto one = [&](const Src &src, const float touch[3], Motion &out) {
+                return bake(src, {Warp{runRef, {touch[0], touch[1], touch[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, out);
+            };
+            set.sideRunBuilt = one(left, strafe_run::kLeftTouch, set.sideRun[0][0]) && one(right, strafe_run::kRightTouch, set.sideRun[0][1]) &&
+                               one(flipLeft, strafe_run::kFlipLeftTouch, set.sideRun[1][0]) &&
+                               one(flipRight, strafe_run::kFlipRightTouch, set.sideRun[1][1]);
+            for (auto &pair : set.sideRun)
+                for (Motion &m : pair)
+                    m.sourceRate = strafe_run::kSourceRate;
         }
         return true;
     }

@@ -47,9 +47,10 @@ namespace kamite::strafing_tiger
         std::atomic<float> arms{1.0f};     // the side-run's arms (1) toward 7's ready posture (0)
         std::atomic<float> torso{1.0f};    // ... its spine, neck and head
         std::atomic<float> turn{45.0f};    // his run turned toward the stick up to this (deg; K: good up to 45)
+        std::atomic<int> flip{1};          // the side-run played backward, mirrored: the other shoulder leads (K, Nov 27)
         void reset()
         {
-            legs = 0, speed = 0.28f, pace = 0.56f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f;
+            legs = 0, speed = 0.28f, pace = 0.56f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 1;
         }
     };
     RunStrafe &runStrafe();

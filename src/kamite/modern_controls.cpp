@@ -686,6 +686,11 @@ namespace kamite::modern
                     ui->text_disabled("The side-run didn't build: the side-steps play.");
                 if (legs == 0)
                 {
+                    static const char *const kFlip[] = {"As made (turned away from where he runs)", "Flipped (the other shoulder leads)"};
+                    int flip = rs.flip.load(std::memory_order_relaxed);
+                    ui->set_next_width(340.0f);
+                    if (ui->combo("##tigerflip", &flip, kFlip, 2))
+                        rs.flip = flip;
                     slider(ui, "Arms (1 = its own, 0 = 7's ready pose)##tigerarms", rs.arms, 0.0f, 1.0f, "%.2f");
                     slider(ui, "Torso and head (1 = its own, 0 = 7's)##tigertorso", rs.torso, 0.0f, 1.0f, "%.2f");
                 }
@@ -702,20 +707,20 @@ namespace kamite::modern
                     std::snprintf(line, sizeof line, "Run once to see the legs' pace and step length.");
                 ui->text(line);
                 // Two snapshots to flip between, and the values written to the log (K pastes them; they become the defaults).
-                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso, turn; bool set; };
+                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso, turn; int flip; bool set; };
                 static Snap s_snap[2] = {};
                 for (int k = 0; k < 2; ++k)
                 {
                     ui->push_id(k);
                     if (ui->small_button(k ? "Store B" : "Store A"))
-                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.arms.load(), rs.torso.load(), rs.turn.load(), true};
+                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.arms.load(), rs.torso.load(), rs.turn.load(), rs.flip.load(), true};
                     ui->same_line();
                     ui->begin_disabled(!s_snap[k].set);
                     if (ui->small_button(k ? "Load B" : "Load A"))
                     {
                         const Snap &q = s_snap[k];
                         rs.legs = q.legs, rs.speed = q.speed, rs.pace = q.pace, rs.bounce = q.bounce, rs.hips = q.hips;
-                        rs.arms = q.arms, rs.torso = q.torso, rs.turn = q.turn;
+                        rs.arms = q.arms, rs.torso = q.torso, rs.turn = q.turn, rs.flip = q.flip;
                     }
                     ui->end_disabled();
                     ui->pop_id();
@@ -723,7 +728,7 @@ namespace kamite::modern
                         ui->same_line();
                 }
                 if (ui->small_button("Write these to the log##tigerlog"))
-                    KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? "side-run" : "side-steps") << ", speed "
+                    KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
                                   << rs.torso.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");

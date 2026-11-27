@@ -78,7 +78,7 @@ namespace kamite::strafe_motions
         std::array<std::array<Motion, 2>, kWalkSources> runs;  // the same, two cycles averaged on his run's grid
         std::array<std::array<Motion, 2>, kWalkSources> backs; // the same on his back-pedal's grid
         uint32_t walksBuilt = 0;                               // bit per source (16's = motions' Walk / Run sides)
-        std::array<Motion, 2> sideRun;                         // the side-run on his run's grid, its own steps
+        std::array<std::array<Motion, 2>, 2> sideRun;          // [as made, flipped][his left, right] on his run's grid
         bool sideRunBuilt = false;
     };
 
