@@ -527,7 +527,7 @@ namespace kamite::strafing_tiger
             uint32_t part[strafe_motions::kBones], anchor[strafe_motions::kTranslated];
             if (!partsOf(rdram, obj, part, anchor))
                 return;
-            // His run turned toward the stick (hips, legs, foot targets by phi about y; spine and chest each half back,
+            // His run turned toward the stick (hips, legs, foot targets and the feet's turn by phi about y; spine and chest each half back,
             // so the chest, arms and head keep facing the camera), before the blend reads it.
             const float phi = b.phi * b.presence;
             float mh[strafe_motions::kTranslated][3];
@@ -552,6 +552,14 @@ namespace kamite::strafing_tiger
                     writePart(rdram, part[0], e0, w0);
                     writePart(rdram, part[1], e1, mot_sample::mul(inv(w0), w1));
                     writePart(rdram, part[2], e2, mot_sample::mul(inv(w1), w2));
+                }
+                // the feet too: the foot targets' turn is model space, not under the hips (K, Nov 27: they kept facing
+                // ahead while the legs turned)
+                for (int i : {20, 24})
+                {
+                    float e[3];
+                    if (get(i, e))
+                        writePart(rdram, part[i], e, mot_sample::mul(turn, mot_sample::eulerQuat(e)));
                 }
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                 {
