@@ -54,6 +54,11 @@ namespace kamite::strafing_tiger
         constexpr float kBackFrom = 112.5f * kHalfTurn / 180.0f, kBackLeave = 102.5f * kHalfTurn / 180.0f;
         constexpr float kArmSideSeconds = 0.25f; // past 150 deg the arms keep the side they had; a switch eases
         constexpr float kEaseSeconds = 0.1f;   // the stick's angle eases (a KBM key's 45 deg steps; a flick across)
+        // A switch across to the other side (A -> D, a flick through the centre) walking or running: no easing through
+        // straight ahead (K, Nov 27: his walk, a nudge forward); the two sides cross over this, his sideways speed
+        // through 0, from both angles this far out.
+        constexpr float kFlipFrom = 67.5f * kHalfTurn / 180.0f;
+        constexpr int64_t kFlipMs = 250;
         constexpr int64_t kStillMs = 250;      // no blend this long: the next one starts where the stick points
         constexpr int64_t kLetGoMs = 300;      // the stick let go while his loop still plays: the blend fades out
         constexpr float kLetGoSeconds = 0.12f; // ... at this ease
@@ -128,6 +133,7 @@ namespace kamite::strafing_tiger
             float tr[strafe_motions::kTranslated][3];
         } g_held, g_switched; // the last blended pose; the one before a walk <-> run switch
         int64_t g_switchMs = -100000;
+        int64_t g_flipMs = -100000; // the last switch across (kFlipFrom)
         constexpr uint32_t kHeat = 0x5CB000u; // cHeatSys (game_options.cpp): +4 the gauge, +0xC the full mark (floats)
         constexpr float kTensionSeconds = 0.3f;
 
@@ -251,6 +257,10 @@ namespace kamite::strafing_tiger
             float pace = 1.0f;     // his clock's step x this (the run's own pace toward 3 / 9)
             bool sideRun = false;  // the run's side is the side-run (its own body; arms / torso toward 7's by F2)
             float phi = 0.0f;      // the run turned toward the stick (+ = his left), the chest turned back
+            // A switch across (kFlipFrom): mix the new side's share of the side pose (0 .. 1, eased), cross = 2 mix - 1
+            // on the side's delta and on phi (the side before at -1).
+            float mix = 1.0f, cross = 1.0f;
+            const strafe_motions::Motion *sides[2] = {}; // the side's motion per side [0 his left, 1 his right]
             const Forward *fwd = nullptr;
         };
 
@@ -267,9 +277,19 @@ namespace kamite::strafing_tiger
             {
                 g_theta = stick ? angle : 0.0f, g_presence = stick ? 1.0f : 0.0f;
                 g_track.valid = false;
+                g_flipMs = -100000;
             }
             else
             {
+                if (stick && !b.loop->back && std::fabs(g_theta) > kFlipFrom && std::fabs(angle) > kFlipFrom &&
+                    (angle >= 0.0f) != (g_theta >= 0.0f))
+                {
+                    // across to the other side: the same angle on it, the poses and speeds crossing over (a switch
+                    // back before it's done turns back from where it got to)
+                    const float x = std::fmin(static_cast<float>(now - g_flipMs) / static_cast<float>(kFlipMs), 1.0f);
+                    g_theta = -g_theta;
+                    g_flipMs = now - static_cast<int64_t>(std::lround((1.0f - x) * static_cast<float>(kFlipMs)));
+                }
                 if (stick) // the shortest way round
                     g_theta = wrapAngle(g_theta + wrapAngle(angle - g_theta) * (1.0f - std::exp(-dt / kEaseSeconds)));
                 g_presence += ((stick ? 1.0f : 0.0f) - g_presence) * (1.0f - std::exp(-dt / kLetGoSeconds));
@@ -277,6 +297,13 @@ namespace kamite::strafing_tiger
             g_lastMs = now, g_loads = loads;
             if (stick)
                 g_stickMs = now;
+            if (b.loop->back)
+                g_flipMs = -100000; // his back-pedal: the angle eases round through straight back
+            {
+                const float x = std::fmin(std::fmax(static_cast<float>(now - g_flipMs) / static_cast<float>(kFlipMs), 0.0f), 1.0f);
+                b.mix = x * x * (3.0f - 2.0f * x);
+                b.cross = 2.0f * b.mix - 1.0f;
+            }
             const float a = std::fabs(g_theta);
             const bool left = g_theta >= 0.0f;
             b.run = b.loop->run;
@@ -302,6 +329,7 @@ namespace kamite::strafing_tiger
                 for (int k = 0; k < 2; ++k)
                     b.walkA[k] = &grid[a][k], b.walkB[k] = &grid[bsrc][k];
                 b.sideMotion = b.walkA[left ? 0 : 1];
+                b.sides[0] = b.walkA[0], b.sides[1] = b.walkA[1];
                 b.side += 16 * (a + 4 * bsrc) + (b.front ? 0 : 256); // the delta's track restarts on a switch
                 b.keep = bsrc == strafe_motions::Cell16 ? g_tensionArms.load(std::memory_order_relaxed) : 1.0f;
                 b.toB6 = b.wt * g_tensionBack.load(std::memory_order_relaxed);
@@ -311,7 +339,9 @@ namespace kamite::strafing_tiger
             b.sideRun = b.front && b.run && g_set.sideRunBuilt && rs.legs.load(std::memory_order_relaxed) == 0;
             if (b.sideRun)
             {
-                b.sideMotion = &g_set.sideRun[rs.flip.load(std::memory_order_relaxed) ? 1 : 0][left ? 0 : 1];
+                const int f = rs.flip.load(std::memory_order_relaxed) ? 1 : 0;
+                b.sides[0] = &g_set.sideRun[f][0], b.sides[1] = &g_set.sideRun[f][1];
+                b.sideMotion = b.sides[left ? 0 : 1];
                 b.side += 1024 + (rs.flip.load(std::memory_order_relaxed) ? 2048 : 0); // the delta's track restarts on a switch
             }
             // The arms' side in his back-pedal: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
@@ -532,7 +562,7 @@ namespace kamite::strafing_tiger
                 return;
             // His run turned toward the stick (hips, legs, foot targets and the feet's turn by phi about y; spine and chest each half back,
             // so the chest, arms and head keep facing the camera), before the blend reads it.
-            const float phi = b.phi * b.presence;
+            const float phi = b.phi * b.cross * b.presence;
             float mh[strafe_motions::kTranslated][3];
             for (int j = 0; j < strafe_motions::kTranslated; ++j)
                 std::memcpy(mh[j], b.fwd->mean[j], 12);
@@ -575,53 +605,79 @@ namespace kamite::strafing_tiger
                 }
             }
             const float sigma = gridClock(*b.loop, t, b.grid);
-            const strafe_motions::Motion &sm = *b.sideMotion;
-            uint32_t sideMask = sm.rotated;
             const int own = b.left ? 0 : 1;
+            const bool crossing = b.front && b.mix < 1.0f; // a switch across: the side before still in
+            uint32_t sideMask = 0u;
             strafe_motions::Pose side, walkA[2], walkB[2];
             float ms[strafe_motions::kTranslated][3];
-            { // the side-steps: A and B (16, its arms calmer) blended by the Tension weight
-                for (int k = 0; k < 2; ++k)
-                    if (k == own || !b.front) // his back-pedal's arms take the latched side's (both sampled)
-                    {
-                        strafe_motions::sample(*b.walkA[k], sigma, b.stride, walkA[k]);
-                        strafe_motions::sample(*b.walkB[k], sigma, b.stride, walkB[k]);
-                        for (int i = 5; i <= 16; ++i)
-                            if (b.keep < 1.0f && ((b.walkB[k]->rotated >> i) & 1u))
-                                walkB[k].rot[i] = mot_sample::slerp(b.walkB[k]->armMean[i], walkB[k].rot[i], b.keep);
-                    }
+            for (int k = 0; k < 2; ++k)
+                if (k == own || !b.front || crossing) // his back-pedal's arms take the latched side's (both sampled)
+                {
+                    strafe_motions::sample(*b.walkA[k], sigma, b.stride, walkA[k]);
+                    strafe_motions::sample(*b.walkB[k], sigma, b.stride, walkB[k]);
+                    for (int i = 5; i <= 16; ++i)
+                        if (b.keep < 1.0f && ((b.walkB[k]->rotated >> i) & 1u))
+                            walkB[k].rot[i] = mot_sample::slerp(b.walkB[k]->armMean[i], walkB[k].rot[i], b.keep);
+                }
+            // One side's pose: the side-steps A and B (16, its arms calmer) blended by the Tension weight; the run's
+            // 3 / 9 the side-run's whole body, its arms / torso toward cell 7's ready posture by F2 (1 = its own).
+            auto sidePose = [&](int k, strafe_motions::Pose &out, float mo[][3], uint32_t &mask) {
+                mask = b.sides[k]->rotated;
                 for (int i = 0; i < strafe_motions::kBones; ++i)
-                    side.rot[i] = mot_sample::slerp(walkA[own].rot[i], walkB[own].rot[i], b.wt);
+                    out.rot[i] = mot_sample::slerp(walkA[k].rot[i], walkB[k].rot[i], b.wt);
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                     for (int c = 0; c < 3; ++c)
                     {
-                        side.tr[j][c] = walkA[own].tr[j][c] + (walkB[own].tr[j][c] - walkA[own].tr[j][c]) * b.wt;
-                        ms[j][c] = b.walkA[own]->mean[j][c] + (b.walkB[own]->mean[j][c] - b.walkA[own]->mean[j][c]) * b.wt;
+                        out.tr[j][c] = walkA[k].tr[j][c] + (walkB[k].tr[j][c] - walkA[k].tr[j][c]) * b.wt;
+                        mo[j][c] = b.walkA[k]->mean[j][c] + (b.walkB[k]->mean[j][c] - b.walkA[k]->mean[j][c]) * b.wt;
                     }
-            }
-            if (b.sideRun) // the side-run's whole body; its arms / torso toward cell 7's ready posture by F2 (1 = its own)
-            {
+                if (!b.sideRun)
+                    return;
+                const strafe_motions::Motion &sm = *b.sides[k], &a7 = *b.walkA[k];
                 strafe_motions::Pose sr;
                 strafe_motions::sample(sm, sigma, b.stride, sr);
-                const strafe_motions::Motion &a7 = *b.walkA[own];
                 const float arms = g_runStrafe.arms.load(std::memory_order_relaxed);
                 const float torso = g_runStrafe.torso.load(std::memory_order_relaxed);
-                sideMask = 0u;
+                mask = 0u;
                 for (int i = 0; i < strafe_motions::kBones; ++i)
                 {
                     const bool mapped = (sm.rotated >> i) & 1u, upper = i >= 1 && i <= 16;
                     if (!mapped) // the bones the clip doesn't map (pads, fingers): 7's
                     {
-                        side.rot[i] = a7.armMean[i], sideMask |= a7.rotated & (1u << i);
+                        out.rot[i] = a7.armMean[i], mask |= a7.rotated & (1u << i);
                         continue;
                     }
-                    side.rot[i] = sr.rot[i], sideMask |= 1u << i;
+                    out.rot[i] = sr.rot[i], mask |= 1u << i;
                     if (upper && ((a7.rotated >> i) & 1u))
-                        side.rot[i] = mot_sample::slerp(a7.armMean[i], sr.rot[i], arm(i) ? arms : torso);
+                        out.rot[i] = mot_sample::slerp(a7.armMean[i], sr.rot[i], arm(i) ? arms : torso);
                 }
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                     for (int c = 0; c < 3; ++c)
-                        side.tr[j][c] = sr.tr[j][c], ms[j][c] = sm.mean[j][c];
+                        out.tr[j][c] = sr.tr[j][c], mo[j][c] = sm.mean[j][c];
+            };
+            sidePose(own, side, ms, sideMask);
+            if (crossing) // the side before giving way (K, Nov 27: A -> D had dropped into his idle a moment)
+            {
+                strafe_motions::Pose before;
+                float mb[strafe_motions::kTranslated][3];
+                uint32_t maskBefore = 0u;
+                sidePose(1 - own, before, mb, maskBefore);
+                for (int i = 0; i < strafe_motions::kBones; ++i)
+                {
+                    const bool inNew = (sideMask >> i) & 1u, inBefore = (maskBefore >> i) & 1u;
+                    if (inNew && inBefore)
+                        side.rot[i] = mot_sample::slerp(before.rot[i], side.rot[i], b.mix);
+                    else if (inBefore)
+                        side.rot[i] = before.rot[i];
+                }
+                sideMask |= maskBefore;
+                for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        side.tr[j][c] = mb[j][c] + (ms[j][c] - mb[j][c]) * b.mix + (side.tr[j][c] - ms[j][c]) * b.mix +
+                                        (before.tr[j][c] - mb[j][c]) * (1.0f - b.mix);
+                        ms[j][c] = mb[j][c] + (ms[j][c] - mb[j][c]) * b.mix;
+                    }
             }
             if (b.front && b.run) // the run's hips: lowered (reach for the longer steps) and their bounce scaled
             {
@@ -774,7 +830,8 @@ namespace kamite::strafing_tiger
             if (!measured) // a new loop or side: his step's length at the side's speed
                 side = std::fabs(z) * b.sideSpeed / b.hisSpeed * (b.left ? 1.0f : -1.0f);
             g_track = Track{true, b.motion, b.side, sigma};
-            const float phi = b.phi * b.presence, c = std::cos(phi), sn = std::sin(phi);
+            side *= b.cross; // a switch across: the side before's way still, through 0, to the new side's
+            const float phi = b.phi * b.cross * b.presence, c = std::cos(phi), sn = std::sin(phi);
             const float xr = x * c + z * sn, zr = -x * sn + z * c; // his step turned toward the stick
             const float nx = b.his * xr + b.sd * side, nz = b.his * zr;
             wrF(rdram, obj + kDelta, x + (nx - x) * b.presence);

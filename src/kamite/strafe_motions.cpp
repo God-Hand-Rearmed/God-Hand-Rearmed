@@ -367,6 +367,15 @@ namespace kamite::strafe_motions
         const std::vector<float> backRef = {6.75f, 17.0f, 27.75f, 38.0f, 48.75f};     // feet 24, 20, 24, 20, 24 (pl00 23)
         const float walkTravel = kWalkSpeed * kWalkSpan / 30.0f, runTravel = kRunSpeed * kRunSpan / 30.0f,
                     backTravel = kBackSpeed * kBackSpan / 30.0f;
+        // A slow strafe's touchdowns onto the walk's: its foot 24's on his walk's, its foot 20's where they fall in
+        // its own cycle (K, Nov 27: on his walk's even middles 7's two steps had played up to 1.6x apart, the
+        // leading leg thrown out fast and the speed jittering step to step; as the side-run's middle).
+        auto walkGrid = [&](const float *at) {
+            std::vector<float> ref = walkRef;
+            for (int c = 0; c < 2; ++c)
+                ref[1 + 2 * c] = ref[2 * c] + (at[1 + 2 * c] - at[2 * c]) / (at[2 + 2 * c] - at[2 * c]) * (ref[2 + 2 * c] - ref[2 * c]);
+            return ref;
+        };
         // A side-step (his right, and it mirrored for his left) on his walk's grid, its two cycles averaged onto one
         // of his run's (K, Nov 27: the slow strafes are the strafes at every speed; 11 is out), and on his
         // back-pedal's (K, Nov 27: the game's own back-pedal plays past 112.5 deg; the side-steps blend into it).
@@ -376,7 +385,7 @@ namespace kamite::strafe_motions
             const Src *src[2] = {&left, &right};
             const float *at[2] = {l, r};
             for (int k = 0; k < 2; ++k)
-                if (!bake(*src[k], {Warp{walkRef, std::vector<float>(at[k], at[k] + 5), float(kWalkSpan)}}, kWalkSpan, walkTravel, false, walk[k]) ||
+                if (!bake(*src[k], {Warp{walkGrid(at[k]), std::vector<float>(at[k], at[k] + 5), float(kWalkSpan)}}, kWalkSpan, walkTravel, false, walk[k]) ||
                     !bake(*src[k], {Warp{runRef, {at[k][0], at[k][1], at[k][2]}, float(kRunSpan)}, Warp{runRef, {at[k][2], at[k][3], at[k][4]}, float(kRunSpan)}},
                           kRunSpan, runTravel, true, run[k]) ||
                     !bake(*src[k], {Warp{backRef, std::vector<float>(at[k], at[k] + 5), float(kBackSpan)}}, kBackSpan, backTravel, false, back[k]))

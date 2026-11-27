@@ -37,6 +37,7 @@ Newest first, one line per change; the code comments say how.
 - Strafing Tiger prototype: the run's side-steps use the slow strafe's animations, its speed sweeping from the run's (ahead) to the back-pedal's; back attacks work while back-pedalling again; the stick turns him while sprinting; the full-gauge back-pedal keeps some arm swing.
 - Strafing Tiger prototype: the back-pedal is the game's own again (straight back unchanged but for the full-gauge arms), the side-steps blending into it; turning while sprinting at the game's own run turning speed.
 - Strafing Tiger prototype: running toward the diagonals turns his own run toward the stick (up to 45 degrees, his chest still facing the camera), then a smooth sideways step with its own guard takes over by 3 / 9; walking sideways takes shorter, quicker steps; F2 > Controls tunes the angle, speed, pace, arms, torso, bounce, hips and walking step pace, with a reset to defaults (not saved).
+- Strafing Tiger prototype: switching straight from one side to the other (A to D, a flick across) turns him over without stopping or a nudge forward; the slow walk sideways takes evener, shorter steps.
 - Signal Style Switch's sound follows the Sound Effects volume.
 - Modern: the radar's free-camera glow shows again when the game started on a device whose style isn't Modern.
 - Performance: enemies whose upper body twists (most of them) keep their bones' passes in native code (they fell back to the recompiled code every frame).

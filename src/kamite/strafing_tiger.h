@@ -48,11 +48,12 @@ namespace kamite::strafing_tiger
         std::atomic<float> torso{1.0f};    // ... its spine, neck and head
         std::atomic<float> turn{45.0f};    // his run turned toward the stick up to this (deg; K: good up to 45)
         std::atomic<int> flip{1};          // the side-step played backward, mirrored: the other shoulder leads (K's pick)
-        std::atomic<float> walkPace{1.2f}; // walking: 7 / 16's step pace at 3 / 9 x this (K, Nov 27: shorter strides)
+        std::atomic<float> walkPace{1.3f}; // walking: 7 / 16's step pace at 3 / 9 x this (K, Nov 27: quicker, shorter
+                                           // steps; 1.3: 7's x0.98 its own, 16's x1.03)
         void reset()
         {
             legs = 0, speed = 0.48f, pace = 0.88f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 1;
-            walkPace = 1.2f;
+            walkPace = 1.3f;
         }
     };
     RunStrafe &runStrafe();

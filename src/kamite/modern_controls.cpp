@@ -89,6 +89,10 @@ namespace kamite::modern
         constexpr float kDegToRad = kPi / 180.0f;
         constexpr int64_t kNoCameraMs = 150;   // no player camera update for this long: the game has the camera
         constexpr float kStickDeadzone = 0.18f;
+        // Strafing Tiger: the stick through the centre this long keeps its last direction while he walks / runs
+        // sideways (past this from his facing; straight ahead and back he stops as the game does).
+        constexpr int64_t kTigerBridgeMs = 120;
+        constexpr float kTigerBridgeFrom = 45.0f * 3.14159265f / 180.0f;
         constexpr float kSwitchMaxStick = 0.5f; // an R3 press with the right stick further out than this: a flick, no switch
         constexpr float kPitchMin = -1.2f, kPitchMax = 0.9f; // extra pitch, radians (the floor is camera.cpp's: above the ground)
         constexpr int64_t kQuickTurnFollowMs = 650;            // the camera stays behind Gene this long after one
@@ -406,12 +410,28 @@ namespace kamite::modern
             const float lx = (static_cast<float>(state.leftX) - 128.0f) / 127.0f;
             const float ly = (static_cast<float>(state.leftY) - 128.0f) / 127.0f;
             const float magnitude = std::fmin(std::sqrt(lx * lx + ly * ly), 1.0f);
+            // Strafing Tiger walking / running sideways: a moment in the centre (A let go as D goes down, a flick
+            // across) keeps the last of the stick for the game, so he doesn't stop and start again in between (K, Nov
+            // 27: his idle a moment, his arms dropping, a nudge forward); strafing_tiger.cpp crosses the sides over.
+            static int64_t s_tigerMs = -100000;
+            static float s_tigerRelative = 0.0f;
+            static uint8_t s_tigerY = 0x80u;
             if (magnitude < kStickDeadzone)
             {
+                if (strafing_tiger::enabled() && nowMs() - s_tigerMs < kTigerBridgeMs)
+                {
+                    strafing_tiger::setSlide(s_tigerRelative);
+                    g_moving = true;
+                    g_sprintTurn.store(0.0f, std::memory_order_relaxed);
+                    state.leftX = 0x80u;
+                    state.leftY = s_tigerY;
+                    return;
+                }
                 g_moving = false;
                 return;
             }
             const float desired = wrapAngle(g_cameraYaw.load(std::memory_order_relaxed) - std::atan2(lx, -ly));
+            s_tigerMs = -100000;
             if (strafing_tiger::enabled())
             {
                 // Strafing Tiger (prototype): he keeps facing the camera (the camera side turns him); the game gets
@@ -440,6 +460,8 @@ namespace kamite::modern
                 const float offset = magnitude * 127.0f;
                 state.leftX = 0x80u;
                 state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(s_back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
+                if (!sprinting && !s_back && std::fabs(relative) > kTigerBridgeFrom)
+                    s_tigerMs = nowMs(), s_tigerRelative = relative, s_tigerY = state.leftY;
                 return;
             }
             g_moveYaw = desired;
