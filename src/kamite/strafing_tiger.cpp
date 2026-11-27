@@ -95,7 +95,9 @@ namespace kamite::strafing_tiger
         // arms (its swing kept at 3 / 9 o'clock; how far toward them his back-pedal's arms go at 6).
         std::atomic<int> g_walkChoice{0};
         constexpr float kTensionArmsDefault = 0.69f, kTensionBackDefault = 0.48f; // K, Nov 27
+        constexpr float kTensionRateDefault = 0.5f, kTensionRunDefault = 1.0f;     // K, Nov 27: half their pace
         std::atomic<float> g_tensionArms{kTensionArmsDefault}, g_tensionBack{kTensionBackDefault};
+        std::atomic<float> g_tensionRate{kTensionRateDefault}, g_tensionRun{kTensionRunDefault};
         PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr, g_moveInner = nullptr;
         RunStrafe g_runStrafe;
         // The run's pace (K, Nov 27): his clock's step x g_pace in moveMotion (the blend's, from the last pose; 1 = his).
@@ -134,6 +136,9 @@ namespace kamite::strafing_tiger
         } g_held, g_switched; // the last blended pose; the one before a walk <-> run switch
         int64_t g_switchMs = -100000;
         int64_t g_flipMs = -100000; // the last switch across (kFlipFrom)
+        // 16's arms' own clock (in step cycles, 0 .. 2): it steps at tensionRate x his steps, so they play slower than
+        // his feet (K, Nov 27); the grid's clock at the last pose and its length (a switch keeps the phase).
+        float g_armPhase = 0.0f, g_armSigma = -1.0f, g_armGrid = 0.0f;
         constexpr uint32_t kHeat = 0x5CB000u; // cHeatSys (game_options.cpp): +4 the gauge, +0xC the full mark (floats)
         constexpr float kTensionSeconds = 0.3f;
 
@@ -247,6 +252,9 @@ namespace kamite::strafing_tiger
             // The slow strafe: A (7, or the F2 cell) and B (16) per side [0 his left, 1 his right], B's weight wt;
             // B's arms keep `keep` of their swing; at 6 o'clock his back-pedal's arms go `toB6` of the way to B's.
             const strafe_motions::Motion *walkA[2] = {}, *walkB[2] = {};
+            // B's arms: its walk / back-pedal grid's (two cycles a loop); the run's from its walk (the run's grid holds
+            // one averaged cycle, its arms flattened to a third)
+            const strafe_motions::Motion *armsB[2] = {};
             float wt = 0.0f, keep = 1.0f, toB6 = 0.0f, armLeft = 1.0f;
             bool run = false, front = true; // front: his walk / run plays; else his back-pedal
             float ws = 0.0f, u = 0.0f;  // the side's weight (his walk / run); his back-pedal's (his back-pedal)
@@ -278,6 +286,7 @@ namespace kamite::strafing_tiger
                 g_theta = stick ? angle : 0.0f, g_presence = stick ? 1.0f : 0.0f;
                 g_track.valid = false;
                 g_flipMs = -100000;
+                g_armSigma = -1.0f;
             }
             else
             {
@@ -327,7 +336,7 @@ namespace kamite::strafing_tiger
                 }
                 const auto &grid = !b.front ? g_set.backs : b.run ? g_set.runs : g_set.walks;
                 for (int k = 0; k < 2; ++k)
-                    b.walkA[k] = &grid[a][k], b.walkB[k] = &grid[bsrc][k];
+                    b.walkA[k] = &grid[a][k], b.walkB[k] = &grid[bsrc][k], b.armsB[k] = b.front && b.run ? &g_set.walks[bsrc][k] : b.walkB[k];
                 b.sideMotion = b.walkA[left ? 0 : 1];
                 b.sides[0] = b.walkA[0], b.sides[1] = b.walkA[1];
                 b.side += 16 * (a + 4 * bsrc) + (b.front ? 0 : 256); // the delta's track restarts on a switch
@@ -607,6 +616,21 @@ namespace kamite::strafing_tiger
             const float sigma = gridClock(*b.loop, t, b.grid);
             const int own = b.left ? 0 : 1;
             const bool crossing = b.front && b.mix < 1.0f; // a switch across: the side before still in
+            { // 16's arms' clock: this pose's step on the grid x the F2 rate (repeat poses of a frame don't step it)
+                float d = 0.0f;
+                if (g_armSigma >= 0.0f && g_armGrid == b.grid)
+                {
+                    d = sigma - g_armSigma;
+                    if (d < -0.5f * b.grid)
+                        d += b.grid;
+                    if (d < 0.0f || d > 0.5f * b.grid)
+                        d = 0.0f;
+                }
+                const float rate = std::fmin(std::fmax(g_tensionRate.load(std::memory_order_relaxed), 0.1f), 1.0f);
+                const float cycles = b.front && b.run ? 1.0f : 2.0f; // the run's grid holds one cycle, the others two
+                g_armPhase = wrapTo(g_armPhase + rate * cycles * d / b.grid, 2.0f);
+                g_armSigma = sigma, g_armGrid = b.grid;
+            }
             uint32_t sideMask = 0u;
             strafe_motions::Pose side, walkA[2], walkB[2];
             float ms[strafe_motions::kTranslated][3];
@@ -615,9 +639,17 @@ namespace kamite::strafing_tiger
                 {
                     strafe_motions::sample(*b.walkA[k], sigma, b.stride, walkA[k]);
                     strafe_motions::sample(*b.walkB[k], sigma, b.stride, walkB[k]);
+                    strafe_motions::Pose armsB; // 16's arms on their own, slower clock
+                    const strafe_motions::Motion &am = *b.armsB[k];
+                    strafe_motions::sample(am, 0.5f * g_armPhase * static_cast<float>(am.span), 1.0f, armsB);
                     for (int i = 5; i <= 16; ++i)
-                        if (b.keep < 1.0f && ((b.walkB[k]->rotated >> i) & 1u))
-                            walkB[k].rot[i] = mot_sample::slerp(b.walkB[k]->armMean[i], walkB[k].rot[i], b.keep);
+                    {
+                        if (!((am.rotated >> i) & 1u))
+                            continue;
+                        walkB[k].rot[i] = armsB.rot[i];
+                        if (b.keep < 1.0f)
+                            walkB[k].rot[i] = mot_sample::slerp(am.armMean[i], walkB[k].rot[i], b.keep);
+                    }
                 }
             // One side's pose: the side-steps A and B (16, its arms calmer) blended by the Tension weight; the run's
             // 3 / 9 the side-run's whole body, its arms / torso toward cell 7's ready posture by F2 (1 = its own).
@@ -638,6 +670,7 @@ namespace kamite::strafing_tiger
                 strafe_motions::sample(sm, sigma, b.stride, sr);
                 const float arms = g_runStrafe.arms.load(std::memory_order_relaxed);
                 const float torso = g_runStrafe.torso.load(std::memory_order_relaxed);
+                const float tensionRun = std::fmin(std::fmax(g_tensionRun.load(std::memory_order_relaxed), 0.0f), 1.0f);
                 mask = 0u;
                 for (int i = 0; i < strafe_motions::kBones; ++i)
                 {
@@ -650,6 +683,9 @@ namespace kamite::strafing_tiger
                     out.rot[i] = sr.rot[i], mask |= 1u << i;
                     if (upper && ((a7.rotated >> i) & 1u))
                         out.rot[i] = mot_sample::slerp(a7.armMean[i], sr.rot[i], arm(i) ? arms : torso);
+                    // full Tension: 16's arms in (K, Nov 27: as in the walk's 3 / 9), on their slower clock
+                    if (arm(i) && b.wt > 0.0f && ((b.armsB[k]->rotated >> i) & 1u))
+                        out.rot[i] = mot_sample::slerp(out.rot[i], walkB[k].rot[i], b.wt * tensionRun);
                 }
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                     for (int c = 0; c < 3; ++c)
@@ -917,11 +953,15 @@ namespace kamite::strafing_tiger
         g_walkChoice = 0;
         g_tensionArms = kTensionArmsDefault;
         g_tensionBack = kTensionBackDefault;
+        g_tensionRate = kTensionRateDefault;
+        g_tensionRun = kTensionRunDefault;
     }
     float readPace() { return g_readPace.load(std::memory_order_relaxed); }
     float readSteps() { return g_readSteps.load(std::memory_order_relaxed); }
     std::atomic<float> &tensionArms() { return g_tensionArms; }
     std::atomic<float> &tensionBack() { return g_tensionBack; }
+    std::atomic<float> &tensionRate() { return g_tensionRate; }
+    std::atomic<float> &tensionRun() { return g_tensionRun; }
     bool walkSourceBuilt(int source) { return g_ready && source >= 0 && source < strafe_motions::kWalkSources && ((g_set.walksBuilt >> source) & 1u); }
 
     void install(PS2Runtime &runtime)

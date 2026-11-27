@@ -31,6 +31,10 @@ namespace kamite::strafing_tiger
     std::atomic<int> &walkChoice();
     std::atomic<float> &tensionArms();
     std::atomic<float> &tensionBack();
+    // 16's arms at full Tension (K, Nov 27: twice too fast; loose and smooth): their pace against his steps (0.5), and
+    // how far they come into the running side-step (1: as in the walk's 3 / 9).
+    std::atomic<float> &tensionRate();
+    std::atomic<float> &tensionRun();
     bool walkSourceBuilt(int source);
 
     // F2 (K, Nov 27; live, not saved): the run toward 3 / 9. His run turns toward the stick up to `turn`, then the side
