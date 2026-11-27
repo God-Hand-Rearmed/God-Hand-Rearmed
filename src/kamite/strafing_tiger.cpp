@@ -89,7 +89,8 @@ namespace kamite::strafing_tiger
         // F2 (K, Nov 27; live, not saved): the side-step (0 = by Tension: 7, 16 at a full gauge; else one cell), 16's
         // arms (its swing kept at 3 / 9 o'clock; how far toward them his back-pedal's arms go at 6).
         std::atomic<int> g_walkChoice{0};
-        std::atomic<float> g_tensionArms{0.69f}, g_tensionBack{0.48f};
+        constexpr float kTensionArmsDefault = 0.69f, kTensionBackDefault = 0.48f; // K, Nov 27
+        std::atomic<float> g_tensionArms{kTensionArmsDefault}, g_tensionBack{kTensionBackDefault};
         PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr, g_moveInner = nullptr;
         RunStrafe g_runStrafe;
         // The run's pace (K, Nov 27): his clock's step x g_pace in moveMotion (the blend's, from the last pose; 1 = his).
@@ -248,7 +249,7 @@ namespace kamite::strafing_tiger
             float stride = 1.0f, grid = 0.0f;
             float hisSpeed = 0.0f, sideSpeed = 0.0f;
             float pace = 1.0f;     // his clock's step x this (the run's own pace toward 3 / 9)
-            bool jog = false;      // the run's legs are the jog's (its torso / arm swing on cell 7's posture)
+            bool sideRun = false;  // the run's side is the side-run (its own body; arms / torso toward 7's by F2)
             float phi = 0.0f;      // the run turned toward the stick (+ = his left), the chest turned back
             const Forward *fwd = nullptr;
         };
@@ -305,12 +306,12 @@ namespace kamite::strafing_tiger
                 b.keep = bsrc == strafe_motions::Cell16 ? g_tensionArms.load(std::memory_order_relaxed) : 1.0f;
                 b.toB6 = b.wt * g_tensionBack.load(std::memory_order_relaxed);
             }
-            // The run's legs at 3 / 9 (F2 stage 1, K Nov 27): the jog.
+            // The run's sideways stride at 3 / 9 (K, Nov 27): the side-run.
             const RunStrafe &rs = g_runStrafe;
-            b.jog = b.front && b.run && g_set.jogBuilt && rs.legs.load(std::memory_order_relaxed) == 0;
-            if (b.jog)
+            b.sideRun = b.front && b.run && g_set.sideRunBuilt && rs.legs.load(std::memory_order_relaxed) == 0;
+            if (b.sideRun)
             {
-                b.sideMotion = &g_set.jog[left ? 0 : 1];
+                b.sideMotion = &g_set.sideRun[left ? 0 : 1];
                 b.side += 1024;
             }
             // The arms' side in his back-pedal: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
@@ -334,7 +335,7 @@ namespace kamite::strafing_tiger
             b.fwd = &forward(rdram, b.motion, b.front ? (b.run ? 1 : 0) : 2);
             b.hisSpeed = b.fwd->speed;
             b.sideSpeed = !b.front ? kBackSideSpeed : b.run ? kRunSideSpeed : kWalkSideSpeed;
-            if (b.jog)
+            if (b.sideRun)
                 b.sideSpeed = std::fabs(b.sideMotion->travel) * 30.0f / static_cast<float>(b.sideMotion->span);
             if (!(b.hisSpeed > 0.1f) || !(b.sideSpeed > 0.01f))
                 return false;
@@ -596,29 +597,29 @@ namespace kamite::strafing_tiger
                         ms[j][c] = b.walkA[own]->mean[j][c] + (b.walkB[own]->mean[j][c] - b.walkA[own]->mean[j][c]) * b.wt;
                     }
             }
-            if (b.jog) // the jog's legs and hips; the torso / arms in cell 7's posture with the jog's swing (scaled: stiffness)
+            if (b.sideRun) // the side-run's whole body; its arms / torso toward cell 7's ready posture by F2 (1 = its own)
             {
-                strafe_motions::Pose jog;
-                strafe_motions::sample(sm, sigma, b.stride, jog);
+                strafe_motions::Pose sr;
+                strafe_motions::sample(sm, sigma, b.stride, sr);
                 const strafe_motions::Motion &a7 = *b.walkA[own];
-                const float armSwing = g_runStrafe.armSwing.load(std::memory_order_relaxed);
-                const float torsoSwing = g_runStrafe.torsoSwing.load(std::memory_order_relaxed);
+                const float arms = g_runStrafe.arms.load(std::memory_order_relaxed);
+                const float torso = g_runStrafe.torso.load(std::memory_order_relaxed);
                 sideMask = 0u;
                 for (int i = 0; i < strafe_motions::kBones; ++i)
                 {
-                    const bool leg = i == 0 || (i >= 17 && i <= 25);
-                    if (leg)
+                    const bool mapped = (sm.rotated >> i) & 1u, upper = i >= 1 && i <= 16;
+                    if (!mapped) // the bones the clip doesn't map (pads, fingers): 7's
                     {
-                        side.rot[i] = jog.rot[i], sideMask |= sm.rotated & (1u << i);
+                        side.rot[i] = a7.armMean[i], sideMask |= a7.rotated & (1u << i);
                         continue;
                     }
-                    side.rot[i] = a7.armMean[i], sideMask |= a7.rotated & (1u << i);
-                    if ((sm.rotated >> i) & 1u) // the jog's swing on it, about cell 7's posture
-                        side.rot[i] = mot_sample::mul(mot_sample::slerp(mot_sample::Quat{}, jog.rot[i], arm(i) ? armSwing : torsoSwing), side.rot[i]);
+                    side.rot[i] = sr.rot[i], sideMask |= 1u << i;
+                    if (upper && ((a7.rotated >> i) & 1u))
+                        side.rot[i] = mot_sample::slerp(a7.armMean[i], sr.rot[i], arm(i) ? arms : torso);
                 }
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                     for (int c = 0; c < 3; ++c)
-                        side.tr[j][c] = jog.tr[j][c], ms[j][c] = sm.mean[j][c];
+                        side.tr[j][c] = sr.tr[j][c], ms[j][c] = sm.mean[j][c];
             }
             if (b.front && b.run) // the run's hips: lowered (reach for the longer steps) and their bounce scaled
             {
@@ -759,7 +760,7 @@ namespace kamite::strafing_tiger
                 if (step >= 0.0f && step < 0.5f * b.grid)
                 {
                     side = strafe_motions::rootAt(sm, g_track.sigma + step, b.stride) - strafe_motions::rootAt(sm, g_track.sigma, b.stride);
-                    if (b.wt > 0.0f && !b.jog)
+                    if (b.wt > 0.0f && !b.sideRun)
                     {
                         const strafe_motions::Motion &mb2 = *b.walkB[b.left ? 0 : 1];
                         const float sideB = strafe_motions::rootAt(mb2, g_track.sigma + step, b.stride) - strafe_motions::rootAt(mb2, g_track.sigma, b.stride);
@@ -850,7 +851,14 @@ namespace kamite::strafing_tiger
     void setSprint(bool sprint) { g_sprint.store(sprint, std::memory_order_relaxed); }
     std::atomic<int> &walkChoice() { return g_walkChoice; }
     RunStrafe &runStrafe() { return g_runStrafe; }
-    bool jogBuilt() { return g_ready && g_set.jogBuilt; }
+    bool sideRunBuilt() { return g_ready && g_set.sideRunBuilt; }
+    void resetTuning()
+    {
+        g_runStrafe.reset();
+        g_walkChoice = 0;
+        g_tensionArms = kTensionArmsDefault;
+        g_tensionBack = kTensionBackDefault;
+    }
     float readPace() { return g_readPace.load(std::memory_order_relaxed); }
     float readSteps() { return g_readSteps.load(std::memory_order_relaxed); }
     std::atomic<float> &tensionArms() { return g_tensionArms; }

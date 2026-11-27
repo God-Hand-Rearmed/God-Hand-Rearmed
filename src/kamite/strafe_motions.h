@@ -20,8 +20,8 @@
 //   frames (pl00 25 / 428), 3.0 m/s as built (the blend's shares stretch the steps to the speed asked);
 // - back (K, Nov 27: the game's own back-pedal past 112.5 deg, untouched straight back): the same on his back-pedal's
 //   42 frames (pl00 23: two cycles), 1.97 m/s (its own speed).
-// - the run's legs at 3 / 9 (K, Nov 27: Mixamo's Jog Strafe Right, retargeted offline: strafe_jog_data.h; 11 cut):
-//   one cycle on one of his run's, its own step length; its torso / arm bones hold the jog's swing about their mean.
+// - the run's sideways stride at 3 / 9 (K, Nov 27: the side-run K generated, retargeted offline: strafe_run_data.h;
+//   11 and the Mixamo jog gone): one cycle on one of his run's, its own step length, its whole body.
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
 // slerps; frame span = frame 0 but for the root's travel.
 namespace kamite::strafe_motions
@@ -78,8 +78,8 @@ namespace kamite::strafe_motions
         std::array<std::array<Motion, 2>, kWalkSources> runs;  // the same, two cycles averaged on his run's grid
         std::array<std::array<Motion, 2>, kWalkSources> backs; // the same on his back-pedal's grid
         uint32_t walksBuilt = 0;                               // bit per source (16's = motions' Walk / Run sides)
-        std::array<Motion, 2> jog;                             // the jog on his run's grid, its own steps (torso / arms:
-        bool jogBuilt = false;                                 // its swing about their mean, for cell 7's posture)
+        std::array<Motion, 2> sideRun;                         // the side-run on his run's grid, its own steps
+        bool sideRunBuilt = false;
     };
 
     // A .dat's entry `index` (from its offset to the next one), false when it can't be read.

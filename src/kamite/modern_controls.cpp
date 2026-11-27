@@ -677,17 +677,17 @@ namespace kamite::modern
                 // Stage 1 (K, Nov 27): the run's side-step at full deflection, legs and speed first (the arms held).
                 ui->separator_text("Running strafe: his run turned, then the side-step");
                 auto &rs = strafing_tiger::runStrafe();
-                static const char *const kLegs[] = {"The jog (Mixamo), its swing on 7's ready posture", "The side-steps (7 / 16 by Tension)"};
+                static const char *const kLegs[] = {"The side-run, its own body", "The side-steps (7 / 16 by Tension)"};
                 int legs = rs.legs.load(std::memory_order_relaxed);
                 ui->set_next_width(340.0f);
                 if (ui->combo("##tigerlegs", &legs, kLegs, 2))
                     rs.legs = legs;
-                if (legs == 0 && !strafing_tiger::jogBuilt())
-                    ui->text_disabled("The jog didn't build: the side-steps play.");
+                if (legs == 0 && !strafing_tiger::sideRunBuilt())
+                    ui->text_disabled("The side-run didn't build: the side-steps play.");
                 if (legs == 0)
                 {
-                    slider(ui, "Arm swing (1 = the jog's own)##tigerarmswing", rs.armSwing, 0.0f, 1.5f, "%.2f");
-                    slider(ui, "Torso and head swing##tigertorsoswing", rs.torsoSwing, 0.0f, 1.5f, "%.2f");
+                    slider(ui, "Arms (1 = its own, 0 = 7's ready pose)##tigerarms", rs.arms, 0.0f, 1.0f, "%.2f");
+                    slider(ui, "Torso and head (1 = its own, 0 = 7's)##tigertorso", rs.torso, 0.0f, 1.0f, "%.2f");
                 }
                 slider(ui, "His run turned toward the stick up to##tigerturn", rs.turn, 0.0f, 60.0f, "%.0f deg");
                 slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
@@ -708,14 +708,14 @@ namespace kamite::modern
                 {
                     ui->push_id(k);
                     if (ui->small_button(k ? "Store B" : "Store A"))
-                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.armSwing.load(), rs.torsoSwing.load(), rs.turn.load(), true};
+                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.arms.load(), rs.torso.load(), rs.turn.load(), true};
                     ui->same_line();
                     ui->begin_disabled(!s_snap[k].set);
                     if (ui->small_button(k ? "Load B" : "Load A"))
                     {
                         const Snap &q = s_snap[k];
                         rs.legs = q.legs, rs.speed = q.speed, rs.pace = q.pace, rs.bounce = q.bounce, rs.hips = q.hips;
-                        rs.armSwing = q.arms, rs.torsoSwing = q.torso, rs.turn = q.turn;
+                        rs.arms = q.arms, rs.torso = q.torso, rs.turn = q.turn;
                     }
                     ui->end_disabled();
                     ui->pop_id();
@@ -723,11 +723,13 @@ namespace kamite::modern
                         ui->same_line();
                 }
                 if (ui->small_button("Write these to the log##tigerlog"))
-                    KM_INFO(Game, "Strafing Tiger stage 1: legs " << (rs.legs.load() == 0 ? "jog" : "side-steps") << ", speed "
+                    KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? "side-run" : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
-                                  << rs.hips.load() << " cm, arm swing " << rs.armSwing.load() << ", torso swing "
-                                  << rs.torsoSwing.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
-                ui->text_disabled("Not saved: Write puts them in the log for the defaults.");
+                                  << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
+                                  << rs.torso.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
+                if (ui->small_button("Reset to defaults##tigerreset"))
+                    strafing_tiger::resetTuning();
+                ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");
             }
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)
