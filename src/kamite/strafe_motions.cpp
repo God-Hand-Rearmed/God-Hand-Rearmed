@@ -408,12 +408,17 @@ namespace kamite::strafe_motions
             const SideRun right;
             const Mirror left(right);
             const Reverse flipRight(left), flipLeft(right);
-            auto one = [&](const Src &src, const float touch[3], Motion &out) {
-                return bake(src, {Warp{runRef, {touch[0], touch[1], touch[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, out);
+            // One cycle on one of his run's, its first and last touchdowns on his foot 24's and the middle one where it
+            // falls in its own cycle (K, Nov 27: on his run's even middle the step-together's two steps played at two
+            // speeds, 1.6x apart: a pause each cycle), so the whole cycle plays at one speed.
+            auto one = [&](const Src &src, const float touch[3], float split, Motion &out) {
+                const std::vector<float> ref = {runRef[0], runRef[0] + split * float(kRunSpan), runRef[0] + float(kRunSpan)};
+                return bake(src, {Warp{ref, {touch[0], touch[1], touch[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, out);
             };
-            set.sideRunBuilt = one(left, strafe_run::kLeftTouch, set.sideRun[0][0]) && one(right, strafe_run::kRightTouch, set.sideRun[0][1]) &&
-                               one(flipLeft, strafe_run::kFlipLeftTouch, set.sideRun[1][0]) &&
-                               one(flipRight, strafe_run::kFlipRightTouch, set.sideRun[1][1]);
+            set.sideRunBuilt = one(left, strafe_run::kLeftTouch, strafe_run::kLeftSplit, set.sideRun[0][0]) &&
+                               one(right, strafe_run::kRightTouch, strafe_run::kRightSplit, set.sideRun[0][1]) &&
+                               one(flipLeft, strafe_run::kFlipLeftTouch, strafe_run::kFlipLeftSplit, set.sideRun[1][0]) &&
+                               one(flipRight, strafe_run::kFlipRightTouch, strafe_run::kFlipRightSplit, set.sideRun[1][1]);
             for (auto &pair : set.sideRun)
                 for (Motion &m : pair)
                     m.sourceRate = strafe_run::kSourceRate;
