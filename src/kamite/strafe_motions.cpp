@@ -253,12 +253,10 @@ namespace kamite::strafe_motions
         }
 
         // The recipe (strafe_round2.py on the US disc; K's picks W2 / R2, Nov 26): the source sizes and every touchdown.
-        constexpr uint32_t kWalk = 3450u; // em00: cell 16's right; his left = mirrored
-        constexpr uint32_t kBack = 23u;   // pl00: his back-pedal
-        constexpr uint32_t kHashes[3] = {0xB9D8E5E3u, 0u, 0xBD72D879u};
+        constexpr uint32_t kWalk = 3450u, kWalkHash = 0xB9D8E5E3u; // em00: cell 16's right; his left = mirrored
         constexpr float kWalkSize = 0.998343871f;
-        constexpr int kWalkSpan = 56, kRunSpan = 13; // his walk (pl00 21) and run (25 / 428)
-        constexpr float kWalkSpeed = 1.74f, kRunSpeed = 3.0f;
+        constexpr int kWalkSpan = 56, kRunSpan = 13, kBackSpan = 42; // his walk (pl00 21), run (25 / 428), back-pedal (23)
+        constexpr float kWalkSpeed = 1.74f, kRunSpeed = 3.0f, kBackSpeed = 1.97f;
 
         // The other slow strafes (strafe_round4.py on the US disc, Nov 27): em00 index, hash, size, his right's and
         // the mirrored left's touchdowns (feet 24, 20, 24, 20, 24) onto the walk's.
@@ -274,66 +272,51 @@ namespace kamite::strafe_motions
         };
     }
 
-    bool build(const Fetch &em00, const Fetch &pl00, Set &set, std::string &why)
+    bool build(const Fetch &em00, Set &set, std::string &why)
     {
         auto &out = set.motions;
-        const struct
+        Game game;
+        if (!em00(kWalk, game.bytes) || !mot_sample::valid(game.bytes.data(), game.bytes.size()))
         {
-            const Fetch &fetch;
-            const char *file;
-            uint32_t index, hash;
-        } sources[2] = {{em00, "em00.dat", kWalk, kHashes[0]}, {pl00, "pl00.dat", kBack, kHashes[2]}};
-        Game game[2];
-        for (int i = 0; i < 2; ++i)
-        {
-            const std::string name = std::string(sources[i].file) + " motion " + std::to_string(sources[i].index);
-            if (!sources[i].fetch(sources[i].index, game[i].bytes) || !mot_sample::valid(game[i].bytes.data(), game[i].bytes.size()))
-            {
-                why = name + " not read";
-                return false;
-            }
-            if (fnv(game[i].bytes) != sources[i].hash)
-            {
-                why = name + " is not the one the recipe was made on";
-                return false;
-            }
-            game[i].span = static_cast<float>(mot_sample::frames(game[i].bytes.data())) - 1.0f;
+            why = "em00.dat motion " + std::to_string(kWalk) + " not read";
+            return false;
         }
+        if (fnv(game.bytes) != kWalkHash)
+        {
+            why = "em00.dat motion " + std::to_string(kWalk) + " is not the one the recipe was made on";
+            return false;
+        }
+        game.span = static_cast<float>(mot_sample::frames(game.bytes.data())) - 1.0f;
         const std::vector<float> walkRef = {22.25f, 36.75f, 50.25f, 64.75f, 78.25f}; // feet 24, 20, 24, 20, 24
         const std::vector<float> runRef = {10.5f, 17.0f, 23.5f};                     // feet 24, 20, 24
-        const float walkTravel = kWalkSpeed * kWalkSpan / 30.0f, runTravel = kRunSpeed * kRunSpan / 30.0f;
-        // A side-step (his right, and it mirrored for his left) on his walk's grid, and its two cycles averaged
-        // onto one of his run's (K, Nov 27: the slow strafes are the strafes at every speed; 11 is out).
-        auto strafe = [&](const Src &right, const float r[5], const float l[5], std::array<Motion, 2> &walk, std::array<Motion, 2> &run) {
+        const std::vector<float> backRef = {6.75f, 17.0f, 27.75f, 38.0f, 48.75f};     // feet 24, 20, 24, 20, 24 (pl00 23)
+        const float walkTravel = kWalkSpeed * kWalkSpan / 30.0f, runTravel = kRunSpeed * kRunSpan / 30.0f,
+                    backTravel = kBackSpeed * kBackSpan / 30.0f;
+        // A side-step (his right, and it mirrored for his left) on his walk's grid, its two cycles averaged onto one
+        // of his run's (K, Nov 27: the slow strafes are the strafes at every speed; 11 is out), and on his
+        // back-pedal's (K, Nov 27: the game's own back-pedal plays past 112.5 deg; the side-steps blend into it).
+        auto strafe = [&](const Src &right, const float r[5], const float l[5], std::array<Motion, 2> &walk, std::array<Motion, 2> &run,
+                          std::array<Motion, 2> &back) {
             const Mirror left(right);
             const Src *src[2] = {&left, &right};
             const float *at[2] = {l, r};
             for (int k = 0; k < 2; ++k)
                 if (!bake(*src[k], {Warp{walkRef, std::vector<float>(at[k], at[k] + 5), float(kWalkSpan)}}, kWalkSpan, walkTravel, false, walk[k]) ||
                     !bake(*src[k], {Warp{runRef, {at[k][0], at[k][1], at[k][2]}, float(kRunSpan)}, Warp{runRef, {at[k][2], at[k][3], at[k][4]}, float(kRunSpan)}},
-                          kRunSpan, runTravel, true, run[k]))
+                          kRunSpan, runTravel, true, run[k]) ||
+                    !bake(*src[k], {Warp{backRef, std::vector<float>(at[k], at[k] + 5), float(kBackSpan)}}, kBackSpan, backTravel, false, back[k]))
                     return false;
             return true;
         };
-        const Scaled walkRight(game[0], kWalkSize); // 3450 (cell 16)
+        const Scaled walkRight(game, kWalkSize); // 3450 (cell 16)
         const float r16[5] = {19.5f, 39.5f, 68.5f, 90.5f, 118.5f}, l16[5] = {39.5f, 68.5f, 90.5f, 118.5f, 138.5f};
-        if (!strafe(walkRight, r16, l16, set.walks[Cell16], set.runs[Cell16]))
+        if (!strafe(walkRight, r16, l16, set.walks[Cell16], set.runs[Cell16], set.backs[Cell16]))
         {
             why = "the side-steps didn't build";
             return false;
         }
         out[WalkLeft] = set.walks[Cell16][0], out[WalkRight] = set.walks[Cell16][1];
         out[RunLeft] = set.runs[Cell16][0], out[RunRight] = set.runs[Cell16][1];
-        // back: his back-pedal's foot-24 landings onto the walk's (1.74 m/s), and its two cycles averaged onto one of
-        // his run's (3.0 m/s); along z
-        if (!bake(game[1], {Warp{{22.25f, 50.25f, 78.25f}, {6.75f, 27.75f, 48.75f}, float(kWalkSpan)}}, kWalkSpan, walkTravel, false,
-                  out[BackWalk], 2) ||
-            !bake(game[1], {Warp{{10.5f, 23.5f}, {6.75f, 27.75f}, float(kRunSpan)}, Warp{{10.5f, 23.5f}, {27.75f, 48.75f}, float(kRunSpan)}},
-                  kRunSpan, runTravel, true, out[BackRun], 2))
-        {
-            why = "the back-pedal didn't build";
-            return false;
-        }
         set.walksBuilt = 1u << Cell16;
         for (const Candidate &c : kCandidates) // optional: one that doesn't build is left out of the choice
         {
@@ -342,7 +325,7 @@ namespace kamite::strafe_motions
                 continue;
             g.span = static_cast<float>(mot_sample::frames(g.bytes.data())) - 1.0f;
             const Scaled right(g, c.size);
-            if (strafe(right, c.right, c.left, set.walks[c.source], set.runs[c.source]))
+            if (strafe(right, c.right, c.left, set.walks[c.source], set.runs[c.source], set.backs[c.source]))
                 set.walksBuilt |= 1u << c.source;
         }
         return true;

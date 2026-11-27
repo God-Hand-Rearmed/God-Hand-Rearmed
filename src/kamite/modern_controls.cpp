@@ -99,6 +99,7 @@ namespace kamite::modern
         constexpr int64_t kFightLingerMs = 1500;               // ... or was, this long ago
         constexpr uint32_t kEnemyList = 0x5864F0u + 0x500u;    // cEmManage D_005864F0: the first used slot
         constexpr float kTurnRate = 900.0f * (3.14159265f / 180.0f); // Gene turned toward the stick, radians a second
+        constexpr float kSprintTurnRate = 2.88f * 30.0f * (3.14159265f / 180.0f); // Tiger: his run's own turn, a second
         constexpr uint32_t kPlayerPointer = game::GameWork::address(game::GameWork::kPlayerObj); // GameWork.playerObj (Getplayer)
 
         // Settings (F2 menu on the GS thread, read by the window and game threads): the controller's, the keyboard's.
@@ -414,37 +415,31 @@ namespace kamite::modern
             if (strafing_tiger::enabled())
             {
                 // Strafing Tiger (prototype): he keeps facing the camera (the camera side turns him); the game gets
-                // his walk / run forward at the stick's magnitude (walk or run as before) whichever way it points, and
-                // strafing_tiger.cpp blends the side-steps and the back-pedal on top and moves him where the stick
-                // points (K, Nov 26: the game's own back-pedal made a circle jerk at the switch). The angle is judged
-                // against his yaw, which follows the camera. Sprinting (a dash and the run after it): no strafing, he
-                // runs where the camera points.
+                // his walk / run forward at the stick's magnitude (walk or run as before), or his back-pedal for the
+                // stick's back three eighths (past 112.5 deg from the camera's forward, +-10 of stickiness: straight
+                // sideways stays a walk, K Nov 26; his back-pedal stays the game's own, K Nov 27, and so do the back
+                // attacks it gives), and strafing_tiger.cpp blends the side-steps on top and moves him where the stick
+                // points. Forward / back is judged on the stick against the camera (his yaw lags a turning camera);
+                // the blend's angle against his yaw. Sprinting (a dash and the run after it): no strafing, he runs
+                // where the camera points.
                 const float relative = wrapAngle(desired - g_geneYaw.load(std::memory_order_relaxed));
                 g_moveYaw = g_cameraYaw.load(std::memory_order_relaxed);
                 g_moving = true;
                 const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
+                static bool s_back = false;
+                const float edge = (s_back ? 102.5f : 122.5f) * (3.14159265f / 180.0f);
+                s_back = !sprinting && std::fabs(std::atan2(lx, -ly)) > edge;
                 if (!sprinting)
                     strafing_tiger::setSlide(relative);
-                // Sprinting: the stick's left / right turns him (the camera side, g_sprintTurn).
-                g_sprintTurn.store(sprinting ? std::sin(relative) * -magnitude : 0.0f, std::memory_order_relaxed);
-                // Back attacks (K, Nov 27: they worked while back-pedalling and wanted kept): the game picks them from
-                // the stick pointing more than 135 deg from up when a button's window opens (chooser 0x123DD8..: +0x608
-                // > 2.356, +0x622 / +0x623); so for 150 ms after Square / Triangle / Circle / Cross goes down with the
-                // stick past his old back-pedal split (112.5 deg) the game sees the stick straight down.
-                static uint16_t s_buttonsWas = 0u;
-                static uint64_t s_backAttackUntilMs = 0u;
-                constexpr uint16_t kAttacks = ps2x::iop::PadButton::Square | ps2x::iop::PadButton::Triangle |
-                                              ps2x::iop::PadButton::Circle | ps2x::iop::PadButton::Cross;
-                const uint16_t pressed = static_cast<uint16_t>(state.buttons & ~s_buttonsWas & kAttacks);
-                s_buttonsWas = state.buttons;
-                const uint64_t nowMsPad = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-                if (pressed && !sprinting && std::fabs(relative) > 1.9634954f)
-                    s_backAttackUntilMs = nowMsPad + 150u;
-                const bool backAttack = nowMsPad < s_backAttackUntilMs;
+                // Sprinting: the stick turns him as the game's run does (phase 2, 0x10C7B0: +0x608 the stick's angle
+                // from his facing, 30 deg of dead zone, then 0.4 x the rest a game frame, at most 2.88 deg (0x3BD478);
+                // the dash, phase 6, doesn't turn by the stick): the share of that most, + = right (camera side).
+                const float off = std::fabs(relative) - 30.0f * (3.14159265f / 180.0f);
+                const float turn = std::fmin(std::fmax(off * 0.4f / (2.88f * (3.14159265f / 180.0f)), 0.0f), 1.0f);
+                g_sprintTurn.store(sprinting ? (relative > 0.0f ? -turn : turn) : 0.0f, std::memory_order_relaxed);
                 const float offset = magnitude * 127.0f;
                 state.leftX = 0x80u;
-                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(backAttack ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
+                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(s_back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
                 return;
             }
             g_moveYaw = desired;
@@ -922,14 +917,14 @@ namespace kamite::modern
             {
                 // Strafing Tiger (later.md round 2, first build): the camera keeps still while a move holds his
                 // facing (an attack, a dodge, a throw...): it turns again once he stands, walks, runs or back-pedals.
-                // A sprint isn't a move: the camera turns him then (K, Nov 27), and so does the left stick's left /
-                // right (A / D), at the camera's own stick speed.
+                // A sprint isn't a move: the camera turns him then (K, Nov 27), and so does the left stick (A / D) in
+                // his run (phase 2) at the game's own run turn (2.88 deg a 30 FPS game frame: 86.4 deg a second).
                 const uint32_t gene = ram32(rdram, kPlayerPointer);
                 const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
                 if (validPointer(gene) && !geneMoves(rdram, gene) && !backPedals(rdram, gene) && !sprinting)
                     yawStep = 0.0f, pitchStep = 0.0f;
-                if (sprinting)
-                    yawStep += g_sprintTurn.load(std::memory_order_relaxed) * g_yawSpeed.load(std::memory_order_relaxed) * kDegToRad * dt;
+                if (sprinting && validPointer(gene) && rdram[(gene + 0x2F5u) & PS2_RAM_MASK] == 2u)
+                    yawStep += g_sprintTurn.load(std::memory_order_relaxed) * kSprintTurnRate * dt;
             }
             g_yaw = wrapAngle(g_yaw - yawStep);
             const float floor = std::fmax(kPitchMin, std::fmin(g_pitchFloor.load(std::memory_order_relaxed), 0.0f));

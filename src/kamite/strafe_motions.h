@@ -18,8 +18,8 @@
 //   1.74 m/s;
 // - run (K, Nov 27: 11 out; the side-steps at every speed): the same two cycles averaged onto one of his run's 14
 //   frames (pl00 25 / 428), 3.0 m/s as built (the blend's shares stretch the steps to the speed asked);
-// - back: his own back-pedal (pl00 23) on the walk's grid (1.74 m/s) and, its two cycles averaged, on the run's
-//   (3.0 m/s) (round 3, strafe_round3.py: the game keeps walking / running forward and the back-pedal is blended too).
+// - back (K, Nov 27: the game's own back-pedal past 112.5 deg, untouched straight back): the same on his back-pedal's
+//   42 frames (pl00 23: two cycles), 1.97 m/s (its own speed).
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
 // slerps; frame span = frame 0 but for the root's travel.
 namespace kamite::strafe_motions
@@ -33,8 +33,6 @@ namespace kamite::strafe_motions
         WalkRight,
         RunLeft,  // 16 on his run's grid (strafe_motions::Set::runs has every cell's)
         RunRight,
-        BackWalk, // his own back-pedal (pl00 23) on his walk's grid, 1.74 m/s
-        BackRun,  // its two cycles averaged onto his run's, 3.0 m/s
         kSides
     };
 
@@ -73,13 +71,14 @@ namespace kamite::strafe_motions
         std::array<Motion, kSides> motions;
         std::array<std::array<Motion, 2>, kWalkSources> walks; // [source][0 his left, 1 his right] on his walk's grid
         std::array<std::array<Motion, 2>, kWalkSources> runs;  // the same, two cycles averaged on his run's grid
+        std::array<std::array<Motion, 2>, kWalkSources> backs; // the same on his back-pedal's grid
         uint32_t walksBuilt = 0;                               // bit per source (16's = motions' Walk / Run sides)
     };
 
     // A .dat's entry `index` (from its offset to the next one), false when it can't be read.
     using Fetch = std::function<bool(uint32_t index, std::vector<uint8_t> &bytes)>;
-    // From em00.dat and pl00.dat, or false (and why) when their motions aren't the ones the recipe was made on.
-    bool build(const Fetch &em00, const Fetch &pl00, Set &out, std::string &why);
+    // From em00.dat, or false (and why) when its motions aren't the ones the recipe was made on.
+    bool build(const Fetch &em00, Set &out, std::string &why);
 
     // Frame t (any: wrapped onto the loop); the translations along the motion's axis scaled by stride about their means.
     void sample(const Motion &m, float t, float stride, Pose &out);
