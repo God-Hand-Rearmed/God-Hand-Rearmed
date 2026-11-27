@@ -249,6 +249,7 @@ namespace kamite::strafing_tiger
             float hisSpeed = 0.0f, sideSpeed = 0.0f;
             float pace = 1.0f;     // his clock's step x this (the run's own pace toward 3 / 9)
             bool jog = false;      // the run's legs are the jog's (its torso / arm swing on cell 7's posture)
+            float phi = 0.0f;      // the run turned toward the stick (+ = his left), the chest turned back
             const Forward *fwd = nullptr;
         };
 
@@ -319,6 +320,15 @@ namespace kamite::strafing_tiger
             g_armLeft += (g_armTarget - g_armLeft) * (1.0f - std::exp(-std::fmax(dt, 0.0f) / kArmSideSeconds));
             b.armLeft = g_armLeft;
             b.ws = b.front ? std::fmin(a / kQuarterTurn, 1.0f) : 1.0f;
+            // The run (K, Nov 27): his own run turned toward the stick up to the F2 angle (40 deg), the side-step
+            // taking over from there to 3 / 9.
+            float turnMax = 0.0f;
+            if (b.front && b.run)
+            {
+                turnMax = std::fmin(std::fmax(rs.turn.load(std::memory_order_relaxed), 0.0f), 60.0f) * kHalfTurn / 180.0f;
+                b.phi = std::fmin(a, turnMax) * (left ? 1.0f : -1.0f);
+                b.ws = std::fmin(std::fmax((a - turnMax) / (kQuarterTurn - turnMax), 0.0f), 1.0f);
+            }
             b.u = b.front ? 0.0f : std::fmin(std::fmax((a - kBackFrom) / (kHalfTurn - kBackFrom), 0.0f), 1.0f);
             b.presence = g_presence;
             b.fwd = &forward(rdram, b.motion, b.front ? (b.run ? 1 : 0) : 2);
@@ -347,7 +357,7 @@ namespace kamite::strafing_tiger
                 }
                 // past 90 deg down to his back-pedal's own speed by the split's near edge, so it takes over at it
                 const float back = step > 0.01f ? kBackPedalSpeed * kBackPedalStep / (b.hisSpeed * step) : r90;
-                const float r = a <= kQuarterTurn ? 1.0f + (r90 - 1.0f) * b.ws
+                const float r = a <= kQuarterTurn ? 1.0f + (r90 - 1.0f) * b.ws // his own speed while only turned
                                                   : r90 + (back - r90) * std::fmin((a - kQuarterTurn) / (kBackLeave - kQuarterTurn), 1.0f);
                 m = r * b.hisSpeed / b.pace; // the motions' speed at his clock (it steps x pace)
                 if (b.run && step > 0.01f) // F2's read-out at 3 / 9
@@ -359,9 +369,11 @@ namespace kamite::strafing_tiger
                 }
             }
             // V = m (sin a, cos a) on his loop's axis (forward; his back-pedal's backward) and the side's.
-            const float vx = m * std::sin(a), vz = m * std::cos(a);
-            b.his = (b.front ? vz : -vz) / b.hisSpeed;
-            b.sd = vx / b.sideSpeed;
+            // V = m (sin a, cos a) on his loop's axis (turned by phi) and the side's: V = his h + side x
+            const float vx = m * std::sin(a), vz = m * std::cos(a), turn = std::fabs(b.phi);
+            const float along = b.front ? vz / std::cos(turn) : -vz;
+            b.his = along / b.hisSpeed;
+            b.sd = (vx - (b.front ? along * std::sin(turn) : 0.0f)) / b.sideSpeed;
             b.grid = static_cast<float>(b.sideMotion->span);
             b.stride = static_cast<float>(b.loop->frames - 1u) / b.grid;
             return true;
@@ -439,12 +451,48 @@ namespace kamite::strafing_tiger
                 g_switched = g_held, g_switchMs = now;
             g_lastRun = state;
             g_poseInner(rdram, ctx, runtime); // his pose, root outputs and caches: the game's
-            if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.his - 1.0f) < 1e-3f) ||
+            if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
                 (!b.front && b.u >= 1.0f && b.toB6 < 1e-3f && std::fabs(b.his - 1.0f) < 1e-3f))
                 return; // straight ahead / straight back (no Tension arms) / let go: his own, untouched
             uint32_t part[strafe_motions::kBones], anchor[strafe_motions::kTranslated];
             if (!partsOf(rdram, obj, part, anchor))
                 return;
+            // His run turned toward the stick (hips, legs, foot targets by phi about y; spine and chest each half back,
+            // so the chest, arms and head keep facing the camera), before the blend reads it.
+            const float phi = b.phi * b.presence;
+            float mh[strafe_motions::kTranslated][3];
+            for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                std::memcpy(mh[j], b.fwd->mean[j], 12);
+            if (std::fabs(phi) > 1e-4f)
+            {
+                const float c = std::cos(phi), sn = std::sin(phi);
+                const mot_sample::Quat turn{std::cos(0.5f * phi), 0.0f, std::sin(0.5f * phi), 0.0f};
+                const mot_sample::Quat back{std::cos(0.25f * phi), 0.0f, -std::sin(0.25f * phi), 0.0f};
+                auto inv = [](const mot_sample::Quat &q) { return mot_sample::Quat{q.w, -q.x, -q.y, -q.z}; };
+                auto get = [&](int i, float e[3]) {
+                    std::memcpy(e, rdram + part[i] + kPartRotation, 12);
+                    return std::isfinite(e[0]) && std::isfinite(e[1]) && std::isfinite(e[2]);
+                };
+                float e0[3], e1[3], e2[3];
+                if (get(0, e0) && get(1, e1) && get(2, e2))
+                {
+                    const mot_sample::Quat w0 = mot_sample::mul(turn, mot_sample::eulerQuat(e0));
+                    const mot_sample::Quat w1 = mot_sample::mul(back, mot_sample::mul(w0, mot_sample::eulerQuat(e1)));
+                    const mot_sample::Quat w2 = mot_sample::mul(back, mot_sample::mul(w1, mot_sample::eulerQuat(e2)));
+                    writePart(rdram, part[0], e0, w0);
+                    writePart(rdram, part[1], e1, mot_sample::mul(inv(w0), w1));
+                    writePart(rdram, part[2], e2, mot_sample::mul(inv(w1), w2));
+                }
+                for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                {
+                    float v[3];
+                    std::memcpy(v, rdram + anchor[j], 12);
+                    const float x = v[0], z = v[2], mx = mh[j][0], mz = mh[j][2];
+                    v[0] = x * c + z * sn, v[2] = -x * sn + z * c;
+                    mh[j][0] = mx * c + mz * sn, mh[j][2] = -mx * sn + mz * c;
+                    std::memcpy(rdram + anchor[j], v, 12);
+                }
+            }
             const float sigma = gridClock(*b.loop, t, b.grid);
             const strafe_motions::Motion &sm = *b.sideMotion;
             uint32_t sideMask = sm.rotated;
@@ -544,13 +592,13 @@ namespace kamite::strafing_tiger
                     std::memcpy(g_held.tr[j], v, 12); // straight back: his own
                     continue;
                 }
-                const float *mh = b.fwd->mean[j], *mside = ms[j], *ts = side.tr[j];
+                const float *mside = ms[j], *ts = side.tr[j];
                 const float wSide = b.front ? b.ws : 1.0f - b.u; // the side's share of the stance and height
                 float out[3];
                 for (int c = 0; c < 3; c += 2)
                 {
-                    const float stance = (1.0f - wSide) * mh[c] + wSide * mside[c];
-                    out[c] = stance + b.his * (v[c] - mh[c]) + b.sd * (ts[c] - mside[c]);
+                    const float stance = (1.0f - wSide) * mh[j][c] + wSide * mside[c];
+                    out[c] = stance + b.his * (v[c] - mh[j][c]) + b.sd * (ts[c] - mside[c]);
                 }
                 out[1] = (1.0f - wSide) * v[1] + wSide * ts[1];
                 for (int c = 0; c < 3; ++c)
@@ -645,7 +693,9 @@ namespace kamite::strafing_tiger
             if (!measured) // a new loop or side: his step's length at the side's speed
                 side = std::fabs(z) * b.sideSpeed / b.hisSpeed * (b.left ? 1.0f : -1.0f);
             g_track = Track{true, b.motion, b.side, sigma};
-            const float nx = b.his * x + b.sd * side, nz = b.his * z;
+            const float phi = b.phi * b.presence, c = std::cos(phi), sn = std::sin(phi);
+            const float xr = x * c + z * sn, zr = -x * sn + z * c; // his step turned toward the stick
+            const float nx = b.his * xr + b.sd * side, nz = b.his * zr;
             wrF(rdram, obj + kDelta, x + (nx - x) * b.presence);
             wrF(rdram, obj + kDelta + 8u, z + (nz - z) * b.presence);
             g_inner(rdram, ctx, runtime);

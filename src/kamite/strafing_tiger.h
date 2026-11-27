@@ -46,6 +46,7 @@ namespace kamite::strafing_tiger
         std::atomic<float> hips{0.0f};        // the hips lowered, cm
         std::atomic<float> armSwing{0.7f};    // the jog's arm swing on 7's posture (1 = the jog's own)
         std::atomic<float> torsoSwing{0.7f};  // ... and its torso / neck / head swing
+        std::atomic<float> turn{40.0f};       // his run turned toward the stick up to this (deg; K: 40, 45 the most)
     };
     RunStrafe &runStrafe();
     bool jogBuilt(); // false: the jog didn't build (the side-steps play)

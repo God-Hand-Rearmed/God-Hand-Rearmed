@@ -675,7 +675,7 @@ namespace kamite::modern
                 slider(ui, "Back-pedal arms toward 16's at 6 o'clock##tigerback", strafing_tiger::tensionBack(), 0.0f, 1.0f, "%.2f");
                 ui->text_disabled("Arm swing: 1 = as animated. Not saved.");
                 // Stage 1 (K, Nov 27): the run's side-step at full deflection, legs and speed first (the arms held).
-                ui->separator_text("Run side-step, stage 1: legs and speed");
+                ui->separator_text("Running strafe: his run turned, then the side-step");
                 auto &rs = strafing_tiger::runStrafe();
                 static const char *const kLegs[] = {"The jog (Mixamo), its swing on 7's ready posture", "The side-steps (7 / 16 by Tension)"};
                 int legs = rs.legs.load(std::memory_order_relaxed);
@@ -689,6 +689,7 @@ namespace kamite::modern
                     slider(ui, "Arm swing (1 = the jog's own)##tigerarmswing", rs.armSwing, 0.0f, 1.5f, "%.2f");
                     slider(ui, "Torso and head swing##tigertorsoswing", rs.torsoSwing, 0.0f, 1.5f, "%.2f");
                 }
+                slider(ui, "His run turned toward the stick up to##tigerturn", rs.turn, 0.0f, 60.0f, "%.0f deg");
                 slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
                 slider(ui, "Bounce (the hips' up-down)##tigerbounce", rs.bounce, 0.0f, 1.5f, "%.2f");
@@ -701,20 +702,20 @@ namespace kamite::modern
                     std::snprintf(line, sizeof line, "Run once to see the legs' pace and step length.");
                 ui->text(line);
                 // Two snapshots to flip between, and the values written to the log (K pastes them; they become the defaults).
-                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso; bool set; };
+                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso, turn; bool set; };
                 static Snap s_snap[2] = {};
                 for (int k = 0; k < 2; ++k)
                 {
                     ui->push_id(k);
                     if (ui->small_button(k ? "Store B" : "Store A"))
-                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.armSwing.load(), rs.torsoSwing.load(), true};
+                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.armSwing.load(), rs.torsoSwing.load(), rs.turn.load(), true};
                     ui->same_line();
                     ui->begin_disabled(!s_snap[k].set);
                     if (ui->small_button(k ? "Load B" : "Load A"))
                     {
                         const Snap &q = s_snap[k];
                         rs.legs = q.legs, rs.speed = q.speed, rs.pace = q.pace, rs.bounce = q.bounce, rs.hips = q.hips;
-                        rs.armSwing = q.arms, rs.torsoSwing = q.torso;
+                        rs.armSwing = q.arms, rs.torsoSwing = q.torso, rs.turn = q.turn;
                     }
                     ui->end_disabled();
                     ui->pop_id();
@@ -725,7 +726,7 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger stage 1: legs " << (rs.legs.load() == 0 ? "jog" : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arm swing " << rs.armSwing.load() << ", torso swing "
-                                  << rs.torsoSwing.load() << " (legs x" << pace << " own pace, steps x" << steps << ")");
+                                  << rs.torsoSwing.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults.");
             }
             // The Modern settings show only with Modern selected (K, Oct 27).
