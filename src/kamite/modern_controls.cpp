@@ -677,13 +677,13 @@ namespace kamite::modern
                 // Stage 1 (K, Nov 27): the run's side-step at full deflection, legs and speed first (the arms held).
                 ui->separator_text("Running strafe: his run turned, then the side-step");
                 auto &rs = strafing_tiger::runStrafe();
-                static const char *const kLegs[] = {"The side-run, its own body", "The side-steps (7 / 16 by Tension)"};
+                static const char *const kLegs[] = {"The side-step (generated), its own body", "The side-steps (7 / 16 by Tension)"};
                 int legs = rs.legs.load(std::memory_order_relaxed);
                 ui->set_next_width(340.0f);
                 if (ui->combo("##tigerlegs", &legs, kLegs, 2))
                     rs.legs = legs;
                 if (legs == 0 && !strafing_tiger::sideRunBuilt())
-                    ui->text_disabled("The side-run didn't build: the side-steps play.");
+                    ui->text_disabled("The generated side-step didn't build: 7 / 16 play.");
                 if (legs == 0)
                 {
                     static const char *const kFlip[] = {"As made (turned away from where he runs)", "Flipped (the other shoulder leads)"};
@@ -694,6 +694,7 @@ namespace kamite::modern
                     slider(ui, "Arms (1 = its own, 0 = 7's ready pose)##tigerarms", rs.arms, 0.0f, 1.0f, "%.2f");
                     slider(ui, "Torso and head (1 = its own, 0 = 7's)##tigertorso", rs.torso, 0.0f, 1.0f, "%.2f");
                 }
+                slider(ui, "Walking: step pace at 3 / 9 (higher = shorter steps)##tigerwalkpace", rs.walkPace, 0.8f, 1.8f, "%.2f");
                 slider(ui, "His run turned toward the stick up to##tigerturn", rs.turn, 0.0f, 60.0f, "%.0f deg");
                 slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
@@ -707,20 +708,20 @@ namespace kamite::modern
                     std::snprintf(line, sizeof line, "Run once to see the legs' pace and step length.");
                 ui->text(line);
                 // Two snapshots to flip between, and the values written to the log (K pastes them; they become the defaults).
-                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso, turn; int flip; bool set; };
+                struct Snap { int legs; float speed, pace, bounce, hips, arms, torso, turn; int flip; float walkPace; bool set; };
                 static Snap s_snap[2] = {};
                 for (int k = 0; k < 2; ++k)
                 {
                     ui->push_id(k);
                     if (ui->small_button(k ? "Store B" : "Store A"))
-                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.arms.load(), rs.torso.load(), rs.turn.load(), rs.flip.load(), true};
+                        s_snap[k] = {rs.legs.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), rs.arms.load(), rs.torso.load(), rs.turn.load(), rs.flip.load(), rs.walkPace.load(), true};
                     ui->same_line();
                     ui->begin_disabled(!s_snap[k].set);
                     if (ui->small_button(k ? "Load B" : "Load A"))
                     {
                         const Snap &q = s_snap[k];
                         rs.legs = q.legs, rs.speed = q.speed, rs.pace = q.pace, rs.bounce = q.bounce, rs.hips = q.hips;
-                        rs.arms = q.arms, rs.torso = q.torso, rs.turn = q.turn, rs.flip = q.flip;
+                        rs.arms = q.arms, rs.torso = q.torso, rs.turn = q.turn, rs.flip = q.flip, rs.walkPace = q.walkPace;
                     }
                     ui->end_disabled();
                     ui->pop_id();
@@ -731,7 +732,7 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
-                                  << rs.torso.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
+                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
                 if (ui->small_button("Reset to defaults##tigerreset"))
                     strafing_tiger::resetTuning();
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");

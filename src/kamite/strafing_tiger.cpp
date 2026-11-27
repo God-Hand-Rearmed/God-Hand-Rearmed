@@ -348,6 +348,8 @@ namespace kamite::strafing_tiger
             else
             {
                 float r90 = b.sideSpeed / b.hisSpeed; // the walk: the side-step's own speed at 3 / 9
+                if (!b.run && g_moveInner) // ... its steps quicker and shorter by the F2 walk pace (K, Nov 27)
+                    b.pace = 1.0f + (std::fmin(std::fmax(rs.walkPace.load(std::memory_order_relaxed), 0.5f), 2.0f) - 1.0f) * b.ws;
                 if (b.run)
                 {
                     if (!g_moveInner) // no hook on his clock: his pace

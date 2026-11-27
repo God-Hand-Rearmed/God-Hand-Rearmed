@@ -40,17 +40,19 @@ namespace kamite::strafing_tiger
     struct RunStrafe
     {
         std::atomic<int> legs{0};          // 0 = the side-run, 1 = the side-steps
-        std::atomic<float> speed{0.28f};   // 3 / 9 speed, a share of his run's
-        std::atomic<float> pace{0.56f};    // 3 / 9 step pace, a share of his run's
+        std::atomic<float> speed{0.17f};   // 3 / 9 speed, a share of his run's (0.17 / 0.43: the side-step's own pace and steps)
+        std::atomic<float> pace{0.43f};    // 3 / 9 step pace, a share of his run's
         std::atomic<float> bounce{1.0f};   // the hips' up-down swing (1 = as animated)
         std::atomic<float> hips{0.0f};     // the hips lowered, cm
         std::atomic<float> arms{1.0f};     // the side-run's arms (1) toward 7's ready posture (0)
         std::atomic<float> torso{1.0f};    // ... its spine, neck and head
         std::atomic<float> turn{45.0f};    // his run turned toward the stick up to this (deg; K: good up to 45)
-        std::atomic<int> flip{1};          // the side-run played backward, mirrored: the other shoulder leads (K, Nov 27)
+        std::atomic<int> flip{0};          // the side-step played backward, mirrored: the other shoulder leads
+        std::atomic<float> walkPace{1.2f}; // walking: 7 / 16's step pace at 3 / 9 x this (K, Nov 27: shorter strides)
         void reset()
         {
-            legs = 0, speed = 0.28f, pace = 0.56f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 1;
+            legs = 0, speed = 0.17f, pace = 0.43f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 0;
+            walkPace = 1.2f;
         }
     };
     RunStrafe &runStrafe();
