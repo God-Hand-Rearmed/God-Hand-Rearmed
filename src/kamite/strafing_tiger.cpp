@@ -75,6 +75,8 @@ namespace kamite::strafing_tiger
         std::atomic<bool> g_slide{false};
         std::atomic<bool> g_sprint{false};
         std::atomic<float> g_angle{0.0f};
+        std::atomic<int> g_walkSource{strafe_motions::Cell16}; // F2: the slow strafe (K, Nov 27: to judge in game)
+        std::atomic<float> g_armKeep{1.0f};                    // F2: the slow strafe's arm swing kept
         PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr;
         strafe_motions::Set g_set;
         bool g_ready = false;
@@ -210,7 +212,10 @@ namespace kamite::strafing_tiger
         {
             const Loop *loop = nullptr;
             uint32_t motion = 0u;
-            int side = 0, back = 0; // strafe_motions::Side
+            int side = 0, back = 0; // strafe_motions::Side (side + 16 x the slow strafe's source)
+            bool left = true;
+            const strafe_motions::Motion *sideMotion = nullptr;
+            float armKeep = 1.0f; // the slow strafe's arms: their swing about their mean kept by this much
             bool run = false, front = true;
             float ws = 0.0f, u = 0.0f;              // the side's weight (front half); the back's (back half)
             float his = 1.0f, sd = 0.0f, bk = 0.0f; // the shares of the three swings and deltas
@@ -247,6 +252,18 @@ namespace kamite::strafing_tiger
             const bool left = g_theta >= 0.0f;
             b.run = b.loop->run;
             b.side = b.run ? (left ? Side::RunLeft : Side::RunRight) : (left ? Side::WalkLeft : Side::WalkRight);
+            b.left = left;
+            b.sideMotion = &g_set.motions[b.side];
+            if (!b.run) // the slow strafe picked in F2 (built ones only)
+            {
+                const int source = g_walkSource.load(std::memory_order_relaxed);
+                if (source > 0 && source < strafe_motions::kWalkSources && ((g_set.walksBuilt >> source) & 1u))
+                {
+                    b.sideMotion = &g_set.walks[source][left ? 0 : 1];
+                    b.side += 16 * source; // the delta's track restarts on a switch
+                }
+                b.armKeep = g_armKeep.load(std::memory_order_relaxed);
+            }
             b.back = b.run ? Side::BackRun : Side::BackWalk;
             b.front = a <= kQuarterTurn;
             b.ws = b.front ? a / kQuarterTurn : 1.0f;
@@ -262,7 +279,7 @@ namespace kamite::strafing_tiger
             b.his = b.front ? vz / b.hisSpeed : 0.0f;
             b.bk = b.front ? 0.0f : -vz / b.sideSpeed;
             b.sd = vx / b.sideSpeed;
-            b.grid = static_cast<float>(g_set.motions[b.side].span);
+            b.grid = static_cast<float>(b.sideMotion->span);
             b.stride = static_cast<float>(b.loop->frames - 1u) / b.grid;
             return true;
         }
@@ -337,7 +354,7 @@ namespace kamite::strafing_tiger
             if (!partsOf(rdram, obj, part, anchor))
                 return;
             const float sigma = gridClock(*b.loop, t, b.grid);
-            const strafe_motions::Motion &sm = g_set.motions[b.side], &bm = g_set.motions[b.back];
+            const strafe_motions::Motion &sm = *b.sideMotion, &bm = g_set.motions[b.back];
             strafe_motions::Pose side, back;
             strafe_motions::sample(sm, sigma, b.stride, side);
             strafe_motions::sample(bm, sigma, b.stride, back);
@@ -352,6 +369,8 @@ namespace kamite::strafing_tiger
                 mot_sample::Quat qs = hasSide ? side.rot[i] : qg;
                 if (hasSide && b.run && upperBody(i) && ((g_set.guarded >> i) & 1u))
                     qs = mot_sample::slerp(qs, g_set.guard[i], kGuard); // the run: his guard mostly up
+                if (hasSide && !b.run && arm(i) && b.armKeep < 1.0f)
+                    qs = mot_sample::slerp(sm.armMean[i], qs, b.armKeep); // the slow strafe's arms calmer (F2)
                 mot_sample::Quat q;
                 if (b.front)
                     q = mot_sample::slerp(qg, qs, b.ws);
@@ -415,7 +434,7 @@ namespace kamite::strafing_tiger
             // moveMotion just made).
             const float sigma = gridClock(*b.loop, rdF(rdram, obj + kClock), b.grid);
             const float x = rdF(rdram, obj + kDelta), z = rdF(rdram, obj + kDelta + 8u);
-            const strafe_motions::Motion &sm = g_set.motions[b.side], &bm = g_set.motions[b.back];
+            const strafe_motions::Motion &sm = *b.sideMotion, &bm = g_set.motions[b.back];
             float side = 0.0f, back = 0.0f;
             bool measured = false;
             if (g_track.valid && g_track.motion == b.motion && g_track.side == b.side)
@@ -433,7 +452,7 @@ namespace kamite::strafing_tiger
             if (!measured) // a new loop or side: his step's length at the others' speed
             {
                 const float step = std::fabs(z) * b.sideSpeed / b.hisSpeed;
-                side = step * (b.side == Side::WalkLeft || b.side == Side::RunLeft ? 1.0f : -1.0f);
+                side = step * (b.left ? 1.0f : -1.0f);
                 back = -step;
             }
             g_track = Track{true, b.motion, b.side, sigma};
@@ -513,6 +532,9 @@ namespace kamite::strafing_tiger
     }
     void clearSlide() { g_slide.store(false, std::memory_order_relaxed); }
     void setSprint(bool sprint) { g_sprint.store(sprint, std::memory_order_relaxed); }
+    std::atomic<int> &walkSource() { return g_walkSource; }
+    std::atomic<float> &armKeep() { return g_armKeep; }
+    bool walkSourceBuilt(int source) { return g_ready && source >= 0 && source < strafe_motions::kWalkSources && ((g_set.walksBuilt >> source) & 1u); }
 
     void install(PS2Runtime &runtime)
     {

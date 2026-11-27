@@ -59,6 +59,7 @@
 #include "kamite/log.h"
 #include "kamite/menu_buttons.h"
 #include "kamite/style_presets.h"
+#include "kamite/strafe_motions.h"
 #include "kamite/strafing_tiger.h"
 #include "kamite/test_mode.h"
 #include "kamite/game_layout.h"
@@ -645,6 +646,19 @@ namespace kamite::modern
             ui->text_disabled("The style in effect is the device used last. Strafing Tiger: planned (the prototype below).");
             checkbox(ui, "Strafing Tiger (prototype): in Modern's free camera Gene faces the camera and the left stick "
                          "strafes##tiger", strafing_tiger::setting());
+            if (strafing_tiger::enabled())
+            {
+                // K, Nov 27: switch the slow strafe and calm its arms live, to judge in game (not saved).
+                int source = strafing_tiger::walkSource().load(std::memory_order_relaxed);
+                ui->text("Slow strafe (grid cell, em00 motion)");
+                ui->set_next_width(340.0f);
+                if (ui->combo("##tigerwalk", &source, strafe_motions::kWalkSourceNames, strafe_motions::kWalkSources))
+                    strafing_tiger::walkSource() = source;
+                if (!strafing_tiger::walkSourceBuilt(source))
+                    ui->text_disabled("Not built from this disc: 16 plays.");
+                slider(ui, "Slow strafe arm swing##tigerarms", strafing_tiger::armKeep(), 0.0f, 1.0f, "%.2f");
+                ui->text_disabled("1 = as animated; lower keeps the arms' set but less of their swing. Not saved.");
+            }
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)
             {

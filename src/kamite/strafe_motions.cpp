@@ -252,6 +252,19 @@ namespace kamite::strafe_motions
                     out.tr[f * kTranslated + j][axis] = out.mean[j][axis] + k * (out.tr[f * kTranslated + j][axis] - out.mean[j][axis]);
                 out.root[f][axis] *= k;
             }
+            for (int b = 0; b < kBones; ++b) // each part's mean rotation (sign-aligned to frame 0's)
+            {
+                const Quat &q0 = out.rot[b];
+                Quat sum{0.0f, 0.0f, 0.0f, 0.0f};
+                for (int f = 0; f < span; ++f)
+                {
+                    const Quat &q = out.rot[f * kBones + b];
+                    const float sgn = q.w * q0.w + q.x * q0.x + q.y * q0.y + q.z * q0.z < 0.0f ? -1.0f : 1.0f;
+                    sum.w += sgn * q.w, sum.x += sgn * q.x, sum.y += sgn * q.y, sum.z += sgn * q.z;
+                }
+                const float n = std::sqrt(sum.w * sum.w + sum.x * sum.x + sum.y * sum.y + sum.z * sum.z);
+                out.armMean[b] = n > 0.0f ? Quat{sum.w / n, sum.x / n, sum.y / n, sum.z / n} : q0;
+            }
             out.axis = axis;
             out.travel = out.root[span][axis] - out.root[0][axis];
             return true;
@@ -264,6 +277,20 @@ namespace kamite::strafe_motions
         constexpr float kWalkSize = 0.998343871f, kRunSize = 1.167537936f, kRunHips = 0.03f;
         constexpr int kWalkSpan = 56, kRunSpan = 13; // his walk (pl00 21) and run (25 / 428)
         constexpr float kWalkSpeed = 1.74f, kRunSpeed = 3.0f;
+
+        // The other slow strafes (strafe_round4.py on the US disc, Nov 27): em00 index, hash, size, his right's and
+        // the mirrored left's touchdowns (feet 24, 20, 24, 20, 24) onto the walk's.
+        struct Candidate
+        {
+            WalkSource source;
+            uint32_t index, hash;
+            float size, right[5], left[5];
+        };
+        constexpr Candidate kCandidates[] = {
+            {Cell1, 50u, 0xF636A2A1u, 0.993350972f, {27.5f, 47.75f, 69.75f, 89.75f, 109.5f}, {7.75f, 27.5f, 47.75f, 69.75f, 89.75f}},
+            {Cell7, 1604u, 0xA04F6E34u, 1.062444885f, {23.5f, 42.5f, 69.75f, 90.75f, 119.5f}, {42.5f, 69.75f, 90.75f, 119.5f, 138.5f}},
+            {Cell13, 2438u, 0x416F340Eu, 0.996367880f, {15.5f, 35.25f, 63.5f, 79.5f, 115.5f}, {35.25f, 63.5f, 79.5f, 115.5f, 135.25f}},
+        };
     }
 
     bool build(const Fetch &em00, const Fetch &pl00, Set &set, std::string &why)
@@ -329,6 +356,21 @@ namespace kamite::strafe_motions
         {
             why = "the back-pedal didn't build";
             return false;
+        }
+        set.walks[Cell16] = {out[WalkLeft], out[WalkRight]};
+        set.walksBuilt = 1u << Cell16;
+        for (const Candidate &c : kCandidates) // optional: one that doesn't build is left out of the choice
+        {
+            Game g;
+            if (!em00(c.index, g.bytes) || !mot_sample::valid(g.bytes.data(), g.bytes.size()) || fnv(g.bytes) != c.hash)
+                continue;
+            g.span = static_cast<float>(mot_sample::frames(g.bytes.data())) - 1.0f;
+            const Scaled right(g, c.size);
+            const Mirror left(right);
+            auto &w = set.walks[c.source];
+            if (bake(right, {Warp{walkRef, std::vector<float>(c.right, c.right + 5), float(kWalkSpan)}}, kWalkSpan, walkTravel, false, w[1]) &&
+                bake(left, {Warp{walkRef, std::vector<float>(c.left, c.left + 5), float(kWalkSpan)}}, kWalkSpan, walkTravel, false, w[0]))
+                set.walksBuilt |= 1u << c.source;
         }
         set.guarded = 0u;
         for (uint32_t b = 0; b < static_cast<uint32_t>(kBones); ++b)

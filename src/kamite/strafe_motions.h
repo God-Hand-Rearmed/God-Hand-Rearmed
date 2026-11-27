@@ -46,6 +46,7 @@ namespace kamite::strafe_motions
         std::vector<std::array<float, 3>> tr;         // (span + 1) x kTranslated
         std::vector<std::array<float, 3>> root;       // span + 1, from 0 at frame 0
         std::array<std::array<float, 3>, kTranslated> mean{}; // each translation's mean over the loop
+        mot_sample::Quat armMean[kBones];             // each part's mean rotation over the loop (the arms' calming)
         int axis = 0;                                 // the steps' direction: 0 x (sideways), 2 z (the back-pedal)
         float travel = 0.0f;                          // the root along it over one loop
     };
@@ -56,9 +57,24 @@ namespace kamite::strafe_motions
         float tr[kTranslated][3];
     };
 
+    // The slow strafe's candidates (K, Nov 27: switched live in F2 to judge in game; strafe_round4.py): the grid's
+    // cell numbers. 16 = 3450 (built as WalkLeft / WalkRight), 1 = em00 50, 7 = 1604, 13 = 2438, each his right and
+    // it mirrored, on his walk's grid at 1.74 m/s.
+    enum WalkSource
+    {
+        Cell16,
+        Cell1,
+        Cell7,
+        Cell13,
+        kWalkSources
+    };
+    constexpr const char *kWalkSourceNames[kWalkSources] = {"16 (3450)", "1 (50)", "7 (1604)", "13 (2438)"};
+
     struct Set
     {
         std::array<Motion, kSides> motions;
+        std::array<std::array<Motion, 2>, kWalkSources> walks; // [source][0 his left, 1 his right]; 16's = motions'
+        uint32_t walksBuilt = 0;                               // bit per source
         mot_sample::Quat guard[kBones]; // his guard (pl00 9, his idle, frame 0)
         uint32_t guarded = 0;           // bit b: the guard turns part b
     };
