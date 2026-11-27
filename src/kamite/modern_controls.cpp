@@ -59,7 +59,6 @@
 #include "kamite/log.h"
 #include "kamite/menu_buttons.h"
 #include "kamite/style_presets.h"
-#include "kamite/strafe_motions.h"
 #include "kamite/strafing_tiger.h"
 #include "kamite/test_mode.h"
 #include "kamite/game_layout.h"
@@ -422,10 +421,17 @@ namespace kamite::modern
                 const float relative = wrapAngle(desired - g_geneYaw.load(std::memory_order_relaxed));
                 g_moveYaw = g_cameraYaw.load(std::memory_order_relaxed);
                 g_moving = true;
-                if (!g_sprinting.load(std::memory_order_relaxed))
+                const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
+                if (!sprinting)
                     strafing_tiger::setSlide(relative);
+                // Past 100 deg (back to 90) he walks at any deflection (K, Nov 27: the back-diagonals from the slow
+                // strafe, never the run's): the game runs from a stick offset of 100 (x² + y² >= 10000, chooser
+                // 0x1243CC) and moves from 10 (> 100, 0x108BFC), so 90.
+                static bool s_backWalk = false;
+                s_backWalk = !sprinting && std::fabs(relative) > (s_backWalk ? 1.5707963f : 1.7453293f);
+                const float offset = s_backWalk ? std::fmin(magnitude * 127.0f, 90.0f) : magnitude * 127.0f;
                 state.leftX = 0x80u;
-                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(128.0f - magnitude * 127.0f, 0.0f), 255.0f)));
+                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(128.0f - offset, 0.0f), 255.0f)));
                 return;
             }
             g_moveYaw = desired;
@@ -648,16 +654,20 @@ namespace kamite::modern
                          "strafes##tiger", strafing_tiger::setting());
             if (strafing_tiger::enabled())
             {
-                // K, Nov 27: switch the slow strafe and calm its arms live, to judge in game (not saved).
-                int source = strafing_tiger::walkSource().load(std::memory_order_relaxed);
-                ui->text("Slow strafe (grid cell, em00 motion)");
+                // K, Nov 27: the strafes' choices and numbers, live, to judge in game (not saved).
+                static const char *const kWalkChoices[] = {"By Tension: 7, 16 at a full gauge", "16 (3450)", "7 (1604)", "13 (2438)"};
+                int choice = strafing_tiger::walkChoice().load(std::memory_order_relaxed);
+                ui->text("Slow strafe");
                 ui->set_next_width(340.0f);
-                if (ui->combo("##tigerwalk", &source, strafe_motions::kWalkSourceNames, strafe_motions::kWalkSources))
-                    strafing_tiger::walkSource() = source;
-                if (!strafing_tiger::walkSourceBuilt(source))
+                if (ui->combo("##tigerwalk", &choice, kWalkChoices, 4))
+                    strafing_tiger::walkChoice() = choice;
+                if (choice > 0 && !strafing_tiger::walkSourceBuilt(choice - 1))
                     ui->text_disabled("Not built from this disc: 16 plays.");
-                slider(ui, "Slow strafe arm swing##tigerarms", strafing_tiger::armKeep(), 0.0f, 1.0f, "%.2f");
-                ui->text_disabled("1 = as animated; lower keeps the arms' set but less of their swing. Not saved.");
+                slider(ui, "16's arm swing at 3 / 9 o'clock##tigerarms", strafing_tiger::tensionArms(), 0.0f, 1.0f, "%.2f");
+                slider(ui, "Back-pedal arms toward 16's at 6 o'clock##tigerback", strafing_tiger::tensionBack(), 0.0f, 1.0f, "%.2f");
+                slider(ui, "Fast strafe guard##tigerguard", strafing_tiger::runGuard(), 0.0f, 1.0f, "%.2f");
+                slider(ui, "Fast strafe bounce##tigerbounce", strafing_tiger::runBounce(), 0.0f, 1.0f, "%.2f");
+                ui->text_disabled("Arm swing / bounce: 1 = as animated. Not saved.");
             }
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)

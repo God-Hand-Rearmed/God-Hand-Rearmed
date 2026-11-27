@@ -287,7 +287,6 @@ namespace kamite::strafe_motions
             float size, right[5], left[5];
         };
         constexpr Candidate kCandidates[] = {
-            {Cell1, 50u, 0xF636A2A1u, 0.993350972f, {27.5f, 47.75f, 69.75f, 89.75f, 109.5f}, {7.75f, 27.5f, 47.75f, 69.75f, 89.75f}},
             {Cell7, 1604u, 0xA04F6E34u, 1.062444885f, {23.5f, 42.5f, 69.75f, 90.75f, 119.5f}, {42.5f, 69.75f, 90.75f, 119.5f, 138.5f}},
             {Cell13, 2438u, 0x416F340Eu, 0.996367880f, {15.5f, 35.25f, 63.5f, 79.5f, 115.5f}, {35.25f, 63.5f, 79.5f, 115.5f, 135.25f}},
         };

@@ -57,18 +57,16 @@ namespace kamite::strafe_motions
         float tr[kTranslated][3];
     };
 
-    // The slow strafe's candidates (K, Nov 27: switched live in F2 to judge in game; strafe_round4.py): the grid's
-    // cell numbers. 16 = 3450 (built as WalkLeft / WalkRight), 1 = em00 50, 7 = 1604, 13 = 2438, each his right and
-    // it mirrored, on his walk's grid at 1.74 m/s.
+    // The slow strafe's candidates (K, Nov 27; strafe_round4.py): the grid's cell numbers. 16 = 3450 (built as
+    // WalkLeft / WalkRight; at full Tension), 7 = em00 1604 (the rest of the time), 13 = 2438 (to compare in F2), each
+    // his right and it mirrored, on his walk's grid at 1.74 m/s. (Cell 1 dropped, K: its lower back doesn't fit Gene.)
     enum WalkSource
     {
         Cell16,
-        Cell1,
         Cell7,
         Cell13,
         kWalkSources
     };
-    constexpr const char *kWalkSourceNames[kWalkSources] = {"16 (3450)", "1 (50)", "7 (1604)", "13 (2438)"};
 
     struct Set
     {

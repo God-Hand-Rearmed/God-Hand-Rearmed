@@ -22,11 +22,15 @@ namespace kamite::strafing_tiger
     // Window thread: Gene sprints (a dash, phase 6, and the run it carries into until he stops or walks): no
     // strafing, he runs where the camera points (K, Nov 26).
     void setSprint(bool sprint);
-    // F2 > Controls (K, Nov 27: to compare in game, not saved): the slow strafe (strafe_motions::WalkSource) and how
-    // much of its arms' swing about their mean pose is kept (1 = as authored). walkSourceBuilt: false for a candidate
-    // em00.dat didn't give (the choice falls back to 16).
-    std::atomic<int> &walkSource();
-    std::atomic<float> &armKeep();
+    // F2 > Controls (K, Nov 27: to judge in game; live, not saved): the slow strafe (0 = by Tension: cell 7, 16 at a
+    // full gauge; 1 + strafe_motions::WalkSource = that one), 16's arm swing kept at 3 / 9 o'clock (0.69) and how far
+    // his back-pedal's arms go toward 16's at 6 (0.48), the fast strafe's guard (0.6) and bounce (1 = as animated).
+    // walkSourceBuilt: false for one em00.dat didn't give (16 plays).
+    std::atomic<int> &walkChoice();
+    std::atomic<float> &tensionArms();
+    std::atomic<float> &tensionBack();
+    std::atomic<float> &runGuard();
+    std::atomic<float> &runBounce();
     bool walkSourceBuilt(int source);
 
     // Hooks cObjBase_addNullSpeed (0x14F928) and the motion pose (0x158328). Install before every other wrapper of
