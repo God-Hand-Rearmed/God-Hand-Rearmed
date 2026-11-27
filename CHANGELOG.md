@@ -39,6 +39,7 @@ Newest first, one line per change; the code comments say how.
 - Strafing Tiger prototype: running toward the diagonals turns his own run toward the stick (up to 45 degrees, his chest still facing the camera), then a smooth sideways step with its own guard takes over by 3 / 9; walking sideways takes shorter, quicker steps; F2 > Controls tunes the angle, speed, pace, arms, torso, bounce, hips and walking step pace, with a reset to defaults (not saved).
 - Strafing Tiger prototype: switching straight from one side to the other (A to D, a flick across) turns him over without stopping or a nudge forward; the slow walk sideways takes evener, shorter steps.
 - Strafing Tiger prototype: the slow strafe is one animation at any Tension (the full-gauge one is out, with its F2 sliders and the strafe choice).
+- Strafing Tiger prototype: no stutter going between the back diagonals and the sides; sprinting turns his run toward the stick up to 45 degrees too, the stick past it turning him (F2 switch).
 - Signal Style Switch's sound follows the Sound Effects volume.
 - Modern: the radar's free-camera glow shows again when the game started on a device whose style isn't Modern.
 - Performance: enemies whose upper body twists (most of them) keep their bones' passes in native code (they fell back to the recompiled code every frame).

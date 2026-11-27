@@ -449,12 +449,20 @@ namespace kamite::modern
                 static bool s_back = false;
                 const float edge = (s_back ? 102.5f : 122.5f) * (3.14159265f / 180.0f);
                 s_back = !sprinting && std::fabs(std::atan2(lx, -ly)) > edge;
+                // Sprinting (K, Nov 27): his run turned toward the stick up to the F2 angle (45 deg) as in his run, the
+                // stick past it turning him.
+                auto &rs = strafing_tiger::runStrafe();
+                const bool warp = sprinting && rs.sprintTurn.load(std::memory_order_relaxed) != 0;
+                const float most = warp ? std::fmin(std::fmax(rs.turn.load(std::memory_order_relaxed), 0.0f), 60.0f) * (3.14159265f / 180.0f) : 0.0f;
                 if (!sprinting)
                     strafing_tiger::setSlide(relative);
+                else if (warp)
+                    strafing_tiger::setSlide(std::fmin(std::fmax(relative, -most), most));
                 // Sprinting: the stick turns him as the game's run does (phase 2, 0x10C7B0: +0x608 the stick's angle
                 // from his facing, 30 deg of dead zone, then 0.4 x the rest a game frame, at most 2.88 deg (0x3BD478);
-                // the dash, phase 6, doesn't turn by the stick): the share of that most, + = right (camera side).
-                const float off = std::fabs(relative) - 30.0f * (3.14159265f / 180.0f);
+                // the dash, phase 6, doesn't turn by the stick): the share of that most, + = right (camera side); with
+                // the turned run, from where it stops.
+                const float off = std::fabs(relative) - std::fmax(30.0f * (3.14159265f / 180.0f), most);
                 const float turn = std::fmin(std::fmax(off * 0.4f / (2.88f * (3.14159265f / 180.0f)), 0.0f), 1.0f);
                 g_sprintTurn.store(sprinting ? (relative > 0.0f ? -turn : turn) : 0.0f, std::memory_order_relaxed);
                 const float offset = magnitude * 127.0f;
@@ -706,6 +714,11 @@ namespace kamite::modern
                 }
                 slider(ui, "Walking: step pace at 3 / 9 (higher = shorter steps)##tigerwalkpace", rs.walkPace, 0.8f, 1.8f, "%.2f");
                 slider(ui, "His run turned toward the stick up to##tigerturn", rs.turn, 0.0f, 60.0f, "%.0f deg");
+                {
+                    bool sprintTurn = rs.sprintTurn.load(std::memory_order_relaxed) != 0;
+                    if (ui->checkbox("Sprinting too (the stick past it turns him)##tigersprintturn", &sprintTurn))
+                        rs.sprintTurn = sprintTurn ? 1 : 0;
+                }
                 slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
                 slider(ui, "Bounce (the hips' up-down)##tigerbounce", rs.bounce, 0.0f, 1.5f, "%.2f");
@@ -742,7 +755,7 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
-                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
+                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg" << (rs.sprintTurn.load() ? " (sprinting too)" : "") << " (legs x" << pace << " own pace, steps x" << steps << ")");
                 if (ui->small_button("Reset to defaults##tigerreset"))
                     strafing_tiger::resetTuning();
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");

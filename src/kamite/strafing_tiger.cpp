@@ -127,6 +127,15 @@ namespace kamite::strafing_tiger
             float tr[strafe_motions::kTranslated][3];
         } g_held, g_switched; // the last blended pose; the one before a walk <-> run switch
         int64_t g_switchMs = -100000;
+        // A switch's offset (K, Nov 27: walk <-> back-pedal stuttered once: the hips and foot targets weren't faded, the
+        // feet jumped 0.6 m in a frame): the pose before less the first pose after, eased out over kStopMs on top of the
+        // live pose (it keeps moving; the old fade froze toward the pose before).
+        struct Offset
+        {
+            bool set = false;
+            mot_sample::Quat rot[strafe_motions::kBones];
+            float tr[strafe_motions::kTranslated][3];
+        } g_offset;
         int64_t g_flipMs = -100000; // the last switch across (kFlipFrom)
 
         uint32_t rd32(const uint8_t *rdram, uint32_t a)
@@ -160,7 +169,7 @@ namespace kamite::strafing_tiger
         // sprinting: mode 0, phase 1 / 2 / 3.
         bool moving(const uint8_t *rdram, uint32_t obj)
         {
-            if (!isPlayer(rdram, obj) || g_sprint.load(std::memory_order_relaxed) ||
+            if (!isPlayer(rdram, obj) || (g_sprint.load(std::memory_order_relaxed) && !g_runStrafe.sprintTurn.load(std::memory_order_relaxed)) ||
                 (!g_slide.load(std::memory_order_relaxed) && nowMs() - g_stickMs >= kLetGoMs))
                 return false;
             const uint8_t major = rdram[obj + kMajor], sub = rdram[obj + kSub];
@@ -260,14 +269,14 @@ namespace kamite::strafing_tiger
         {
             if (!g_ready || !moving(rdram, obj) || !(b.loop = playing(rdram, obj, b.motion)))
                 return false;
-            const bool stick = g_slide.load(std::memory_order_relaxed);
+            const bool stick = g_slide.load(std::memory_order_relaxed), sprint = g_sprint.load(std::memory_order_relaxed);
             const float angle = g_angle.load(std::memory_order_relaxed);
             const int64_t now = nowMs();
             const uint32_t loads = ps2x::savestate::loadCount();
             const float dt = static_cast<float>(now - g_lastMs) / 1000.0f;
             if (now - g_lastMs > kStillMs || loads != g_loads)
             {
-                g_theta = stick ? angle : 0.0f, g_presence = stick ? 1.0f : 0.0f;
+                g_theta = stick && !sprint ? angle : 0.0f, g_presence = stick ? 1.0f : 0.0f; // a sprint eases into the turn
                 g_track.valid = false;
                 g_flipMs = -100000;
             }
@@ -285,6 +294,12 @@ namespace kamite::strafing_tiger
                 if (stick) // the shortest way round
                     g_theta = wrapAngle(g_theta + wrapAngle(angle - g_theta) * (1.0f - std::exp(-dt / kEaseSeconds)));
                 g_presence += ((stick ? 1.0f : 0.0f) - g_presence) * (1.0f - std::exp(-dt / kLetGoSeconds));
+            }
+            if (sprint) // sprinting (K, Nov 27): only his run turned toward the stick, no side-steps
+            {
+                const float most = std::fmin(std::fmax(g_runStrafe.turn.load(std::memory_order_relaxed), 0.0f), 60.0f) * kHalfTurn / 180.0f;
+                g_theta = std::fmin(std::fmax(g_theta, -most), most);
+                g_flipMs = -100000;
             }
             g_lastMs = now, g_loads = loads;
             if (stick)
@@ -528,13 +543,16 @@ namespace kamite::strafing_tiger
             const int64_t now = nowMs();
             const int state = b.front ? static_cast<int>(b.run) : 2;
             if (g_lastRun >= 0 && g_lastRun != state && g_held.valid && now - g_held.ms < kStillMs)
-                g_switched = g_held, g_switchMs = now;
+                g_switched = g_held, g_switchMs = now, g_offset.set = false;
             g_lastRun = state;
             g_poseInner(rdram, ctx, runtime); // his pose, root outputs and caches: the game's
             restoreOurs(rdram, obj);
             if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
                 (!b.front && b.u >= 1.0f && std::fabs(b.his - 1.0f) < 1e-3f))
+            {
+                g_held.valid = false; // his own: a switch from here is the game's
                 return; // straight ahead / straight back / let go: his own, untouched
+            }
             uint32_t part[strafe_motions::kBones], anchor[strafe_motions::kTranslated];
             if (!partsOf(rdram, obj, part, anchor))
                 return;
@@ -709,13 +727,37 @@ namespace kamite::strafing_tiger
             }
             if (now - g_switchMs < kStopMs)
             {
+                auto inv = [](const mot_sample::Quat &q) { return mot_sample::Quat{q.w, -q.x, -q.y, -q.z}; };
+                if (!g_offset.set)
+                {
+                    for (int i = 0; i < strafe_motions::kBones; ++i)
+                    {
+                        float e[3];
+                        std::memcpy(e, rdram + part[i] + kPartRotation, 12);
+                        g_offset.rot[i] = mot_sample::mul(mot_sample::eulerQuat(g_switched.euler[i]), inv(mot_sample::eulerQuat(e)));
+                    }
+                    for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                        for (int c = 0; c < 3; ++c)
+                            g_offset.tr[j][c] = g_switched.tr[j][c] - rdF(rdram, anchor[j] + 4u * static_cast<uint32_t>(c));
+                    g_offset.set = true;
+                }
                 const float x = 1.0f - static_cast<float>(now - g_switchMs) / static_cast<float>(kStopMs), f = x * x * (3.0f - 2.0f * x);
+                const mot_sample::Quat none{1.0f, 0.0f, 0.0f, 0.0f};
                 for (int i = 0; i < strafe_motions::kBones; ++i)
                 {
                     float e[3];
                     std::memcpy(e, rdram + part[i] + kPartRotation, 12);
-                    writePart(rdram, part[i], e, mot_sample::slerp(mot_sample::eulerQuat(e), mot_sample::eulerQuat(g_switched.euler[i]), f));
+                    writePart(rdram, part[i], e, mot_sample::mul(mot_sample::slerp(none, g_offset.rot[i], f), mot_sample::eulerQuat(e)));
                     std::memcpy(g_held.euler[i], rdram + part[i] + kPartRotation, 12);
+                }
+                for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                {
+                    float v[3];
+                    std::memcpy(v, rdram + anchor[j], 12);
+                    for (int c = 0; c < 3; ++c)
+                        v[c] += g_offset.tr[j][c] * f;
+                    std::memcpy(rdram + anchor[j], v, 12);
+                    std::memcpy(g_held.tr[j], v, 12);
                 }
             }
             g_held.valid = true;
@@ -766,6 +808,8 @@ namespace kamite::strafing_tiger
             if (!blendFor(rdram, obj, b))
             {
                 g_track.valid = false;
+                if (g_sprint.load(std::memory_order_relaxed))
+                    return g_inner(rdram, ctx, runtime); // sprinting outside his run loop: straight, as the game's
                 return slide(rdram, ctx, runtime, obj);
             }
             // The side's root delta between the grid clocks of this call and the last (the step moveMotion just made).
