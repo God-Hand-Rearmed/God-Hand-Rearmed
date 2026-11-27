@@ -86,6 +86,15 @@ namespace kamite::strafing_tiger
             {298u, 19u, true, false, 3, {14.5f, 23.5f, 32.5f}, {10.5f, 17.0f, 23.5f}},
             {23u, 43u, false, true, 0, {}, {}},
         };
+        // A walk / run <-> back-pedal flip (K, Nov 27: spinning the stick): the game starts the new loop at frame 0
+        // (func_002A8578's start, ELF) with a 10-frame blend toward the pose before (setMotionInfo 0x157568: mtxBind,
+        // blend +0x27C; moveMotion counts +0x438 down by the step). Under Tiger the new loop starts at the step the
+        // side motion was at instead (by its touchdowns); the game's blend stays (harness: with the step matched it is
+        // harmless, and cancelled the switches jumped more) but in spin mode (it dragged the spin's steps and lean).
+        constexpr uint32_t kBlendLeft = 0x438u, kBlendLen = 0x43Cu;
+        constexpr int64_t kSpinEaseMs = 150;   // spin mode in / out
+        constexpr float kSpinOffShare = 0.7f;  // spin mode ends under this share of its threshold
+        constexpr float kSpinRateSeconds = 0.1f; // the stick's turning rate, smoothed
 
         std::atomic<bool> g_setting{false};
         std::atomic<bool> g_slide{false};
@@ -137,6 +146,28 @@ namespace kamite::strafing_tiger
             float tr[strafe_motions::kTranslated][3];
         } g_offset;
         int64_t g_flipMs = -100000; // the last switch across (kFlipFrom)
+        struct LastMove // his loop and clock after the last moveMotion (a flip starts the new loop in step with it)
+        {
+            const Loop *loop = nullptr;
+            const strafe_motions::Motion *side = nullptr; // the side motion the last pose drew on it
+            float clock = 0.0f;
+            int64_t ms = -100000;
+            uint32_t loads = 0u;
+        } g_lastMove;
+        // Spinning the stick (K, Nov 27): the stick's turning rate; past RunStrafe::spinFrom turns a second, 7's short
+        // steps on their own clock (sigma, 7 on his walk's grid), latched to the side the stick turns to, eased in / out.
+        struct Spin
+        {
+            float rate = 0.0f;  // rad/s, + = toward his left (smoothed)
+            float last = 0.0f;  // the stick's angle at the last rate step
+            int64_t ms = -100000;
+            bool on = false;
+            float weight = 0.0f;
+            int side = 0;       // 0 his left, 1 his right
+            float sigma = 0.0f; // 7's frame on his walk's grid
+            bool rephase = false; // spin over: his loop's clock to sigma's step (moveMotionWrapped, once)
+        } g_spin;
+        const strafe_motions::Motion *g_drawnSide = nullptr; // the side motion the last blended pose drew
 
         uint32_t rd32(const uint8_t *rdram, uint32_t a)
         {
@@ -233,6 +264,93 @@ namespace kamite::strafing_tiger
             return wrapTo(loop.to[k] + u * (loop.to[k + 1] - loop.to[k]), grid);
         }
 
+        // The step's phase at frame t of a side motion, by its touchdowns: k + the way from its k-th to the next (feet 24,
+        // 20, 24, ...: even k = foot 24 down); its frame at phase p (wrapped onto its touchdowns, so a one-cycle grid takes
+        // a two-cycle one's phase mod 2: the feet stay the same).
+        float touchPhase(const strafe_motions::Motion &m, float t)
+        {
+            const std::vector<float> &r = m.touch;
+            if (r.size() < 3u)
+                return 0.0f;
+            const float x = wrapTo(t - r.front(), r.back() - r.front()) + r.front();
+            size_t k = 0;
+            while (k + 2 < r.size() && r[k + 1] <= x)
+                ++k;
+            return static_cast<float>(k) + (x - r[k]) / (r[k + 1] - r[k]);
+        }
+        float touchFrame(const strafe_motions::Motion &m, float p)
+        {
+            const std::vector<float> &r = m.touch;
+            if (r.size() < 3u)
+                return 0.0f;
+            p = wrapTo(p, static_cast<float>(r.size() - 1u));
+            const size_t k = std::min(static_cast<size_t>(p), r.size() - 2u);
+            return wrapTo(r[k] + (p - static_cast<float>(k)) * (r[k + 1] - r[k]), static_cast<float>(m.span));
+        }
+        // His clock for the grid's frame sigma (gridClock's inverse).
+        float loopClock(const Loop &loop, float sigma)
+        {
+            const float span = static_cast<float>(loop.frames - 1u);
+            if (loop.anchors == 0)
+                return wrapTo(sigma, span);
+            const float a = loop.to[0], z = loop.to[loop.anchors - 1];
+            const float x = wrapTo(sigma - a, z - a) + a;
+            int k = 0;
+            while (k + 2 < loop.anchors && loop.to[k + 1] <= x)
+                ++k;
+            const float u = (x - loop.to[k]) / (loop.to[k + 1] - loop.to[k]);
+            return wrapTo(loop.from[k] + u * (loop.from[k + 1] - loop.from[k]), span);
+        }
+        // The side motion the blend draws on a loop for a side (0 his left): blendFor's choice.
+        const strafe_motions::Motion &sideFor(const Loop &loop, int side)
+        {
+            if (!loop.back && loop.run && g_set.sideRunBuilt && g_runStrafe.legs.load(std::memory_order_relaxed) == 0)
+                return g_set.sideRun[g_runStrafe.flip.load(std::memory_order_relaxed) ? 1 : 0][side];
+            const int a = ((g_set.walksBuilt >> strafe_motions::Cell7) & 1u) ? strafe_motions::Cell7 : strafe_motions::Cell16;
+            return (loop.back ? g_set.backs : loop.run ? g_set.runs : g_set.walks)[a][side];
+        }
+        const strafe_motions::Motion &spinMotion()
+        {
+            const int a = ((g_set.walksBuilt >> strafe_motions::Cell7) & 1u) ? strafe_motions::Cell7 : strafe_motions::Cell16;
+            return g_set.walks[a][g_spin.side];
+        }
+
+        // Spinning the stick: the turning rate (host time, once a frame: the pose runs up to three times one), spin
+        // mode on past RunStrafe::spinFrom and off under kSpinOffShare of it, the weight eased, 7's clock stepped.
+        // A jump over kSpinJump in one step (A -> D, the stick flicked through the centre) isn't turning.
+        constexpr float kSpinJump = 60.0f * kHalfTurn / 180.0f;
+        void spinStep(bool stick, float angle, int64_t now, const strafe_motions::Motion &drawn, float sigma)
+        {
+            Spin &s = g_spin;
+            const float dt = static_cast<float>(now - s.ms) / 1000.0f;
+            if (dt < 0.008f)
+                return;
+            if (!stick || dt > 0.1f)
+                s.rate = 0.0f;
+            else
+            {
+                const float step = wrapAngle(angle - s.last);
+                if (std::fabs(step) <= kSpinJump)
+                    s.rate += (step / dt - s.rate) * (1.0f - std::exp(-dt / kSpinRateSeconds));
+            }
+            s.last = angle, s.ms = now;
+            const RunStrafe &rs = g_runStrafe;
+            const float from = std::fmin(std::fmax(rs.spinFrom.load(std::memory_order_relaxed), 0.25f), 8.0f) * 2.0f * kHalfTurn;
+            if (!s.on && stick && std::fabs(s.rate) >= from)
+            {
+                s.on = true, s.rephase = false;
+                if (s.weight <= 0.0f) // from the step drawn, on the side it turns to
+                    s.side = s.rate >= 0.0f ? 0 : 1, s.sigma = touchFrame(spinMotion(), touchPhase(drawn, sigma));
+            }
+            else if (s.on && (!stick || std::fabs(s.rate) < from * kSpinOffShare))
+                s.on = false, s.rephase = stick;
+            s.weight = std::fmin(std::fmax(s.weight + (s.on ? 1.0f : -1.0f) * dt * 1000.0f / static_cast<float>(kSpinEaseMs), 0.0f), 1.0f);
+            if (s.weight > 0.0f) // 7's steps at the slow strafe's pace (his walk's step x the F2 walk pace) x the F2 spin pace
+                s.sigma = wrapTo(s.sigma + dt * 30.0f * 1.3f * std::fmin(std::fmax(rs.walkPace.load(std::memory_order_relaxed), 0.5f), 2.0f) *
+                                               std::fmin(std::fmax(rs.spinPace.load(std::memory_order_relaxed), 0.25f), 3.0f),
+                                 static_cast<float>(spinMotion().span));
+        }
+
         // The stick's split for this frame (eases stepped in host time). a = the eased angle from his facing. His walk
         // / run (the game's, up to the split): his loop gives way to the side-step up to 90 deg (ws = a / 90), the
         // side-step alone past it. His back-pedal (the game's, past the split): the side-step gives way to it from
@@ -279,6 +397,8 @@ namespace kamite::strafing_tiger
                 g_theta = stick && !sprint ? angle : 0.0f, g_presence = stick ? 1.0f : 0.0f; // a sprint eases into the turn
                 g_track.valid = false;
                 g_flipMs = -100000;
+                g_spin = Spin{};
+                g_spin.last = angle, g_spin.ms = now;
             }
             else
             {
@@ -402,6 +522,10 @@ namespace kamite::strafing_tiger
             b.sd = (vx - (b.front ? along * std::sin(turn) : 0.0f)) / b.sideSpeed;
             b.grid = static_cast<float>(b.sideMotion->span);
             b.stride = static_cast<float>(b.loop->frames - 1u) / b.grid;
+            if (sprint) // no spinning while sprinting
+                g_spin = Spin{}, g_spin.last = angle, g_spin.ms = now;
+            else
+                spinStep(stick, angle, now, *b.sideMotion, gridClock(*b.loop, rdF(rdram, obj + kClock), b.grid));
             return true;
         }
 
@@ -425,6 +549,56 @@ namespace kamite::strafing_tiger
                 if (!inRam(anchor[j] = rd32(rdram, part[strafe_motions::kTranslatedBones[j]] + kPartAnchor) & PS2_RAM_MASK, 12u))
                     return false;
             return true;
+        }
+
+        // Spin mode's pose (K, Nov 27), w of it on top of the blend: 7 on its own clock (g_spin), its steps shortened
+        // (the hips' and foot targets' swing and the thighs' about their means), its arms; the shoulders (the spine and
+        // chest each half, in model space) leaning toward where the stick points and turned toward it by its sideways
+        // share (F2, both to compare).
+        void spinPose(uint8_t *rdram, const uint32_t part[strafe_motions::kBones], const uint32_t anchor[strafe_motions::kTranslated], float w)
+        {
+            const RunStrafe &rs = g_runStrafe;
+            const strafe_motions::Motion &m = spinMotion();
+            const float steps = std::fmin(std::fmax(rs.spinSteps.load(std::memory_order_relaxed), 0.1f), 1.0f);
+            strafe_motions::Pose p;
+            strafe_motions::sample(m, g_spin.sigma, steps, p);
+            for (int i : {18, 22}) // the thighs
+                if ((m.rotated >> i) & 1u)
+                    p.rot[i] = mot_sample::slerp(m.armMean[i], p.rot[i], steps);
+            auto get = [&](int i, float e[3]) {
+                std::memcpy(e, rdram + part[i] + kPartRotation, 12);
+                return std::isfinite(e[0]) && std::isfinite(e[1]) && std::isfinite(e[2]);
+            };
+            for (int i = 0; i < strafe_motions::kBones; ++i)
+            {
+                float e[3];
+                if (((m.rotated >> i) & 1u) && get(i, e))
+                    writePart(rdram, part[i], e, mot_sample::slerp(mot_sample::eulerQuat(e), p.rot[i], w));
+            }
+            for (int j = 0; j < strafe_motions::kTranslated; ++j)
+            {
+                float v[3];
+                std::memcpy(v, rdram + anchor[j], 12);
+                for (int c = 0; c < 3; ++c)
+                    v[c] += (p.tr[j][c] - v[c]) * w;
+                std::memcpy(rdram + anchor[j], v, 12);
+            }
+            const float dir = g_angle.load(std::memory_order_relaxed), dx = std::sin(dir), dz = std::cos(dir);
+            const float lean = std::fmin(std::fmax(rs.spinLean.load(std::memory_order_relaxed), 0.0f), 30.0f) * kHalfTurn / 180.0f * w;
+            const float turn = std::fmin(std::fmax(rs.spinTurn.load(std::memory_order_relaxed), 0.0f), 45.0f) * kHalfTurn / 180.0f * dx * w;
+            float e0[3], e1[3], e2[3];
+            if ((lean > 1e-4f || std::fabs(turn) > 1e-4f) && get(0, e0) && get(1, e1) && get(2, e2))
+            {
+                // lean: the up axis toward (dx, 0, dz), about up x it = (dz, 0, -dx); turn: about up (+ = his left)
+                const mot_sample::Quat l{std::cos(0.5f * lean), dz * std::sin(0.5f * lean), 0.0f, -dx * std::sin(0.5f * lean)};
+                const mot_sample::Quat t{std::cos(0.5f * turn), 0.0f, std::sin(0.5f * turn), 0.0f};
+                const mot_sample::Quat h = mot_sample::slerp(mot_sample::Quat{1.0f, 0.0f, 0.0f, 0.0f}, mot_sample::mul(t, l), 0.5f);
+                auto inv = [](const mot_sample::Quat &q) { return mot_sample::Quat{q.w, -q.x, -q.y, -q.z}; };
+                const mot_sample::Quat w0 = mot_sample::eulerQuat(e0), l1 = mot_sample::eulerQuat(e1), l2 = mot_sample::eulerQuat(e2);
+                const mot_sample::Quat w1 = mot_sample::mul(w0, l1);
+                writePart(rdram, part[1], e1, mot_sample::mul(inv(w0), mot_sample::mul(h, w1)));
+                writePart(rdram, part[2], e2, mot_sample::mul(inv(w1), mot_sample::mul(h, mot_sample::mul(w1, l2))));
+            }
         }
 
         // Standing again right after a blend: his own pose eased in from the last blended one.
@@ -531,6 +705,7 @@ namespace kamite::strafing_tiger
             if (!blendFor(rdram, obj, b))
             {
                 g_pace = 1.0f;
+                g_drawnSide = nullptr;
                 g_poseInner(rdram, ctx, runtime);
                 restoreOurs(rdram, obj);
                 if (g_ready && !g_sprint.load(std::memory_order_relaxed))
@@ -538,6 +713,7 @@ namespace kamite::strafing_tiger
                 return;
             }
             g_pace = b.pace; // his clock's next step (moveMotionWrapped)
+            g_drawnSide = b.sideMotion;
             const float t = rdF(rdram, obj + kClock);
             // Walk <-> run <-> back-pedal: from the pose before (kept before this frame's overwrites it), 200 ms.
             const int64_t now = nowMs();
@@ -547,8 +723,9 @@ namespace kamite::strafing_tiger
             g_lastRun = state;
             g_poseInner(rdram, ctx, runtime); // his pose, root outputs and caches: the game's
             restoreOurs(rdram, obj);
-            if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
-                (!b.front && b.u >= 1.0f && std::fabs(b.his - 1.0f) < 1e-3f))
+            const float spinW = g_spin.weight * b.presence; // spin mode: never his own untouched
+            if (spinW < 1e-3f && (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
+                                  (!b.front && b.u >= 1.0f && std::fabs(b.his - 1.0f) < 1e-3f)))
             {
                 g_held.valid = false; // his own: a switch from here is the game's
                 return; // straight ahead / straight back / let go: his own, untouched
@@ -725,6 +902,14 @@ namespace kamite::strafing_tiger
                 std::memcpy(rdram + anchor[j], out, 12);
                 std::memcpy(g_held.tr[j], out, 12);
             }
+            if (spinW > 1e-3f)
+            {
+                spinPose(rdram, part, anchor, spinW);
+                for (int i = 0; i < strafe_motions::kBones; ++i)
+                    std::memcpy(g_held.euler[i], rdram + part[i] + kPartRotation, 12);
+                for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                    std::memcpy(g_held.tr[j], rdram + anchor[j], 12);
+            }
             if (now - g_switchMs < kStopMs)
             {
                 auto inv = [](const mot_sample::Quat &q) { return mot_sample::Quat{q.w, -q.x, -q.y, -q.z}; };
@@ -781,15 +966,51 @@ namespace kamite::strafing_tiger
             wrF(rdram, obj + kDelta + 8u, z);
         }
 
+        // Before moveMotion steps: a walk / run <-> back-pedal flip that setMotionInfo has just started (its blend still
+        // whole) starts at the step the last pose's side motion was at; a spin just over puts his loop's clock at the
+        // spin's step (once).
+        void handOver(uint8_t *rdram, uint32_t obj)
+        {
+            uint32_t motion = 0u;
+            const Loop *loop = g_ready && moving(rdram, obj) ? playing(rdram, obj, motion) : nullptr;
+            if (!loop)
+                return;
+            const LastMove &last = g_lastMove;
+            const strafe_motions::Motion &next = sideFor(*loop, g_theta >= 0.0f ? 0 : 1);
+            const float left = rdF(rdram, obj + kBlendLeft);
+            if (last.loop && last.side && last.loop->back != loop->back && last.loads == ps2x::savestate::loadCount() &&
+                nowMs() - last.ms < kStillMs && left > 0.0f && left == rdF(rdram, obj + kBlendLen))
+            {
+                const float was = touchPhase(*last.side, gridClock(*last.loop, last.clock, static_cast<float>(last.side->span)));
+                wrF(rdram, obj + kClock, loopClock(*loop, touchFrame(next, was)));
+                if (g_spin.weight > 0.0f) // spin mode's pose runs on its own clock through the flips: the game's fade
+                    wrF(rdram, obj + kBlendLeft, 0.0f); // toward the pose at each would drag it (moveMotion: blend 0)
+            }
+            else if (g_spin.rephase && last.loop == loop)
+                wrF(rdram, obj + kClock, loopClock(*loop, touchFrame(next, touchPhase(spinMotion(), g_spin.sigma))));
+            g_spin.rephase = false;
+        }
+        void noteMove(const uint8_t *rdram, uint32_t obj)
+        {
+            uint32_t motion = 0u;
+            g_lastMove = LastMove{g_ready ? playing(rdram, obj, motion) : nullptr, g_drawnSide, rdF(rdram, obj + kClock), nowMs(), ps2x::savestate::loadCount()};
+        }
+
         // His clock's step x the run's pace while the blend asks for one (K, Nov 27: the side-steps at their own pace
         // toward 3 / 9; everything stays locked to his clock). The step is put back after, unless moveMotion set a new
         // one (a motion change), so nothing outside moveMotion (a save state, the 60 FPS hold's record) sees it scaled.
         void moveMotionWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t obj = GPR_U32(ctx, 4);
-            const float k = g_pace;
-            if (std::fabs(k - 1.0f) < 1e-4f || !isPlayer(rdram, obj))
+            if (!isPlayer(rdram, obj))
                 return g_moveInner(rdram, ctx, runtime);
+            handOver(rdram, obj);
+            const float k = g_pace;
+            if (std::fabs(k - 1.0f) < 1e-4f)
+            {
+                g_moveInner(rdram, ctx, runtime);
+                return noteMove(rdram, obj);
+            }
             const float v = rdF(rdram, obj + kMotionStep), scaled = v * k;
             wrF(rdram, obj + kMotionStep, scaled);
             g_paceApplied = k;
@@ -797,6 +1018,7 @@ namespace kamite::strafing_tiger
             g_paceApplied = 1.0f;
             if (rdF(rdram, obj + kMotionStep) == scaled)
                 wrF(rdram, obj + kMotionStep, v);
+            noteMove(rdram, obj);
         }
 
         void addNullSpeedWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
@@ -835,7 +1057,15 @@ namespace kamite::strafing_tiger
             side *= b.cross; // a switch across: the side before's way still, through 0, to the new side's
             const float phi = b.phi * b.cross * b.presence, c = std::cos(phi), sn = std::sin(phi);
             const float xr = x * c + z * sn, zr = -x * sn + z * c; // his step turned toward the stick
-            const float nx = b.his * xr + b.sd * side, nz = b.his * zr;
+            float nx = b.his * xr + b.sd * side, nz = b.his * zr;
+            if (g_spin.weight > 1e-3f) // spin mode: where the stick points, at the F2 speed (half a step a call at 60)
+            {
+                const float share = rdram[game::GameWork::address(game::GameWork::kVblankDivider) & PS2_RAM_MASK] == 1u ? 0.5f : 1.0f;
+                const float d = std::fmin(std::fmax(g_runStrafe.spinSpeed.load(std::memory_order_relaxed), 0.2f), 6.0f) / 30.0f * share;
+                const float dir = g_angle.load(std::memory_order_relaxed);
+                nx += (d * std::sin(dir) - nx) * g_spin.weight;
+                nz += (d * std::cos(dir) - nz) * g_spin.weight;
+            }
             wrF(rdram, obj + kDelta, x + (nx - x) * b.presence);
             wrF(rdram, obj + kDelta + 8u, z + (nz - z) * b.presence);
             g_inner(rdram, ctx, runtime);

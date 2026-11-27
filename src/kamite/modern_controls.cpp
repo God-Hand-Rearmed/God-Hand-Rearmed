@@ -723,6 +723,13 @@ namespace kamite::modern
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
                 slider(ui, "Bounce (the hips' up-down)##tigerbounce", rs.bounce, 0.0f, 1.5f, "%.2f");
                 slider(ui, "Hips lowered##tigerhips", rs.hips, 0.0f, 8.0f, "%.1f cm");
+                ui->separator_text("Spinning the stick: 7's short steps in a small circle");
+                slider(ui, "Spin mode from##tigerspinfrom", rs.spinFrom, 0.75f, 4.0f, "%.2f turns a second");
+                slider(ui, "Spinning: speed##tigerspinspeed", rs.spinSpeed, 0.5f, 3.0f, "%.2f m/s");
+                slider(ui, "Spinning: step length (x 7's)##tigerspinsteps", rs.spinSteps, 0.2f, 1.0f, "%.2f");
+                slider(ui, "Spinning: step pace (x the walk's at 3 / 9)##tigerspinpace", rs.spinPace, 0.5f, 2.0f, "%.2f");
+                slider(ui, "Spinning: shoulders lean toward where he moves##tigerspinlean", rs.spinLean, 0.0f, 20.0f, "%.1f deg");
+                slider(ui, "Spinning: shoulders turned toward it (sideways)##tigerspinturn", rs.spinTurn, 0.0f, 30.0f, "%.1f deg");
                 char line[160];
                 const float pace = strafing_tiger::readPace(), steps = strafing_tiger::readSteps();
                 if (pace > 0.0f)
@@ -755,7 +762,9 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
-                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg" << (rs.sprintTurn.load() ? " (sprinting too)" : "") << " (legs x" << pace << " own pace, steps x" << steps << ")");
+                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg" << (rs.sprintTurn.load() ? " (sprinting too)" : "") << " (legs x" << pace << " own pace, steps x" << steps << ")"
+                                  << "; spin from " << rs.spinFrom.load() << " turns/s, speed " << rs.spinSpeed.load() << " m/s, steps x" << rs.spinSteps.load()
+                                  << ", pace x" << rs.spinPace.load() << ", lean " << rs.spinLean.load() << " deg, turn " << rs.spinTurn.load() << " deg");
                 if (ui->small_button("Reset to defaults##tigerreset"))
                     strafing_tiger::resetTuning();
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");

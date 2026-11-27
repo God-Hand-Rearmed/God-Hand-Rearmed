@@ -248,6 +248,7 @@ namespace kamite::strafe_motions
             const float k = travel > 0.0f ? travel / native : 1.0f;
             out.native = native;
             out.sourceFrames = warps[0].src.back() - warps[0].src.front();
+            out.touch = warps[0].ref;
             out.sourceRate = 1.0f;
             for (size_t f = 0; f < frames; ++f)
             {

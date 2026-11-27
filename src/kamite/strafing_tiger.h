@@ -42,10 +42,19 @@ namespace kamite::strafing_tiger
         std::atomic<int> sprintTurn{1};    // sprinting: his run turned toward the stick up to `turn` too (K, Nov 27)
         std::atomic<float> walkPace{1.3f}; // walking: 7's step pace at 3 / 9 x this (K, Nov 27: quicker, shorter steps;
                                            // 1.3: x0.98 its own stride)
+        // Spinning the stick (K, Nov 27): past spinFrom turns a second, 7's short steps on their own clock, its arms,
+        // the shoulders leaning / turned toward where he moves, at a fixed speed (a small circle); eased in / out.
+        std::atomic<float> spinFrom{1.75f};  // turns a second
+        std::atomic<float> spinSpeed{2.3f};  // m/s (the slow strafe at 3 / 9: 2.3)
+        std::atomic<float> spinSteps{0.5f};  // step length x 7's
+        std::atomic<float> spinPace{1.0f};   // step pace x the slow strafe's
+        std::atomic<float> spinLean{6.0f};   // deg, the shoulders leaning toward where he moves
+        std::atomic<float> spinTurn{0.0f};   // deg, the shoulders turned toward it (x the sideways share)
         void reset()
         {
             legs = 0, speed = 0.48f, pace = 0.88f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 1;
             walkPace = 1.3f, sprintTurn = 1;
+            spinFrom = 1.75f, spinSpeed = 2.3f, spinSteps = 0.5f, spinPace = 1.0f, spinLean = 6.0f, spinTurn = 0.0f;
         }
     };
     RunStrafe &runStrafe();

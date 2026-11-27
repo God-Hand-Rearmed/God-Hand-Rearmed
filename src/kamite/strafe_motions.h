@@ -52,6 +52,8 @@ namespace kamite::strafe_motions
         float native = 0.0f;                          // ... as animated (before the steps were scaled)
         float sourceFrames = 0.0f;                    // the source's frames over one loop (its own pace: / span)
         float sourceRate = 1.0f;                      // the source's frames a 30 FPS frame as made
+        std::vector<float> touch;                     // its touchdowns on the grid (feet 24, 20, 24, ...; the last = the
+                                                      // first + span): the step's phase across grids
     };
 
     struct Pose
