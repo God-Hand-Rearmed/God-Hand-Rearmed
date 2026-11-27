@@ -715,9 +715,9 @@ namespace kamite::modern
                 slider(ui, "Walking: step pace at 3 / 9 (higher = shorter steps)##tigerwalkpace", rs.walkPace, 0.8f, 1.8f, "%.2f");
                 slider(ui, "His run turned toward the stick up to##tigerturn", rs.turn, 0.0f, 60.0f, "%.0f deg");
                 {
-                    bool sprintTurn = rs.sprintTurn.load(std::memory_order_relaxed) != 0;
+                    int sprintTurn = rs.sprintTurn.load(std::memory_order_relaxed) != 0 ? 1 : 0; // the F2 UI's checkbox takes an int
                     if (ui->checkbox("Sprinting too (the stick past it turns him)##tigersprintturn", &sprintTurn))
-                        rs.sprintTurn = sprintTurn ? 1 : 0;
+                        rs.sprintTurn = sprintTurn != 0 ? 1 : 0;
                 }
                 slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
