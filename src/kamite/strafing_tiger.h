@@ -33,20 +33,22 @@ namespace kamite::strafing_tiger
     std::atomic<float> &tensionBack();
     bool walkSourceBuilt(int source);
 
-    // F2 stage 1 (K, Nov 27; live, not saved): the run's side-step at full deflection. Legs: cell 11's shuffle (its
-    // own steps; the arms held in 7's posture) or the side-steps (7 / 16 by Tension). Speed and pace at 3 / 9 are
-    // shares of his run's (12 o'clock), eased in by the angle; the hips' drop and bounce apply to the run's side.
+    // F2 stage 1 (K, Nov 27; live, not saved): the run's side-step at full deflection. Legs: the jog (Mixamo's Jog
+    // Strafe Right; its torso / arms swing on cell 7's ready posture, scaled) or the side-steps (7 / 16 by Tension).
+    // Speed and pace at 3 / 9 are shares of his run's (12 o'clock), eased in by the angle; the hips' drop and bounce
+    // apply to the run's side.
     struct RunStrafe
     {
-        std::atomic<int> legs{0};        // 0 = cell 11's shuffle, 1 = the side-steps
-        std::atomic<int> upper{0};       // with 11's legs, the torso and head: 0 = 11's, 1 = 7's
-        std::atomic<float> speed{0.40f}; // 3 / 9 speed, a share of his run's
-        std::atomic<float> pace{1.0f};   // 3 / 9 step pace, a share of his run's
-        std::atomic<float> bounce{1.0f}; // the hips' up-down swing (1 = as animated)
-        std::atomic<float> hips{3.0f};   // the hips lowered, cm
+        std::atomic<int> legs{0};             // 0 = the jog, 1 = the side-steps
+        std::atomic<float> speed{0.25f};      // 3 / 9 speed, a share of his run's
+        std::atomic<float> pace{0.5f};        // 3 / 9 step pace, a share of his run's
+        std::atomic<float> bounce{1.0f};      // the hips' up-down swing (1 = as animated)
+        std::atomic<float> hips{0.0f};        // the hips lowered, cm
+        std::atomic<float> armSwing{0.7f};    // the jog's arm swing on 7's posture (1 = the jog's own)
+        std::atomic<float> torsoSwing{0.7f};  // ... and its torso / neck / head swing
     };
     RunStrafe &runStrafe();
-    bool shuffleBuilt(); // false: 11 isn't on this disc as the recipe needs it (the side-steps play)
+    bool jogBuilt(); // false: the jog didn't build (the side-steps play)
     // The read-out at 3 / 9 from his last run (0 = not run yet): the legs' pace (x its own, at 1 frame per 30 FPS
     // frame) and their step length (x its own).
     float readPace();

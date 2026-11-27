@@ -27,6 +27,7 @@ namespace kamite::mot_sample
     void quatMatrix(const Quat &q, float r[3][3]);
     Quat eulerQuat(const float e[3]);
     Quat slerp(const Quat &a, Quat b, float u);
+    Quat mul(const Quat &a, const Quat &b); // a then b applied first: R(a) R(b)
     // The Euler angles of r nearest `near` (each wound within half a turn of it); false if none rebuilds r.
     bool eulerNear(const float r[3][3], const float near[3], float out[3]);
 }

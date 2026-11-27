@@ -1,4 +1,5 @@
 #include "kamite/strafe_motions.h"
+#include "kamite/strafe_jog_data.h"
 
 #include <algorithm>
 #include <cmath>
@@ -230,6 +231,7 @@ namespace kamite::strafe_motions
             const float k = travel > 0.0f ? travel / native : 1.0f;
             out.native = native;
             out.sourceFrames = warps[0].src.back() - warps[0].src.front();
+            out.sourceRate = 1.0f;
             for (size_t f = 0; f < frames; ++f)
             {
                 for (int j = 0; j < kTranslated; ++j)
@@ -268,12 +270,66 @@ namespace kamite::strafe_motions
             uint32_t index, hash;
             float size, right[5], left[5];
         };
-        // Cell 11's boxing shuffle (K, Nov 27: back as the run's legs at 3 / 9; round 2's R2 recipe, strafe_round2.py):
-        // 2044 (his right) sized onto Gene, one of its cycles (feet 24, 20, 24) on one of his run's, at its own step
-        // length (the speed comes from the blend's shares; the hips' drop and bounce are applied live).
-        constexpr uint32_t kShuffle = 2044u, kShuffleHash = 0xE14A1A60u;
-        constexpr float kShuffleSize = 1.167537936f;
-        constexpr float kShuffleRight[3] = {17.75f, 27.75f, 41.75f}, kShuffleLeft[3] = {3.75f, 17.75f, 27.75f};
+        // The run's legs at 3 / 9 (K, Nov 27: the Mixamo jog, retargeted onto Gene offline, strafe_jog_data.h; 11
+        // cut): his right as made, its legs' locals and the torso / arms' swing (about their mean; the game puts it
+        // on cell 7's posture), the hips' and foot targets' translations, the root along x.
+        struct Jog : Src
+        {
+            Jog() { span = static_cast<float>(strafe_jog::kFrames - 1); }
+            static int legIndex(uint32_t b)
+            {
+                for (int i = 0; i < 10; ++i)
+                    if (strafe_jog::kLegBones[i] == static_cast<int>(b))
+                        return i;
+                return -1;
+            }
+            static int swingIndex(uint32_t b)
+            {
+                for (int i = 0; i < 12; ++i)
+                    if (strafe_jog::kSwingBones[i] == static_cast<int>(b))
+                        return i;
+                return -1;
+            }
+            static Quat at(const float (*rows)[4], int stride, int k, int f)
+            {
+                const float *v = rows[f * stride + k];
+                return Quat{v[0], v[1], v[2], v[3]};
+            }
+            bool rot(uint32_t b, float t, Quat &q) const override
+            {
+                const int l = legIndex(b), w = swingIndex(b);
+                if (l < 0 && w < 0)
+                    return false;
+                t = wrap(t, span);
+                const int f0 = std::min(static_cast<int>(t), strafe_jog::kFrames - 2);
+                const float u = t - static_cast<float>(f0);
+                const float (*rows)[4] = l >= 0 ? &strafe_jog::kLeg[0][0] : &strafe_jog::kSwing[0][0];
+                const int stride = l >= 0 ? 10 : 12, k = l >= 0 ? l : w;
+                q = mot_sample::slerp(at(rows, stride, k, f0), at(rows, stride, k, f0 + 1), u);
+                return true;
+            }
+            bool tr(uint32_t b, float t, float v[3]) const override
+            {
+                const int j = b == 0u ? 0 : b == 20u ? 1 : b == 24u ? 2 : -1;
+                if (j < 0)
+                    return false;
+                t = wrap(t, span);
+                const int f0 = std::min(static_cast<int>(t), strafe_jog::kFrames - 2);
+                const float u = t - static_cast<float>(f0);
+                for (int c = 0; c < 3; ++c)
+                    v[c] = strafe_jog::kTr[f0][j][c] + (strafe_jog::kTr[f0 + 1][j][c] - strafe_jog::kTr[f0][j][c]) * u;
+                return true;
+            }
+            void root(float t, float v[3]) const override
+            {
+                const float n = std::floor(t / span), f = t - n * span;
+                const int f0 = std::min(static_cast<int>(f), strafe_jog::kFrames - 2);
+                const float u = f - static_cast<float>(f0);
+                v[0] = strafe_jog::kRootX[f0] + (strafe_jog::kRootX[f0 + 1] - strafe_jog::kRootX[f0]) * u +
+                       n * (strafe_jog::kRootX[strafe_jog::kFrames - 1] - strafe_jog::kRootX[0]);
+                v[1] = v[2] = 0.0f;
+            }
+        };
         constexpr Candidate kCandidates[] = {
             {Cell7, 1604u, 0xA04F6E34u, 1.062444885f, {23.5f, 42.5f, 69.75f, 90.75f, 119.5f}, {42.5f, 69.75f, 90.75f, 119.5f, 138.5f}},
             {Cell13, 2438u, 0x416F340Eu, 0.996367880f, {15.5f, 35.25f, 63.5f, 79.5f, 115.5f}, {35.25f, 63.5f, 79.5f, 115.5f, 135.25f}},
@@ -336,17 +392,15 @@ namespace kamite::strafe_motions
             if (strafe(right, c.right, c.left, set.walks[c.source], set.runs[c.source], set.backs[c.source]))
                 set.walksBuilt |= 1u << c.source;
         }
-        { // optional too: without it the run's legs are the side-steps'
-            Game g;
-            if (em00(kShuffle, g.bytes) && mot_sample::valid(g.bytes.data(), g.bytes.size()) && fnv(g.bytes) == kShuffleHash)
-            {
-                g.span = static_cast<float>(mot_sample::frames(g.bytes.data())) - 1.0f;
-                const Scaled right(g, kShuffleSize);
-                const Mirror left(right);
-                set.shuffleBuilt =
-                    bake(left, {Warp{runRef, {kShuffleLeft[0], kShuffleLeft[1], kShuffleLeft[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, set.shuffle[0]) &&
-                    bake(right, {Warp{runRef, {kShuffleRight[0], kShuffleRight[1], kShuffleRight[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, set.shuffle[1]);
-            }
+        { // the run's legs at 3 / 9: the jog (his right as made, mirrored for his left), at its own steps
+            const Jog right;
+            const Mirror left(right);
+            set.jogBuilt = bake(left, {Warp{runRef, {strafe_jog::kLeftTouch[0], strafe_jog::kLeftTouch[1], strafe_jog::kLeftTouch[2]}, float(kRunSpan)}},
+                                kRunSpan, 0.0f, false, set.jog[0]) &&
+                           bake(right, {Warp{runRef, {strafe_jog::kRightTouch[0], strafe_jog::kRightTouch[1], strafe_jog::kRightTouch[2]}, float(kRunSpan)}},
+                                kRunSpan, 0.0f, false, set.jog[1]);
+            for (Motion &m : set.jog)
+                m.sourceRate = strafe_jog::kSourceRate;
         }
         return true;
     }

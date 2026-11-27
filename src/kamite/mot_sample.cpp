@@ -142,6 +142,12 @@ namespace kamite::mot_sample
                     sz * cy * cx - cz * sy * sx};
     }
 
+    Quat mul(const Quat &a, const Quat &b)
+    {
+        return {a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z, a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+                a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x, a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w};
+    }
+
     Quat slerp(const Quat &a, Quat b, float u)
     {
         float d = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z;

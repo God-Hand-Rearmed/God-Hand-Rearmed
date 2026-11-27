@@ -20,8 +20,8 @@
 //   frames (pl00 25 / 428), 3.0 m/s as built (the blend's shares stretch the steps to the speed asked);
 // - back (K, Nov 27: the game's own back-pedal past 112.5 deg, untouched straight back): the same on his back-pedal's
 //   42 frames (pl00 23: two cycles), 1.97 m/s (its own speed).
-// - the run's legs at 3 / 9 (K, Nov 27: cell 11's shuffle back, round 2's R2): 2044 and it mirrored, one cycle on
-//   one of his run's, its own step length.
+// - the run's legs at 3 / 9 (K, Nov 27: Mixamo's Jog Strafe Right, retargeted offline: strafe_jog_data.h; 11 cut):
+//   one cycle on one of his run's, its own step length; its torso / arm bones hold the jog's swing about their mean.
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
 // slerps; frame span = frame 0 but for the root's travel.
 namespace kamite::strafe_motions
@@ -51,6 +51,7 @@ namespace kamite::strafe_motions
         float travel = 0.0f;                          // the root along it over one loop
         float native = 0.0f;                          // ... as animated (before the steps were scaled)
         float sourceFrames = 0.0f;                    // the source's frames over one loop (its own pace: / span)
+        float sourceRate = 1.0f;                      // the source's frames a 30 FPS frame as made
     };
 
     struct Pose
@@ -77,8 +78,8 @@ namespace kamite::strafe_motions
         std::array<std::array<Motion, 2>, kWalkSources> runs;  // the same, two cycles averaged on his run's grid
         std::array<std::array<Motion, 2>, kWalkSources> backs; // the same on his back-pedal's grid
         uint32_t walksBuilt = 0;                               // bit per source (16's = motions' Walk / Run sides)
-        std::array<Motion, 2> shuffle;                         // cell 11's (2044) on his run's grid, its own steps
-        bool shuffleBuilt = false;
+        std::array<Motion, 2> jog;                             // the jog on his run's grid, its own steps (torso / arms:
+        bool jogBuilt = false;                                 // its swing about their mean, for cell 7's posture)
     };
 
     // A .dat's entry `index` (from its offset to the next one), false when it can't be read.
