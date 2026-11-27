@@ -684,24 +684,10 @@ namespace kamite::modern
                          "strafes##tiger", strafing_tiger::setting());
             if (strafing_tiger::enabled())
             {
-                // K, Nov 27: the strafes' choices and numbers, live, to judge in game (not saved).
-                static const char *const kWalkChoices[] = {"By Tension: 7, 16 at a full gauge", "16 (3450)", "7 (1604)", "13 (2438)"};
-                int choice = strafing_tiger::walkChoice().load(std::memory_order_relaxed);
-                ui->text("Side-step (walk and run)");
-                ui->set_next_width(340.0f);
-                if (ui->combo("##tigerwalk", &choice, kWalkChoices, 4))
-                    strafing_tiger::walkChoice() = choice;
-                if (choice > 0 && !strafing_tiger::walkSourceBuilt(choice - 1))
-                    ui->text_disabled("Not built from this disc: 16 plays.");
-                slider(ui, "16's arm swing at 3 / 9 o'clock##tigerarms", strafing_tiger::tensionArms(), 0.0f, 1.0f, "%.2f");
-                slider(ui, "Back-pedal arms toward 16's at 6 o'clock##tigerback", strafing_tiger::tensionBack(), 0.0f, 1.0f, "%.2f");
-                slider(ui, "16's arm pace (share of his steps')##tigerrate", strafing_tiger::tensionRate(), 0.25f, 1.0f, "%.2f");
-                slider(ui, "16's arms in the running side-step##tigerrun", strafing_tiger::tensionRun(), 0.0f, 1.0f, "%.2f");
-                ui->text_disabled("Arm swing: 1 = as animated. Not saved.");
                 // Stage 1 (K, Nov 27): the run's side-step at full deflection, legs and speed first (the arms held).
                 ui->separator_text("Running strafe: his run turned, then the side-step");
                 auto &rs = strafing_tiger::runStrafe();
-                static const char *const kLegs[] = {"The side-step (generated), its own body", "The side-steps (7 / 16 by Tension)"};
+                static const char *const kLegs[] = {"The side-step (generated), its own body", "The side-steps (7)"};
                 int legs = rs.legs.load(std::memory_order_relaxed);
                 ui->set_next_width(340.0f);
                 if (ui->combo("##tigerlegs", &legs, kLegs, 2))
@@ -756,9 +742,7 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
-                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << "); 16's arms: swing "
-                                  << strafing_tiger::tensionArms().load() << ", back " << strafing_tiger::tensionBack().load() << ", pace " << strafing_tiger::tensionRate().load()
-                                  << ", running " << strafing_tiger::tensionRun().load());
+                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg (legs x" << pace << " own pace, steps x" << steps << ")");
                 if (ui->small_button("Reset to defaults##tigerreset"))
                     strafing_tiger::resetTuning();
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");

@@ -60,14 +60,13 @@ namespace kamite::strafe_motions
         float tr[kTranslated][3];
     };
 
-    // The slow strafe's candidates (K, Nov 27; strafe_round4.py): the grid's cell numbers. 16 = 3450 (built as
-    // WalkLeft / WalkRight; at full Tension), 7 = em00 1604 (the rest of the time), 13 = 2438 (to compare in F2), each
-    // his right and it mirrored, on his walk's grid at 1.74 m/s. (Cell 1 dropped, K: its lower back doesn't fit Gene.)
+    // The slow strafe's sources (K, Nov 27; strafe_round4.py): the grid's cell numbers, each his right and it mirrored,
+    // on his walk's grid at 1.74 m/s. 7 = em00 1604 plays (at any Tension, K Nov 27: 16's arms out); 16 = 3450 is the
+    // recipe's base (built as WalkLeft / WalkRight; plays only if this disc's 7 doesn't build). (Cells 1 / 13 dropped.)
     enum WalkSource
     {
         Cell16,
         Cell7,
-        Cell13,
         kWalkSources
     };
 

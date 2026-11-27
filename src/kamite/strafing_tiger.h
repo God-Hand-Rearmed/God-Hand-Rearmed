@@ -24,21 +24,8 @@ namespace kamite::strafing_tiger
     // Window thread: Gene sprints (a dash, phase 6, and the run it carries into until he stops or walks): no
     // strafing, he runs where the camera points (K, Nov 26).
     void setSprint(bool sprint);
-    // F2 > Controls (K, Nov 27: to judge in game; live, not saved): the slow strafe (0 = by Tension: cell 7, 16 at a
-    // full gauge; 1 + strafe_motions::WalkSource = that one), 16's arm swing kept at 3 / 9 o'clock (0.69) and how far
-    // his back-pedal's arms go toward 16's at 6 (0.48).
-    // walkSourceBuilt: false for one em00.dat didn't give (16 plays).
-    std::atomic<int> &walkChoice();
-    std::atomic<float> &tensionArms();
-    std::atomic<float> &tensionBack();
-    // 16's arms at full Tension (K, Nov 27: twice too fast; loose and smooth): their pace against his steps (0.5), and
-    // how far they come into the running side-step (1: as in the walk's 3 / 9).
-    std::atomic<float> &tensionRate();
-    std::atomic<float> &tensionRun();
-    bool walkSourceBuilt(int source);
-
     // F2 (K, Nov 27; live, not saved): the run toward 3 / 9. His run turns toward the stick up to `turn`, then the side
-    // stride takes over by 3 / 9: the side-run (K's generated clip, its own body) or the side-steps (7 / 16 by Tension).
+    // stride takes over by 3 / 9: the side-run (K's generated clip, its own body) or the side-steps (7).
     // Speed and pace at 3 / 9 are shares of his run's (12 o'clock); the defaults play the side-run at its own pace and
     // step length. Arms / torso: 1 = the side-run's own, 0 = cell 7's ready posture.
     struct RunStrafe
@@ -52,8 +39,8 @@ namespace kamite::strafing_tiger
         std::atomic<float> torso{1.0f};    // ... its spine, neck and head
         std::atomic<float> turn{45.0f};    // his run turned toward the stick up to this (deg; K: good up to 45)
         std::atomic<int> flip{1};          // the side-step played backward, mirrored: the other shoulder leads (K's pick)
-        std::atomic<float> walkPace{1.3f}; // walking: 7 / 16's step pace at 3 / 9 x this (K, Nov 27: quicker, shorter
-                                           // steps; 1.3: 7's x0.98 its own, 16's x1.03)
+        std::atomic<float> walkPace{1.3f}; // walking: 7's step pace at 3 / 9 x this (K, Nov 27: quicker, shorter steps;
+                                           // 1.3: x0.98 its own stride)
         void reset()
         {
             legs = 0, speed = 0.48f, pace = 0.88f, bounce = 1.0f, hips = 0.0f, arms = 1.0f, torso = 1.0f, turn = 45.0f, flip = 1;
@@ -62,7 +49,7 @@ namespace kamite::strafing_tiger
     };
     RunStrafe &runStrafe();
     bool sideRunBuilt(); // false: the side-run didn't build (the side-steps play)
-    // Every F2 Tiger value back to its default (the run's above, the side-step choice, 16's arm keeps).
+    // Every F2 Tiger value back to its default (the run's above).
     void resetTuning();
     // The read-out at 3 / 9 from his last run (0 = not run yet): the legs' pace (x its own, at 1 frame per 30 FPS
     // frame) and their step length (x its own).
