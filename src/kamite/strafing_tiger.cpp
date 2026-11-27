@@ -428,16 +428,85 @@ namespace kamite::strafing_tiger
             }
         }
 
+        // What we changed in his parts, and from what. The pose writes only the channels his motion keys (an unkeyed
+        // rotation stays as it was: Gene's hips' (part 0) in every one of his loops, native/motion.cpp "unkeyed with
+        // 0x8000: 0"), so a part we wrote and the game didn't still holds ours at the next pose: put the game's back
+        // first, every call (the 60 FPS hold poses three times a frame: the turned run's hips span with it).
+        struct Ours
+        {
+            bool valid = false;
+            float base[3], wrote[3];
+        };
+        Ours g_oursRot[strafe_motions::kBones], g_oursTr[strafe_motions::kTranslated];
+        float g_beforeRot[strafe_motions::kBones][3], g_beforeTr[strafe_motions::kTranslated][3];
+        bool g_beforeValid = false;
+
+        // Right after the game's pose: ours that it left alone back to the game's, and the result kept to compare.
+        void restoreOurs(uint8_t *rdram, uint32_t obj)
+        {
+            uint32_t part[strafe_motions::kBones], anchor[strafe_motions::kTranslated];
+            g_beforeValid = partsOf(rdram, obj, part, anchor);
+            if (!g_beforeValid)
+                return;
+            auto put = [&](Ours &o, uint32_t at, float before[3]) {
+                if (o.valid && std::memcmp(rdram + at, o.wrote, 12) == 0)
+                    std::memcpy(rdram + at, o.base, 12);
+                o.valid = false;
+                std::memcpy(before, rdram + at, 12);
+            };
+            for (int i = 0; i < strafe_motions::kBones; ++i)
+                put(g_oursRot[i], part[i] + kPartRotation, g_beforeRot[i]);
+            for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                put(g_oursTr[j], anchor[j], g_beforeTr[j]);
+        }
+
+        // After our writes: what differs from the game's own, and its own.
+        void noteOurs(uint8_t *rdram, uint32_t obj)
+        {
+            uint32_t part[strafe_motions::kBones], anchor[strafe_motions::kTranslated];
+            if (!g_beforeValid || !partsOf(rdram, obj, part, anchor))
+                return;
+            g_beforeValid = false;
+            auto note = [&](Ours &o, uint32_t at, const float before[3]) {
+                if (std::memcmp(rdram + at, before, 12) == 0)
+                    return;
+                o.valid = true;
+                std::memcpy(o.base, before, 12);
+                std::memcpy(o.wrote, rdram + at, 12);
+            };
+            for (int i = 0; i < strafe_motions::kBones; ++i)
+                note(g_oursRot[i], part[i] + kPartRotation, g_beforeRot[i]);
+            for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                note(g_oursTr[j], anchor[j], g_beforeTr[j]);
+        }
+
+        void poseGene(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t obj);
+
         void poseWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t obj = GPR_U32(ctx, 4);
-            if (ctx->pc != kMotionPose || !isPlayer(rdram, obj))
-                return g_poseInner(rdram, ctx, runtime);
+            const bool pose = ctx->pc == kMotionPose;
+            if (!pose || !isPlayer(rdram, obj))
+            {
+                g_poseInner(rdram, ctx, runtime);
+                // Tiger turned off with ours still in his parts: the game's back once
+                if (pose && inRam(obj, 0x600u) && obj == rd32(rdram, kPlayerPointer))
+                    restoreOurs(rdram, obj), g_beforeValid = false;
+                return;
+            }
+            g_beforeValid = false;
+            poseGene(rdram, ctx, runtime, obj); // restoreOurs right after the game's pose, inside
+            noteOurs(rdram, obj);
+        }
+
+        void poseGene(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t obj)
+        {
             Blend b;
             if (!blendFor(rdram, obj, b))
             {
                 g_pace = 1.0f;
                 g_poseInner(rdram, ctx, runtime);
+                restoreOurs(rdram, obj);
                 if (g_ready && !g_sprint.load(std::memory_order_relaxed))
                     stopFade(rdram, obj);
                 return;
@@ -451,6 +520,7 @@ namespace kamite::strafing_tiger
                 g_switched = g_held, g_switchMs = now;
             g_lastRun = state;
             g_poseInner(rdram, ctx, runtime); // his pose, root outputs and caches: the game's
+            restoreOurs(rdram, obj);
             if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
                 (!b.front && b.u >= 1.0f && b.toB6 < 1e-3f && std::fabs(b.his - 1.0f) < 1e-3f))
                 return; // straight ahead / straight back (no Tension arms) / let go: his own, untouched
