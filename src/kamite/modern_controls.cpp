@@ -135,6 +135,7 @@ namespace kamite::modern
         std::atomic<float> g_stickX{0.0f}, g_stickY{0.0f};
         std::atomic<bool> g_moving{false};      // the left stick asks for a direction (Modern movement)
         std::atomic<bool> g_sprinting{false};   // Strafing Tiger: Gene sprints (a dash and the run after it)
+        std::atomic<float> g_sprintTurn{0.0f};  // ... and the left stick's left / right then (-1..1, + = right)
         // The game has Gene's controls off (0x747A78: 0x02000000 KeyStop, 0x80000000 / 0x40000000 player off): menus
         // in the room (the fight ring's sign-up, T2's case Nov 4: KeyStop from the talk on), talks, events. The left
         // stick then goes to the game as it is: turned to the camera it read as other directions as Gene turned.
@@ -424,14 +425,26 @@ namespace kamite::modern
                 const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
                 if (!sprinting)
                     strafing_tiger::setSlide(relative);
-                // Past 100 deg (back to 90) he walks at any deflection (K, Nov 27: the back-diagonals from the slow
-                // strafe, never the run's): the game runs from a stick offset of 100 (x² + y² >= 10000, chooser
-                // 0x1243CC) and moves from 10 (> 100, 0x108BFC), so 90.
-                static bool s_backWalk = false;
-                s_backWalk = !sprinting && std::fabs(relative) > (s_backWalk ? 1.5707963f : 1.7453293f);
-                const float offset = s_backWalk ? std::fmin(magnitude * 127.0f, 90.0f) : magnitude * 127.0f;
+                // Sprinting: the stick's left / right turns him (the camera side, g_sprintTurn).
+                g_sprintTurn.store(sprinting ? std::sin(relative) * -magnitude : 0.0f, std::memory_order_relaxed);
+                // Back attacks (K, Nov 27: they worked while back-pedalling and wanted kept): the game picks them from
+                // the stick pointing more than 135 deg from up when a button's window opens (chooser 0x123DD8..: +0x608
+                // > 2.356, +0x622 / +0x623); so for 150 ms after Square / Triangle / Circle / Cross goes down with the
+                // stick past his old back-pedal split (112.5 deg) the game sees the stick straight down.
+                static uint16_t s_buttonsWas = 0u;
+                static uint64_t s_backAttackUntilMs = 0u;
+                constexpr uint16_t kAttacks = ps2x::iop::PadButton::Square | ps2x::iop::PadButton::Triangle |
+                                              ps2x::iop::PadButton::Circle | ps2x::iop::PadButton::Cross;
+                const uint16_t pressed = static_cast<uint16_t>(state.buttons & ~s_buttonsWas & kAttacks);
+                s_buttonsWas = state.buttons;
+                const uint64_t nowMsPad = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                if (pressed && !sprinting && std::fabs(relative) > 1.9634954f)
+                    s_backAttackUntilMs = nowMsPad + 150u;
+                const bool backAttack = nowMsPad < s_backAttackUntilMs;
+                const float offset = magnitude * 127.0f;
                 state.leftX = 0x80u;
-                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(128.0f - offset, 0.0f), 255.0f)));
+                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(backAttack ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
                 return;
             }
             g_moveYaw = desired;
@@ -657,7 +670,7 @@ namespace kamite::modern
                 // K, Nov 27: the strafes' choices and numbers, live, to judge in game (not saved).
                 static const char *const kWalkChoices[] = {"By Tension: 7, 16 at a full gauge", "16 (3450)", "7 (1604)", "13 (2438)"};
                 int choice = strafing_tiger::walkChoice().load(std::memory_order_relaxed);
-                ui->text("Slow strafe");
+                ui->text("Side-step (walk and run)");
                 ui->set_next_width(340.0f);
                 if (ui->combo("##tigerwalk", &choice, kWalkChoices, 4))
                     strafing_tiger::walkChoice() = choice;
@@ -665,9 +678,7 @@ namespace kamite::modern
                     ui->text_disabled("Not built from this disc: 16 plays.");
                 slider(ui, "16's arm swing at 3 / 9 o'clock##tigerarms", strafing_tiger::tensionArms(), 0.0f, 1.0f, "%.2f");
                 slider(ui, "Back-pedal arms toward 16's at 6 o'clock##tigerback", strafing_tiger::tensionBack(), 0.0f, 1.0f, "%.2f");
-                slider(ui, "Fast strafe guard##tigerguard", strafing_tiger::runGuard(), 0.0f, 1.0f, "%.2f");
-                slider(ui, "Fast strafe bounce##tigerbounce", strafing_tiger::runBounce(), 0.0f, 1.0f, "%.2f");
-                ui->text_disabled("Arm swing / bounce: 1 = as animated. Not saved.");
+                ui->text_disabled("Arm swing: 1 = as animated. Not saved.");
             }
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)
@@ -911,9 +922,14 @@ namespace kamite::modern
             {
                 // Strafing Tiger (later.md round 2, first build): the camera keeps still while a move holds his
                 // facing (an attack, a dodge, a throw...): it turns again once he stands, walks, runs or back-pedals.
+                // A sprint isn't a move: the camera turns him then (K, Nov 27), and so does the left stick's left /
+                // right (A / D), at the camera's own stick speed.
                 const uint32_t gene = ram32(rdram, kPlayerPointer);
-                if (validPointer(gene) && !geneMoves(rdram, gene) && !backPedals(rdram, gene))
+                const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
+                if (validPointer(gene) && !geneMoves(rdram, gene) && !backPedals(rdram, gene) && !sprinting)
                     yawStep = 0.0f, pitchStep = 0.0f;
+                if (sprinting)
+                    yawStep += g_sprintTurn.load(std::memory_order_relaxed) * g_yawSpeed.load(std::memory_order_relaxed) * kDegToRad * dt;
             }
             g_yaw = wrapAngle(g_yaw - yawStep);
             const float floor = std::fmax(kPitchMin, std::fmin(g_pitchFloor.load(std::memory_order_relaxed), 0.0f));

@@ -40,7 +40,11 @@ namespace kamite::strafing_tiger
         constexpr float kHalfTurn = 3.14159265f, kQuarterTurn = 1.57079633f;
         // The side-steps' and the back-pedal's speeds (K, Nov 25-26: the walk 1.74 every way round, so a circle keeps
         // one speed; the run R2's 3.0 sideways and back).
-        constexpr float kWalkSideSpeed = 1.74f, kRunSideSpeed = 3.0f;
+        constexpr float kWalkSideSpeed = 1.74f, kRunSideSpeed = 3.0f; // as built (strafe_motions)
+        // At full deflection (K, Nov 27): his run (12 o'clock) down to his own back-pedal's speed (6), the middle at
+        // 4:30, linear on each side of it (so 3 / 9 is a bit over the middle).
+        constexpr float kBackPedalSpeed = 1.97f; // pl00 23's root, 2.76 m per 42 frames
+        constexpr float kArmSideSeconds = 0.25f; // past 150 deg the arms keep the side they had; a switch eases
         constexpr float kEaseSeconds = 0.1f;   // the stick's angle eases (a KBM key's 45 deg steps; a flick across)
         constexpr int64_t kStillMs = 250;      // no blend this long: the next one starts where the stick points
         constexpr int64_t kLetGoMs = 300;      // the stick let go while his loop still plays: the blend fades out
@@ -73,12 +77,10 @@ namespace kamite::strafing_tiger
         std::atomic<bool> g_slide{false};
         std::atomic<bool> g_sprint{false};
         std::atomic<float> g_angle{0.0f};
-        // F2 (K, Nov 27; live, not saved): the slow strafe (0 = by Tension: 7, 16 at a full gauge; else one cell), 16's
-        // arms (its swing kept at 3 / 9 o'clock; how far toward them his back-pedal's arms go at 6), the fast strafe's
-        // guard and bounce (the hips' up-down swing kept).
+        // F2 (K, Nov 27; live, not saved): the side-step (0 = by Tension: 7, 16 at a full gauge; else one cell), 16's
+        // arms (its swing kept at 3 / 9 o'clock; how far toward them his back-pedal's arms go at 6).
         std::atomic<int> g_walkChoice{0};
         std::atomic<float> g_tensionArms{0.69f}, g_tensionBack{0.48f};
-        std::atomic<float> g_runGuard{0.6f}, g_runBounce{1.0f};
         PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr;
         strafe_motions::Set g_set;
         bool g_ready = false;
@@ -93,6 +95,7 @@ namespace kamite::strafing_tiger
         float g_theta = 0.0f;    // the stick's angle from his facing, eased (+ = his left)
         float g_presence = 0.0f; // the blend's own weight: 1 with the stick out, fading to 0 once it's let go
         float g_tension = 0.0f;  // 16's weight in the slow strafe: eased toward 1 while the Tension gauge is full
+        float g_armLeft = 1.0f, g_armTarget = 1.0f; // past 90 deg: his left side-step's share of the arms
         int g_lastRun = -1;      // the tier of the last blend (a switch fades from the pose before it)
         int64_t g_lastMs = -100000, g_stickMs = -100000; // the last blend; the last one with the stick out
         uint32_t g_loads = 0u;
@@ -134,7 +137,6 @@ namespace kamite::strafing_tiger
         }
         float wrapTo(float t, float span) { return t - std::floor(t / span) * span; }
         float wrapAngle(float a) { return a - 2.0f * kHalfTurn * std::round(a / (2.0f * kHalfTurn)); }
-        bool upperBody(int b) { return (b >= 1 && b <= 16) || b == 26; }
         bool arm(int b) { return b >= 5 && b <= 16; }
 
         bool isPlayer(const uint8_t *rdram, uint32_t obj)
@@ -225,8 +227,7 @@ namespace kamite::strafing_tiger
             // The slow strafe: A (7, or the F2 cell) and B (16) per side [0 his left, 1 his right], B's weight wt;
             // B's arms keep `keep` of their swing; at 6 o'clock his back-pedal's arms go `toB6` of the way to B's.
             const strafe_motions::Motion *walkA[2] = {}, *walkB[2] = {};
-            float wt = 0.0f, keep = 1.0f, toB6 = 0.0f;
-            float guard = 0.6f, bounce = 1.0f; // the fast strafe
+            float wt = 0.0f, keep = 1.0f, toB6 = 0.0f, armLeft = 1.0f;
             bool run = false, front = true;
             float ws = 0.0f, u = 0.0f;              // the side's weight (front half); the back's (back half)
             float his = 1.0f, sd = 0.0f, bk = 0.0f; // the shares of the three swings and deltas
@@ -269,7 +270,6 @@ namespace kamite::strafing_tiger
             const float gauge = rdF(rdram, kHeat + 4u), full = rdF(rdram, kHeat + 0xCu);
             const bool tense = full > 0.0f && gauge >= full;
             g_tension += ((tense ? 1.0f : 0.0f) - g_tension) * (1.0f - std::exp(-std::fmax(dt, 0.0f) / kTensionSeconds));
-            if (!b.run)
             {
                 auto built = [](int c) { return ((g_set.walksBuilt >> c) & 1u) != 0u; };
                 const int choice = g_walkChoice.load(std::memory_order_relaxed); // 0 by Tension, else 1 + the cell's index
@@ -280,15 +280,20 @@ namespace kamite::strafing_tiger
                     a = built(choice - 1) ? choice - 1 : strafe_motions::Cell16;
                     bsrc = a, b.wt = 0.0f;
                 }
+                const auto &grid = b.run ? g_set.runs : g_set.walks;
                 for (int k = 0; k < 2; ++k)
-                    b.walkA[k] = &g_set.walks[a][k], b.walkB[k] = &g_set.walks[bsrc][k];
+                    b.walkA[k] = &grid[a][k], b.walkB[k] = &grid[bsrc][k];
                 b.sideMotion = b.walkA[left ? 0 : 1];
                 b.side += 16 * (a + 4 * bsrc); // the delta's track restarts on a switch
                 b.keep = bsrc == strafe_motions::Cell16 ? g_tensionArms.load(std::memory_order_relaxed) : 1.0f;
                 b.toB6 = b.wt * g_tensionBack.load(std::memory_order_relaxed);
             }
-            else
-                b.guard = g_runGuard.load(std::memory_order_relaxed), b.bounce = g_runBounce.load(std::memory_order_relaxed);
+            // The arms' side past 90 deg: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
+            // across doesn't flip it; averaging the two mirrored swings cancelled them, K Nov 27), eased on a switch.
+            if (a <= 150.0f * kHalfTurn / 180.0f)
+                g_armTarget = left ? 1.0f : 0.0f;
+            g_armLeft += (g_armTarget - g_armLeft) * (1.0f - std::exp(-std::fmax(dt, 0.0f) / kArmSideSeconds));
+            b.armLeft = g_armLeft;
             b.back = b.run ? Side::BackRun : Side::BackWalk;
             b.front = a <= kQuarterTurn;
             b.ws = b.front ? a / kQuarterTurn : 1.0f;
@@ -299,7 +304,12 @@ namespace kamite::strafing_tiger
             b.sideSpeed = b.run ? kRunSideSpeed : kWalkSideSpeed; // the back-pedal's too
             if (!(b.hisSpeed > 0.1f))
                 return false;
-            const float m = b.front ? (1.0f - b.ws) * b.hisSpeed + b.ws * b.sideSpeed : b.sideSpeed;
+            float m = b.front ? (1.0f - b.ws) * b.hisSpeed + b.ws * b.sideSpeed : b.sideSpeed;
+            if (b.run)
+            {
+                const float mid = 0.5f * (b.hisSpeed + kBackPedalSpeed), knee = 0.75f * kHalfTurn;
+                m = a <= knee ? b.hisSpeed + (mid - b.hisSpeed) * a / knee : mid + (kBackPedalSpeed - mid) * (a - knee) / (kHalfTurn - knee);
+            }
             const float vx = m * std::sin(a), vz = m * std::cos(a);
             b.his = b.front ? vz / b.hisSpeed : 0.0f;
             b.bk = b.front ? 0.0f : -vz / b.sideSpeed;
@@ -384,17 +394,7 @@ namespace kamite::strafing_tiger
             strafe_motions::Pose side, back, walkA[2], walkB[2];
             strafe_motions::sample(bm, sigma, b.stride, back);
             float ms[strafe_motions::kTranslated][3];
-            if (b.run)
-            {
-                strafe_motions::sample(sm, sigma, b.stride, side);
-                for (int j = 0; j < strafe_motions::kTranslated; ++j)
-                    for (int c = 0; c < 3; ++c)
-                        ms[j][c] = sm.mean[j][c];
-                if (b.bounce < 1.0f) // the hips' up-down swing calmer (F2)
-                    side.tr[0][1] = ms[0][1] + b.bounce * (side.tr[0][1] - ms[0][1]);
-            }
-            else // the slow strafe: A and B (16, its arms calmer) blended by the Tension weight
-            {
+            { // the side-steps: A and B (16, its arms calmer) blended by the Tension weight
                 const bool both = !b.front; // past 90 deg the arms mix his left and right ones (no pop at 6 o'clock)
                 for (int k = 0; k < 2; ++k)
                     if (k == own || both)
@@ -414,7 +414,6 @@ namespace kamite::strafing_tiger
                         ms[j][c] = b.walkA[own]->mean[j][c] + (b.walkB[own]->mean[j][c] - b.walkA[own]->mean[j][c]) * b.wt;
                     }
             }
-            const float leftShare = 0.5f + 0.5f * std::sin(g_theta); // his left's arms' share past 90 deg
             for (int i = 0; i < strafe_motions::kBones; ++i)
             {
                 float e[3];
@@ -424,21 +423,19 @@ namespace kamite::strafing_tiger
                 const mot_sample::Quat qg = mot_sample::eulerQuat(e);
                 const bool hasSide = (sm.rotated >> i) & 1u, hasBack = (bm.rotated >> i) & 1u;
                 mot_sample::Quat qs = hasSide ? side.rot[i] : qg;
-                if (hasSide && b.run && upperBody(i) && ((g_set.guarded >> i) & 1u))
-                    qs = mot_sample::slerp(qs, g_set.guard[i], b.guard); // the run: his guard mostly up
                 mot_sample::Quat q;
                 if (b.front)
                     q = mot_sample::slerp(qg, qs, b.ws);
-                else if (!arm(i) || b.run)
+                else if (!arm(i))
                     q = mot_sample::slerp(qs, hasBack ? back.rot[i] : qg, arm(i) ? 1.0f - (1.0f - b.u) * (1.0f - b.u) : b.u);
                 else
                 {
-                    // The arms: the slow strafe's (his left's and right's mixed by where the stick points) toward
+                    // The arms: the side-step's (his left's or right's, kept past 150 deg, eased on a switch) toward
                     // the back-pedal's, sooner than the legs (1 - (1 - u)^2); at full Tension 16's stay in by toB6 at
                     // 6 o'clock (K, Nov 27: the middle of the two shoulder sets, a bit of 16's motion).
                     const mot_sample::Quat mixL = mot_sample::slerp(walkA[0].rot[i], walkB[0].rot[i], b.wt);
                     const mot_sample::Quat mixR = mot_sample::slerp(walkA[1].rot[i], walkB[1].rot[i], b.wt);
-                    const mot_sample::Quat qa = hasSide ? mot_sample::slerp(mixR, mixL, leftShare) : qg;
+                    const mot_sample::Quat qa = hasSide ? mot_sample::slerp(mixR, mixL, b.armLeft) : qg;
                     const float soon = 1.0f - (1.0f - b.u) * (1.0f - b.u), toBack = soon * (1.0f - b.toB6);
                     q = mot_sample::slerp(qa, hasBack ? back.rot[i] : qg, toBack);
                 }
@@ -527,7 +524,7 @@ namespace kamite::strafing_tiger
                 if (step >= 0.0f && step < 0.5f * b.grid)
                 {
                     side = strafe_motions::rootAt(sm, g_track.sigma + step, b.stride) - strafe_motions::rootAt(sm, g_track.sigma, b.stride);
-                    if (!b.run && b.wt > 0.0f)
+                    if (b.wt > 0.0f)
                     {
                         const strafe_motions::Motion &mb2 = *b.walkB[b.left ? 0 : 1];
                         const float sideB = strafe_motions::rootAt(mb2, g_track.sigma + step, b.stride) - strafe_motions::rootAt(mb2, g_track.sigma, b.stride);
@@ -589,7 +586,7 @@ namespace kamite::strafing_tiger
             }
         };
 
-        // The side-steps, the back-pedal and his guard from em00.dat / pl00.dat on the disc (strafe_motions.h);
+        // The side-steps and the back-pedal from em00.dat / pl00.dat on the disc (strafe_motions.h);
         // false: step 1's slide only.
         bool buildSides()
         {
@@ -623,8 +620,6 @@ namespace kamite::strafing_tiger
     std::atomic<int> &walkChoice() { return g_walkChoice; }
     std::atomic<float> &tensionArms() { return g_tensionArms; }
     std::atomic<float> &tensionBack() { return g_tensionBack; }
-    std::atomic<float> &runGuard() { return g_runGuard; }
-    std::atomic<float> &runBounce() { return g_runBounce; }
     bool walkSourceBuilt(int source) { return g_ready && source >= 0 && source < strafe_motions::kWalkSources && ((g_set.walksBuilt >> source) & 1u); }
 
     void install(PS2Runtime &runtime)

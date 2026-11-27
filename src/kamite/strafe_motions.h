@@ -16,8 +16,8 @@
 // - walk: 3450 (his right) and it mirrored (his left), sized onto Gene, on his walk's 57 frames (pl00 21: two cycles)
 //   with every foot touchdown moved onto his (a piecewise-linear time warp), the steps scaled about each foot's mean to
 //   1.74 m/s;
-// - run: 2044 (cell 11's boxing shuffle, his right) and it mirrored, sized, hips 3 cm lower, one of its cycles on one
-//   of his run's 14 frames (pl00 25 / 428), touchdowns warped onto his, steps x2.2 for 3.0 m/s;
+// - run (K, Nov 27: 11 out; the side-steps at every speed): the same two cycles averaged onto one of his run's 14
+//   frames (pl00 25 / 428), 3.0 m/s as built (the blend's shares stretch the steps to the speed asked);
 // - back: his own back-pedal (pl00 23) on the walk's grid (1.74 m/s) and, its two cycles averaged, on the run's
 //   (3.0 m/s) (round 3, strafe_round3.py: the game keeps walking / running forward and the back-pedal is blended too).
 // Dense frames (a quaternion per part, the hips' and foot targets' translations, the root), sampled with whole-frame
@@ -31,7 +31,7 @@ namespace kamite::strafe_motions
     {
         WalkLeft,
         WalkRight,
-        RunLeft,
+        RunLeft,  // 16 on his run's grid (strafe_motions::Set::runs has every cell's)
         RunRight,
         BackWalk, // his own back-pedal (pl00 23) on his walk's grid, 1.74 m/s
         BackRun,  // its two cycles averaged onto his run's, 3.0 m/s
@@ -71,10 +71,9 @@ namespace kamite::strafe_motions
     struct Set
     {
         std::array<Motion, kSides> motions;
-        std::array<std::array<Motion, 2>, kWalkSources> walks; // [source][0 his left, 1 his right]; 16's = motions'
-        uint32_t walksBuilt = 0;                               // bit per source
-        mot_sample::Quat guard[kBones]; // his guard (pl00 9, his idle, frame 0)
-        uint32_t guarded = 0;           // bit b: the guard turns part b
+        std::array<std::array<Motion, 2>, kWalkSources> walks; // [source][0 his left, 1 his right] on his walk's grid
+        std::array<std::array<Motion, 2>, kWalkSources> runs;  // the same, two cycles averaged on his run's grid
+        uint32_t walksBuilt = 0;                               // bit per source (16's = motions' Walk / Run sides)
     };
 
     // A .dat's entry `index` (from its offset to the next one), false when it can't be read.
