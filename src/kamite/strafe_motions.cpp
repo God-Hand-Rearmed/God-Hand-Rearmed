@@ -158,7 +158,7 @@ namespace kamite::strafe_motions
         };
 
         // strafe_bake.py bake(): the sources (one, or two windows a cycle apart, averaged) on frames 0..span, the steps
-        // scaled about their means to `travel` per loop.
+        // scaled about their means to `travel` per loop (0: kept as animated).
         bool bake(const Src &m, const std::vector<Warp> &warps, int span, float travel, bool close, Motion &out, int axis = 0)
         {
             const size_t frames = static_cast<size_t>(span) + 1u, n = warps.size();
@@ -227,7 +227,9 @@ namespace kamite::strafe_motions
             const float native = std::fabs(out.root[span][axis] - out.root[0][axis]);
             if (!(native > 1e-3f))
                 return false;
-            const float k = travel / native;
+            const float k = travel > 0.0f ? travel / native : 1.0f;
+            out.native = native;
+            out.sourceFrames = warps[0].src.back() - warps[0].src.front();
             for (size_t f = 0; f < frames; ++f)
             {
                 for (int j = 0; j < kTranslated; ++j)
@@ -266,6 +268,12 @@ namespace kamite::strafe_motions
             uint32_t index, hash;
             float size, right[5], left[5];
         };
+        // Cell 11's boxing shuffle (K, Nov 27: back as the run's legs at 3 / 9; round 2's R2 recipe, strafe_round2.py):
+        // 2044 (his right) sized onto Gene, one of its cycles (feet 24, 20, 24) on one of his run's, at its own step
+        // length (the speed comes from the blend's shares; the hips' drop and bounce are applied live).
+        constexpr uint32_t kShuffle = 2044u, kShuffleHash = 0xE14A1A60u;
+        constexpr float kShuffleSize = 1.167537936f;
+        constexpr float kShuffleRight[3] = {17.75f, 27.75f, 41.75f}, kShuffleLeft[3] = {3.75f, 17.75f, 27.75f};
         constexpr Candidate kCandidates[] = {
             {Cell7, 1604u, 0xA04F6E34u, 1.062444885f, {23.5f, 42.5f, 69.75f, 90.75f, 119.5f}, {42.5f, 69.75f, 90.75f, 119.5f, 138.5f}},
             {Cell13, 2438u, 0x416F340Eu, 0.996367880f, {15.5f, 35.25f, 63.5f, 79.5f, 115.5f}, {35.25f, 63.5f, 79.5f, 115.5f, 135.25f}},
@@ -327,6 +335,18 @@ namespace kamite::strafe_motions
             const Scaled right(g, c.size);
             if (strafe(right, c.right, c.left, set.walks[c.source], set.runs[c.source], set.backs[c.source]))
                 set.walksBuilt |= 1u << c.source;
+        }
+        { // optional too: without it the run's legs are the side-steps'
+            Game g;
+            if (em00(kShuffle, g.bytes) && mot_sample::valid(g.bytes.data(), g.bytes.size()) && fnv(g.bytes) == kShuffleHash)
+            {
+                g.span = static_cast<float>(mot_sample::frames(g.bytes.data())) - 1.0f;
+                const Scaled right(g, kShuffleSize);
+                const Mirror left(right);
+                set.shuffleBuilt =
+                    bake(left, {Warp{runRef, {kShuffleLeft[0], kShuffleLeft[1], kShuffleLeft[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, set.shuffle[0]) &&
+                    bake(right, {Warp{runRef, {kShuffleRight[0], kShuffleRight[1], kShuffleRight[2]}, float(kRunSpan)}}, kRunSpan, 0.0f, false, set.shuffle[1]);
+            }
         }
         return true;
     }

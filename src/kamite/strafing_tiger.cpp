@@ -32,7 +32,13 @@ namespace kamite::strafing_tiger
         // The pose 0x158328 (obj in a0, from moveMotion before the clock steps): the motion at +0x428 at the clock
         // +0x430 into every part's Euler +0x100 (parts at +0x278, count +0x2B4) and the hips' / leg IK targets'
         // translations through the parts' +0xD0; root outputs +0x310 / +0x340 / +0x370.
-        constexpr uint32_t kAddNullSpeed = 0x0014F928u, kMotionPose = 0x00158328u;
+        // moveMotion (0x157C18; obj in a0): the clock steps by +0x444 (SetMotionStep 0x158288 / setMotionInfo
+        // 0x157568) x +0x440 x the frame's share (half at 60 FPS), read at 0x157C98 before the pose (0x157D5C); the
+        // root delta +0x330 = the pose's root output +0x310 - the last one (+0x320). His run (phase 2) steps 1.3 / 1.6
+        // (0x10C748..), his walk 1.3 / 1.6 (0x10C338..), his back-pedal 1.5 (0x10C954).
+        constexpr uint32_t kAddNullSpeed = 0x0014F928u, kMotionPose = 0x00158328u, kMoveMotion = 0x00157C18u;
+        constexpr uint32_t kMotionStep = 0x444u;
+        constexpr float kBackPedalStep = 1.5f;
         constexpr uint32_t kPlayerPointer = game::GameWork::address(game::GameWork::kPlayerObj);
         constexpr uint32_t kMajor = 0x2F4u, kSub = 0x2F5u, kParts = 0x278u, kPartCount = 0x2B4u, kPack = 0x304u,
                            kMotion = 0x428u, kClock = 0x430u, kDelta = 0x330u;
@@ -84,7 +90,11 @@ namespace kamite::strafing_tiger
         // arms (its swing kept at 3 / 9 o'clock; how far toward them his back-pedal's arms go at 6).
         std::atomic<int> g_walkChoice{0};
         std::atomic<float> g_tensionArms{0.69f}, g_tensionBack{0.48f};
-        PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr;
+        PS2Runtime::RecompiledFunction g_inner = nullptr, g_poseInner = nullptr, g_moveInner = nullptr;
+        RunStrafe g_runStrafe;
+        // The run's pace (K, Nov 27): his clock's step x g_pace in moveMotion (the blend's, from the last pose; 1 = his).
+        float g_pace = 1.0f, g_paceApplied = 1.0f;
+        std::atomic<float> g_readPace{0.0f}, g_readSteps{0.0f}; // F2's read-out (0: not run yet)
         strafe_motions::Set g_set;
         bool g_ready = false;
 
@@ -237,6 +247,8 @@ namespace kamite::strafing_tiger
             float presence = 1.0f;
             float stride = 1.0f, grid = 0.0f;
             float hisSpeed = 0.0f, sideSpeed = 0.0f;
+            float pace = 1.0f;     // his clock's step x this (the run's own pace toward 3 / 9)
+            bool shuffle = false;  // the run's legs are cell 11's (the side-steps' arms in 7's posture)
             const Forward *fwd = nullptr;
         };
 
@@ -292,6 +304,14 @@ namespace kamite::strafing_tiger
                 b.keep = bsrc == strafe_motions::Cell16 ? g_tensionArms.load(std::memory_order_relaxed) : 1.0f;
                 b.toB6 = b.wt * g_tensionBack.load(std::memory_order_relaxed);
             }
+            // The run's legs at 3 / 9 (F2 stage 1, K Nov 27): cell 11's shuffle.
+            const RunStrafe &rs = g_runStrafe;
+            b.shuffle = b.front && b.run && g_set.shuffleBuilt && rs.legs.load(std::memory_order_relaxed) == 0;
+            if (b.shuffle)
+            {
+                b.sideMotion = &g_set.shuffle[left ? 0 : 1];
+                b.side += 1024;
+            }
             // The arms' side in his back-pedal: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
             // across doesn't flip it; averaging the two mirrored swings cancelled them, K Nov 27), eased on a switch.
             if (a <= 150.0f * kHalfTurn / 180.0f)
@@ -304,21 +324,39 @@ namespace kamite::strafing_tiger
             b.fwd = &forward(rdram, b.motion, b.front ? (b.run ? 1 : 0) : 2);
             b.hisSpeed = b.fwd->speed;
             b.sideSpeed = !b.front ? kBackSideSpeed : b.run ? kRunSideSpeed : kWalkSideSpeed;
-            if (!(b.hisSpeed > 0.1f))
+            if (b.shuffle)
+                b.sideSpeed = std::fabs(b.sideMotion->travel) * 30.0f / static_cast<float>(b.sideMotion->span);
+            if (!(b.hisSpeed > 0.1f) || !(b.sideSpeed > 0.01f))
                 return false;
+            // Speeds as he moves (a motion's speed x his clock's step, +0x444, read unscaled): in his back-pedal the
+            // side's speed into his (one clock); in his walk / run a share R of his own, his clock's step x pace.
+            const float step = std::fabs(rdF(rdram, obj + kMotionStep)) / g_paceApplied;
             float m;
-            if (!b.front) // the side's speed into his back-pedal's
+            if (!b.front)
                 m = b.sideSpeed + (b.hisSpeed - b.sideSpeed) * b.u;
-            else if (!b.run)
-                m = b.hisSpeed + (b.sideSpeed - b.hisSpeed) * b.ws;
             else
             {
-                // His run toward the middle at 4:30 (K's line) up to 90 deg, then down to the back-pedal's by the
-                // split's near edge, so his own back-pedal takes over at its own speed.
-                const float mid = 0.5f * (b.hisSpeed + kBackPedalSpeed), knee = 0.75f * kHalfTurn;
-                const float at90 = b.hisSpeed + (mid - b.hisSpeed) * kQuarterTurn / knee;
-                m = a <= kQuarterTurn ? b.hisSpeed + (mid - b.hisSpeed) * a / knee
-                                      : at90 + (kBackPedalSpeed - at90) * std::fmin((a - kQuarterTurn) / (kBackLeave - kQuarterTurn), 1.0f);
+                float r90 = b.sideSpeed / b.hisSpeed; // the walk: the side-step's own speed at 3 / 9
+                if (b.run)
+                {
+                    if (!g_moveInner) // no hook on his clock: his pace
+                        b.pace = 1.0f;
+                    r90 = std::fmin(std::fmax(rs.speed.load(std::memory_order_relaxed), 0.05f), 1.0f);
+                    if (g_moveInner)
+                        b.pace = 1.0f + (std::fmin(std::fmax(rs.pace.load(std::memory_order_relaxed), 0.2f), 1.5f) - 1.0f) * b.ws;
+                }
+                // past 90 deg down to his back-pedal's own speed by the split's near edge, so it takes over at it
+                const float back = step > 0.01f ? kBackPedalSpeed * kBackPedalStep / (b.hisSpeed * step) : r90;
+                const float r = a <= kQuarterTurn ? 1.0f + (r90 - 1.0f) * b.ws
+                                                  : r90 + (back - r90) * std::fmin((a - kQuarterTurn) / (kBackLeave - kQuarterTurn), 1.0f);
+                m = r * b.hisSpeed / b.pace; // the motions' speed at his clock (it steps x pace)
+                if (b.run && step > 0.01f) // F2's read-out at 3 / 9
+                {
+                    const float k39 = std::fmin(std::fmax(rs.pace.load(std::memory_order_relaxed), 0.2f), 1.5f);
+                    const strafe_motions::Motion &sm = *b.sideMotion;
+                    g_readPace.store(sm.sourceFrames / static_cast<float>(sm.span) * step * k39, std::memory_order_relaxed);
+                    g_readSteps.store(r90 * b.hisSpeed / (k39 * b.sideSpeed) * std::fabs(sm.travel / sm.native), std::memory_order_relaxed);
+                }
             }
             // V = m (sin a, cos a) on his loop's axis (forward; his back-pedal's backward) and the side's.
             const float vx = m * std::sin(a), vz = m * std::cos(a);
@@ -386,11 +424,13 @@ namespace kamite::strafing_tiger
             Blend b;
             if (!blendFor(rdram, obj, b))
             {
+                g_pace = 1.0f;
                 g_poseInner(rdram, ctx, runtime);
                 if (g_ready && !g_sprint.load(std::memory_order_relaxed))
                     stopFade(rdram, obj);
                 return;
             }
+            g_pace = b.pace; // his clock's next step (moveMotionWrapped)
             const float t = rdF(rdram, obj + kClock);
             // Walk <-> run <-> back-pedal: from the pose before (kept before this frame's overwrites it), 200 ms.
             const int64_t now = nowMs();
@@ -407,6 +447,7 @@ namespace kamite::strafing_tiger
                 return;
             const float sigma = gridClock(*b.loop, t, b.grid);
             const strafe_motions::Motion &sm = *b.sideMotion;
+            uint32_t sideMask = sm.rotated;
             const int own = b.left ? 0 : 1;
             strafe_motions::Pose side, walkA[2], walkB[2];
             float ms[strafe_motions::kTranslated][3];
@@ -429,6 +470,32 @@ namespace kamite::strafing_tiger
                         ms[j][c] = b.walkA[own]->mean[j][c] + (b.walkB[own]->mean[j][c] - b.walkA[own]->mean[j][c]) * b.wt;
                     }
             }
+            if (b.shuffle) // cell 11's legs (and torso / head, or 7's), the arms in 7's posture (stage 1: still)
+            {
+                strafe_motions::Pose legs;
+                strafe_motions::sample(sm, sigma, b.stride, legs);
+                const bool ownUpper = g_runStrafe.upper.load(std::memory_order_relaxed) == 0;
+                const strafe_motions::Motion &a7 = *b.walkA[own];
+                sideMask = 0u;
+                for (int i = 0; i < strafe_motions::kBones; ++i)
+                {
+                    const bool leg = i == 0 || (i >= 17 && i <= 25);
+                    if (arm(i))
+                        side.rot[i] = a7.armMean[i], sideMask |= a7.rotated & (1u << i);
+                    else if (leg || ownUpper)
+                        side.rot[i] = legs.rot[i], sideMask |= sm.rotated & (1u << i);
+                    else
+                        side.rot[i] = walkA[own].rot[i], sideMask |= a7.rotated & (1u << i);
+                }
+                for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                    for (int c = 0; c < 3; ++c)
+                        side.tr[j][c] = legs.tr[j][c], ms[j][c] = sm.mean[j][c];
+            }
+            if (b.front && b.run) // the run's hips: lowered (reach for the longer steps) and their bounce scaled
+            {
+                const float drop = 0.01f * g_runStrafe.hips.load(std::memory_order_relaxed);
+                side.tr[0][1] = ms[0][1] - drop + g_runStrafe.bounce.load(std::memory_order_relaxed) * (side.tr[0][1] - ms[0][1]);
+            }
             for (int i = 0; i < strafe_motions::kBones; ++i)
             {
                 float e[3];
@@ -436,7 +503,7 @@ namespace kamite::strafing_tiger
                 if (!std::isfinite(e[0]) || !std::isfinite(e[1]) || !std::isfinite(e[2]))
                     continue;
                 const mot_sample::Quat qg = mot_sample::eulerQuat(e);
-                const bool hasSide = (sm.rotated >> i) & 1u;
+                const bool hasSide = (sideMask >> i) & 1u;
                 if (!b.front && b.u >= 1.0f && !arm(i) && b.presence >= 1.0f)
                 {
                     std::memcpy(g_held.euler[i], e, 12); // straight back: his own
@@ -520,6 +587,24 @@ namespace kamite::strafing_tiger
             wrF(rdram, obj + kDelta + 8u, z);
         }
 
+        // His clock's step x the run's pace while the blend asks for one (K, Nov 27: the side-steps at their own pace
+        // toward 3 / 9; everything stays locked to his clock). The step is put back after, unless moveMotion set a new
+        // one (a motion change), so nothing outside moveMotion (a save state, the 60 FPS hold's record) sees it scaled.
+        void moveMotionWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+        {
+            const uint32_t obj = GPR_U32(ctx, 4);
+            const float k = g_pace;
+            if (std::fabs(k - 1.0f) < 1e-4f || !isPlayer(rdram, obj))
+                return g_moveInner(rdram, ctx, runtime);
+            const float v = rdF(rdram, obj + kMotionStep), scaled = v * k;
+            wrF(rdram, obj + kMotionStep, scaled);
+            g_paceApplied = k;
+            g_moveInner(rdram, ctx, runtime);
+            g_paceApplied = 1.0f;
+            if (rdF(rdram, obj + kMotionStep) == scaled)
+                wrF(rdram, obj + kMotionStep, v);
+        }
+
         void addNullSpeedWrapped(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t obj = GPR_U32(ctx, 4);
@@ -545,7 +630,7 @@ namespace kamite::strafing_tiger
                 if (step >= 0.0f && step < 0.5f * b.grid)
                 {
                     side = strafe_motions::rootAt(sm, g_track.sigma + step, b.stride) - strafe_motions::rootAt(sm, g_track.sigma, b.stride);
-                    if (b.wt > 0.0f)
+                    if (b.wt > 0.0f && !b.shuffle)
                     {
                         const strafe_motions::Motion &mb2 = *b.walkB[b.left ? 0 : 1];
                         const float sideB = strafe_motions::rootAt(mb2, g_track.sigma + step, b.stride) - strafe_motions::rootAt(mb2, g_track.sigma, b.stride);
@@ -633,6 +718,10 @@ namespace kamite::strafing_tiger
     void clearSlide() { g_slide.store(false, std::memory_order_relaxed); }
     void setSprint(bool sprint) { g_sprint.store(sprint, std::memory_order_relaxed); }
     std::atomic<int> &walkChoice() { return g_walkChoice; }
+    RunStrafe &runStrafe() { return g_runStrafe; }
+    bool shuffleBuilt() { return g_ready && g_set.shuffleBuilt; }
+    float readPace() { return g_readPace.load(std::memory_order_relaxed); }
+    float readSteps() { return g_readSteps.load(std::memory_order_relaxed); }
     std::atomic<float> &tensionArms() { return g_tensionArms; }
     std::atomic<float> &tensionBack() { return g_tensionBack; }
     bool walkSourceBuilt(int source) { return g_ready && source >= 0 && source < strafe_motions::kWalkSources && ((g_set.walksBuilt >> source) & 1u); }
@@ -651,6 +740,13 @@ namespace kamite::strafing_tiger
             return;
         }
         g_ready = buildSides();
+        if (!runtime.hasFunction(kMoveMotion) || !(g_moveInner = runtime.lookupFunction(kMoveMotion)) ||
+            !FunctionHooks::instance().replace(kMoveMotion, "moveMotion (Strafing Tiger run pace)", &moveMotionWrapped,
+                                               ReplacementStatus::Native, "Strafing Tiger's run pace toward 3 / 9; 1 = the original"))
+        {
+            g_moveInner = nullptr;
+            KM_WARN(Game, "Strafing Tiger: moveMotion (0x157C18) is not hookable: the run keeps his pace");
+        }
         if (!runtime.hasFunction(kMotionPose) || !(g_poseInner = runtime.lookupFunction(kMotionPose)) ||
             !FunctionHooks::instance().replace(kMotionPose, "motion pose (Strafing Tiger side-steps)", &poseWrapped,
                                                ReplacementStatus::Native, "Strafing Tiger's side-steps on his walk / run, drawn"))

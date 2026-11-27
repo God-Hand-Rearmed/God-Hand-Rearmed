@@ -674,6 +674,60 @@ namespace kamite::modern
                 slider(ui, "16's arm swing at 3 / 9 o'clock##tigerarms", strafing_tiger::tensionArms(), 0.0f, 1.0f, "%.2f");
                 slider(ui, "Back-pedal arms toward 16's at 6 o'clock##tigerback", strafing_tiger::tensionBack(), 0.0f, 1.0f, "%.2f");
                 ui->text_disabled("Arm swing: 1 = as animated. Not saved.");
+                // Stage 1 (K, Nov 27): the run's side-step at full deflection, legs and speed first (the arms held).
+                ui->separator_text("Run side-step, stage 1: legs and speed");
+                auto &rs = strafing_tiger::runStrafe();
+                static const char *const kLegs[] = {"11's shuffle (arms held in 7's posture)", "The side-steps (7 / 16 by Tension)"};
+                static const char *const kUpper[] = {"11's torso and head", "7's torso and head"};
+                int legs = rs.legs.load(std::memory_order_relaxed), upper = rs.upper.load(std::memory_order_relaxed);
+                ui->set_next_width(340.0f);
+                if (ui->combo("##tigerlegs", &legs, kLegs, 2))
+                    rs.legs = legs;
+                if (legs == 0 && !strafing_tiger::shuffleBuilt())
+                    ui->text_disabled("11 isn't built from this disc: the side-steps play.");
+                if (legs == 0)
+                {
+                    ui->set_next_width(340.0f);
+                    if (ui->combo("##tigerupper", &upper, kUpper, 2))
+                        rs.upper = upper;
+                }
+                slider(ui, "Speed at 3 / 9 (share of his run)##tigerspeed", rs.speed, 0.15f, 0.9f, "%.2f");
+                slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
+                slider(ui, "Bounce (the hips' up-down)##tigerbounce", rs.bounce, 0.0f, 1.5f, "%.2f");
+                slider(ui, "Hips lowered##tigerhips", rs.hips, 0.0f, 8.0f, "%.1f cm");
+                char line[160];
+                const float pace = strafing_tiger::readPace(), steps = strafing_tiger::readSteps();
+                if (pace > 0.0f)
+                    std::snprintf(line, sizeof line, "At 3 / 9 the legs play x%.2f their own pace, steps x%.2f their own.", pace, steps);
+                else
+                    std::snprintf(line, sizeof line, "Run once to see the legs' pace and step length.");
+                ui->text(line);
+                // Two snapshots to flip between, and the values written to the log (K pastes them; they become the defaults).
+                struct Snap { int legs, upper; float speed, pace, bounce, hips; bool set; };
+                static Snap s_snap[2] = {};
+                for (int k = 0; k < 2; ++k)
+                {
+                    ui->push_id(k);
+                    if (ui->small_button(k ? "Store B" : "Store A"))
+                        s_snap[k] = {rs.legs.load(), rs.upper.load(), rs.speed.load(), rs.pace.load(), rs.bounce.load(), rs.hips.load(), true};
+                    ui->same_line();
+                    ui->begin_disabled(!s_snap[k].set);
+                    if (ui->small_button(k ? "Load B" : "Load A"))
+                    {
+                        const Snap &q = s_snap[k];
+                        rs.legs = q.legs, rs.upper = q.upper, rs.speed = q.speed, rs.pace = q.pace, rs.bounce = q.bounce, rs.hips = q.hips;
+                    }
+                    ui->end_disabled();
+                    ui->pop_id();
+                    if (k == 0)
+                        ui->same_line();
+                }
+                if (ui->small_button("Write these to the log##tigerlog"))
+                    KM_INFO(Game, "Strafing Tiger stage 1: legs " << (rs.legs.load() == 0 ? "11" : "side-steps") << ", upper "
+                                  << (rs.upper.load() == 0 ? "11" : "7") << ", speed " << rs.speed.load() << ", pace " << rs.pace.load()
+                                  << ", bounce " << rs.bounce.load() << ", hips " << rs.hips.load() << " cm (legs x" << pace
+                                  << " own pace, steps x" << steps << ")");
+                ui->text_disabled("Not saved: Write puts them in the log for the defaults.");
             }
             // The Modern settings show only with Modern selected (K, Oct 27).
             if (style >= 1 || kbmStyle == 1)
