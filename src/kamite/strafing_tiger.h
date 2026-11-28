@@ -23,6 +23,8 @@ namespace kamite::strafing_tiger
     // Window thread: his back-pedal for the stick at `stick` (radians from the camera's forward, + = right), judged on
     // the angle the blend draws (K, Nov 28); never sprinting.
     bool backPedal(float stick, bool sprinting);
+    // Window thread: the deflection the game gets would run (its x^2 + y^2 >= 10000), for the back-pedal's step rhythm.
+    void setRunStick(bool run);
     void clearSlide();
     // Window thread: Gene sprints (a dash, phase 6, and the run it carries into until he stops or walks): no
     // strafing, he runs where the camera points (K, Nov 26).

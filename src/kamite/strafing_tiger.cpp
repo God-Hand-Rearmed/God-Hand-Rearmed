@@ -53,7 +53,6 @@ namespace kamite::strafing_tiger
         // and left under 102.5, switched as the drawn angle crosses 112.5): straight back it is his, untouched (K, Nov
         // 27).
         constexpr float kBackFrom = 112.5f * kHalfTurn / 180.0f, kBackLeave = 102.5f * kHalfTurn / 180.0f;
-        constexpr float kArmSideSeconds = 0.25f; // past 150 deg the arms keep the side they had; a switch eases
         constexpr float kEaseSeconds = 0.1f;   // the stick's angle eases (a KBM key's 45 deg steps; a flick across)
         // A switch across to the other side (A -> D, a flick through the centre) walking or running: no easing through
         // straight ahead (K, Nov 27: his walk, a nudge forward); the two sides cross over this, his sideways speed
@@ -124,7 +123,11 @@ namespace kamite::strafing_tiger
         } g_forward[3]; // walk, run, back-pedal
         float g_theta = 0.0f;    // the stick's angle from his facing, eased (+ = his left)
         float g_presence = 0.0f; // the blend's own weight: 1 with the stick out, fading to 0 once it's let go
-        float g_armLeft = 1.0f, g_armTarget = 1.0f; // past 90 deg: his left side-step's share of the arms
+        // One step rhythm round the circle (K, Nov 28: spinning, the steps changed pace at each walk / run <->
+        // back-pedal flip; his back-pedal speeds up toward the run's, K's pick): the steps a clock frame at pace 1
+        // his walk / run showed last (by the side motion's touchdowns), per walk / run.
+        float g_frontRate[2] = {0.0f, 0.0f};
+        std::atomic<bool> g_runStick{false}; // the pad's deflection would run (the game's x^2 + y^2 >= 10000)
         int g_lastRun = -1;      // the tier of the last blend (a switch fades from the pose before it)
         int64_t g_lastMs = -100000, g_stickMs = -100000; // the last blend; the last one with the stick out
         uint32_t g_loads = 0u;
@@ -340,6 +343,16 @@ namespace kamite::strafing_tiger
             const float u = (x - loop.to[k]) / (loop.to[k + 1] - loop.to[k]);
             return wrapTo(loop.from[k] + u * (loop.from[k + 1] - loop.from[k]), span);
         }
+        // A side motion's steps per clock frame of his loop (its touchdowns; the loop's anchors map his clock onto the
+        // grid); 0 if it has none.
+        float stepsPerClock(const Loop &loop, const strafe_motions::Motion &m)
+        {
+            const std::vector<float> &r = m.touch;
+            if (r.size() < 3u || !(r.back() - r.front() > 1e-3f))
+                return 0.0f;
+            const float grid = loop.anchors ? (loop.to[loop.anchors - 1] - loop.to[0]) / (loop.from[loop.anchors - 1] - loop.from[0]) : 1.0f;
+            return static_cast<float>(r.size() - 1u) / (r.back() - r.front()) * grid;
+        }
         // The side motion the blend draws on a loop for a side (0 his left): blendFor's choice.
         const strafe_motions::Motion &sideFor(const Loop &loop, int side)
         {
@@ -489,12 +502,11 @@ namespace kamite::strafing_tiger
                 b.sideMotion = b.sides[left ? 0 : 1];
                 b.side += 1024 + (rs.flip.load(std::memory_order_relaxed) ? 2048 : 0); // the delta's track restarts on a switch
             }
-            // The arms' side in his back-pedal: kept from 150 deg round to straight back (a 6 o'clock stick wobbling
-            // across doesn't flip it; averaging the two mirrored swings cancelled them, K Nov 27), eased on a switch.
-            if (a <= 150.0f * kHalfTurn / 180.0f)
-                g_armTarget = left ? 1.0f : 0.0f;
-            g_armLeft += (g_armTarget - g_armLeft) * (1.0f - std::exp(-std::fmax(dt, 0.0f) / kArmSideSeconds));
-            b.armLeft = g_armLeft;
+            // The arms' side in his back-pedal: the side drawn (K, Nov 28: spinning, the arms should sweep round with
+            // the stick; the old latch past 150 deg, eased over 0.25 s, held the other side's arms for a third of a
+            // turn). Straight back the side-step's share of the arms is 0 ((1 - u)^2), so a 6 o'clock stick wobbling
+            // across moves them by next to nothing (averaging the two mirrored swings cancelled them, K Nov 27).
+            b.armLeft = left ? 1.0f : 0.0f;
             b.ws = b.front ? std::fmin(a / kQuarterTurn, 1.0f) : 1.0f;
             // The run (K, Nov 27): his own run turned toward the stick up to the F2 angle (40 deg), the side-step
             // taking over from there to 3 / 9.
@@ -519,7 +531,17 @@ namespace kamite::strafing_tiger
             const float step = std::fabs(rdF(rdram, obj + kMotionStep)) / g_paceApplied;
             float m;
             if (!b.front)
-                m = b.sideSpeed + (b.hisSpeed - b.sideSpeed) * b.u;
+            {
+                // his back-pedal's steps at the rhythm of the walk / run the stick would give, by the split, his own
+                // straight back; the speed kept (the motions' speed at his clock, it steps x pace)
+                const float own = stepsPerClock(*b.loop, *b.sideMotion) * step, to = g_frontRate[g_runStick.load(std::memory_order_relaxed) ? 1 : 0];
+                if (g_moveInner && own > 1e-6f && to > 1e-6f)
+                {
+                    const float w = std::fmin(std::fmax((kHalfTurn - a) / (kHalfTurn - kBackFrom), 0.0f), 1.0f);
+                    b.pace = 1.0f + (std::fmin(std::fmax(to / own, 0.5f), 3.0f) - 1.0f) * w;
+                }
+                m = (b.sideSpeed + (b.hisSpeed - b.sideSpeed) * b.u) / b.pace;
+            }
             else
             {
                 float r90 = b.sideSpeed / b.hisSpeed; // the walk: the side-step's own speed at 3 / 9
@@ -538,6 +560,7 @@ namespace kamite::strafing_tiger
                 const float r = a <= kQuarterTurn ? 1.0f + (r90 - 1.0f) * b.ws // his own speed while only turned
                                                   : r90 + (back - r90) * std::fmin((a - kQuarterTurn) / (kBackLeave - kQuarterTurn), 1.0f);
                 m = r * b.hisSpeed / b.pace; // the motions' speed at his clock (it steps x pace)
+                g_frontRate[b.run ? 1 : 0] = stepsPerClock(*b.loop, *b.sideMotion) * step * b.pace;
                 if (b.run && step > 0.01f) // F2's read-out at 3 / 9
                 {
                     const float k39 = std::fmin(std::fmax(rs.pace.load(std::memory_order_relaxed), 0.2f), 1.5f);
@@ -1160,6 +1183,7 @@ namespace kamite::strafing_tiger
     // pose, the flips landing far from the split, and a stick flicked across from 9 to 3 that read behind him on the way
     // flipped him for a frame); at once with no blend lately or on a jump over kSnapFrom (W -> S: the blend is there at
     // once too).
+    void setRunStick(bool run) { g_runStick.store(run, std::memory_order_relaxed); }
     bool backPedal(float stick, bool sprinting)
     {
         if (sprinting)

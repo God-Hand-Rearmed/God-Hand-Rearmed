@@ -470,6 +470,7 @@ namespace kamite::modern
                 const float turn = std::fmin(std::fmax(off * 0.4f / (2.88f * (3.14159265f / 180.0f)), 0.0f), 1.0f);
                 g_sprintTurn.store(sprinting ? (relative > 0.0f ? -turn : turn) : 0.0f, std::memory_order_relaxed);
                 const float offset = (bridging && !sprinting ? s_tigerMag : magnitude) * 127.0f;
+                strafing_tiger::setRunStick(offset >= 100.0f);
                 state.leftX = 0x80u;
                 state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
                 if (!sprinting && !back && !bridging && std::fabs(relative) > kTigerBridgeFrom)
