@@ -21,6 +21,9 @@ namespace kamite::test_mode
     // recorder's gameplay settings kept in the case's meta (env.<variable>=<value>) replace this machine's. Returns
     // log lines.
     std::vector<std::string> applyCaseSettings(const std::filesystem::path &exeDir);
+    // The boot's "settings:" lines (GHR.ini's, the case's, the replay's pins), kept for a replay's <case>.<rate>.settings.txt:
+    // tools/fps60/replay_verdict.py prints every GHR.ini setting that differs from the reference batch's.
+    void keepBootSettings(const std::vector<std::string> &notes);
     // From the main-loop hook (frame_patches.cpp frameStart), once a game frame.
     void onFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime);
     // After the run: the test could not be carried out (the state did not load, a file could not be written).

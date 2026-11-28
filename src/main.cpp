@@ -954,6 +954,7 @@ int main(int argc, char *argv[])
         settingNotes.push_back(std::move(note));
     if (!migrationNote.empty())
         settingNotes.insert(settingNotes.begin(), migrationNote);
+    kamite::test_mode::keepBootSettings(settingNotes); // a replay writes them beside its outputs (<case>.<rate>.settings.txt)
     kamite::setCameraIniPath(exeDir / "GHR.ini"); // the F2 menu's Camera tab saves there
     if (writeSettingsOnly)
         return kExitOk;

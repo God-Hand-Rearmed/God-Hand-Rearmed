@@ -16,6 +16,8 @@ a build is accepted; without it the previous build's .prev files and fingerprint
               wrote gs.bin first). Live, chain.bin hashes the chain with the listed packets' bytes put back, so both
               chain and gs must stay "=".
   runs        this build's run 1 = run 2 (ram, csv, chain, gs); only with RUNS=2
+  settings    (one block under the header) every GHR.ini setting whose value differs from the reference batch's
+              (<case>.<rate>.settings.txt, cases/ref/ref-settings.txt): render settings are no case setting (Nov 28)
   snap        snap_compare.py's verdict against the previous build (fingerprints.txt), when it ran
 Then the draw list's totals (this batch's *.drawlist.txt, live or shadow: src/kamite/native/draw_list.h), the natives' shadow
 totals (this batch's *.native.txt: a build that shadows nothing called writes none, and the
@@ -165,6 +167,50 @@ def head_commit(path):
     return head.split("commit=")[1].split()[0] if "commit=" in head else None
 
 
+def batch_settings(paths):
+    """The GHR.ini settings a batch's replays booted with (<case>.<rate>.settings.txt, test_mode.cpp keepBootSettings):
+    {name: {values}} from the "ini: NAME=VALUE" lines, and the names every replay sets itself ("case:" / "replay:"
+    lines: the recorder's or a pin, so GHR.ini's value has no effect there)."""
+    ini, overridden = {}, None
+    for p in paths:
+        mine = set()
+        with open(p, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                kind, _, rest = line.partition(": ")
+                name, eq, value = rest.partition("=")
+                if not eq:
+                    continue
+                if kind == "ini":
+                    ini.setdefault(name, set()).add(value)
+                elif kind in ("case", "replay"):
+                    mine.add(name)
+        overridden = mine if overridden is None else overridden & mine
+    return ini, overridden or set()
+
+
+def settings_lines(cur_paths):
+    """Every GHR.ini setting whose value differs from the reference batch's (cases/ref/ref-settings.txt, written by
+    --promote): K, Nov 28, Cash 115 -> 130 moved 7 cases' chains and was taken for C3's natives for 3 batches."""
+    ref_path = os.path.join(REF, "ref-settings.txt")
+    if not cur_paths:
+        return ["settings: this batch wrote no .settings.txt (a build older than the settings check)"]
+    if not os.path.exists(ref_path):
+        return ["settings: the reference has none (promote a batch that wrote .settings.txt)"]
+    cur, overridden = batch_settings(cur_paths)
+    ref, _ = batch_settings([ref_path])
+    show = lambda v: "|".join(sorted(v)) if v else "(not set)"
+    out = []
+    for name in sorted(set(cur) | set(ref)):
+        a, b = ref.get(name, set()), cur.get(name, set())
+        if a != b:
+            note = "  (no effect: every replay sets it)" if name in overridden else ""
+            out.append(f"  {name}: {show(a)} -> {show(b)}{note}")
+    if not out:
+        return ["settings (GHR.ini) = the reference's"]
+    return ["settings (GHR.ini) that differ from the reference's: read these before blaming a commit"] + out
+
+
 def main():
     promote = "--promote" in sys.argv
     cases = sorted(os.path.basename(p) for p in glob.glob(os.path.join(CASES, "*.case")))
@@ -188,6 +234,15 @@ def main():
         with open(os.path.join(CASES, "fingerprints.txt"), encoding="utf-8", errors="replace") as f, \
                 open(os.path.join(REF, "ref-fingerprints.txt"), "w", encoding="utf-8") as out:
             out.writelines(line for line in f if line.startswith(now + ";"))
+        # The batch's GHR.ini settings, one "ini: NAME=VALUE" line each (settings_lines compares the next batches').
+        settings, _ = batch_files(cases, "settings.txt")
+        if settings:
+            ini, _ = batch_settings(settings)
+            with open(os.path.join(REF, "ref-settings.txt"), "w", encoding="utf-8") as out:
+                for name in sorted(ini):
+                    for value in sorted(ini[name]):
+                        out.write(f"ini: {name}={value}\n")
+            kept.add("ref-settings.txt")
         left = []
         for p in glob.glob(os.path.join(REF, "*")):
             if os.path.basename(p) not in kept:
@@ -195,7 +250,8 @@ def main():
                     os.remove(p)
                 except OSError:
                     left.append(os.path.basename(p))
-        print(f"reference = {now} ({len(kept) - 1} chain / gs files)")
+        print(f"reference = {now} ({len(kept - {'ref-fingerprints.txt', 'ref-settings.txt'})} chain / gs files"
+              f"{', its settings' if 'ref-settings.txt' in kept else ''})")
         if left:
             print(f"left in cases/ref (no case of this batch; never read): {len(left)} files")
         return
@@ -214,6 +270,9 @@ def main():
     print(f"build {now}  commit {', '.join(sorted(commits)) or '?'}")
     print(f"reference {ref_name or '-'} ({'cases/ref' if os.path.exists(ref_fp) else 'the previous build'})")
     print("list every commit between the reference's and this one before attributing anything that moved")
+    settings, _ = batch_files(cases, "settings.txt")
+    for line in settings_lines(settings):
+        print(line)
     print()
     moved = 0
     for case in cases:

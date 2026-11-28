@@ -60,6 +60,7 @@ namespace kamite::test_mode
     namespace
     {
         namespace fs = std::filesystem;
+        std::vector<std::string> g_bootSettings; // keepBootSettings: written once a replay's outputs open
         namespace GameObj = game::GameObj;
         // replayFrame(): the playing replay's test frame, kReplayIdle outside one (any thread).
         std::atomic<uint32_t> g_replayFrame{0xFFFFFFFFu};
@@ -1027,6 +1028,16 @@ namespace kamite::test_mode
                 }
             }
             closeLogger(run.log);
+            if (const char *replay = std::getenv("KAMITE_REPLAY_CASE"); replay && *replay && !run.record && !run.csv.empty())
+            {
+                // <case>.<rate>.settings.txt: the settings this replay booted with, written at its end with the .csv
+                // (replay_verdict.py: what differs from the reference batch's; K, Nov 28: Cash 115 -> 130 in GHR.ini
+                // moved 7 cases' chains and took 3 batches to find).
+                std::string settings;
+                for (const std::string &note : g_bootSettings)
+                    settings += note + "\n";
+                writeFile(run.csv.string().substr(0, run.csv.string().size() - 4) + ".settings.txt", settings);
+            }
             if (!run.record && !run.rollStats.empty())
             {
                 // <case>.<rate>.rolls.csv: the report's roll check (case_report.py)
@@ -1699,6 +1710,11 @@ namespace kamite::test_mode
                 ++pick;
             std::memcpy(status, entries[pick].bytes, kReadBytes);
         }
+    }
+
+    void keepBootSettings(const std::vector<std::string> &notes)
+    {
+        g_bootSettings = notes;
     }
 
     std::vector<std::string> applyCaseSettings(const fs::path &exeDir)
