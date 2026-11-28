@@ -38,3 +38,6 @@ scaled from K's full-size file; Add to Steam writes it as the library cover.
 `steam_mark.png`: the bill's Add to Steam mark: a sketched Steam icon from Flaticon (flaticon.com, free with
 attribution: README credits) in a hand-inked ring (`tools/launcher/steam_mark.py`), white with the ink in alpha; the
 bill inks it through its perspective.
+
+`cursor_hand.png`: K's hand, the mouse pointer in the game's own menus (src/kamite/menu_mouse.cpp: hot spot at the index
+fingertip, (80, 8) of 474 x 556; drawn 0.055 of the picture's height by pcsx2gs_set_cursor).

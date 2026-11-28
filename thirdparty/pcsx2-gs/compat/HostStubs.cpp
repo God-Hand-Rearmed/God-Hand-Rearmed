@@ -83,6 +83,16 @@ namespace
     float g_sceneOffset[2] = {2048.0f - 320.0f, 2048.0f - 224.0f}; // GS thread: the scene draws' XYOFFSET, pixels
     float g_presentRect[4] = {};             // GS thread: the frame's place in the window at the last present
     float g_presentSize[2] = {640.0f, 448.0f}; // GS thread: the frame's size in GS pixels
+    std::mutex g_presentMutex;               // g_presentShared, for PresentRect (other threads)
+    float g_presentShared[4] = {};
+
+    // The mouse pointer in the game's menus (SetCursor, any thread -> RenderOSD on the GS thread).
+    std::mutex g_cursorMutex;
+    std::string g_cursorPath;
+    float g_cursorHot[2] = {};
+    float g_cursorHeight = 0.0f;
+    float g_cursorAt[2] = {};
+    bool g_cursorVisible = false;
 
     // The port's own screen (set_screen, any thread -> RenderOSD on the GS thread): the OPTIONS screen's text.
     std::mutex g_screenMutex;
@@ -387,6 +397,28 @@ void pcsx2gs::SetPresentRect(float x0, float y0, float x1, float y1, float width
         g_presentSize[0] = width;
         g_presentSize[1] = height;
     }
+    std::lock_guard<std::mutex> lock(g_presentMutex);
+    std::memcpy(g_presentShared, g_presentRect, sizeof(g_presentShared));
+}
+
+bool pcsx2gs::PresentRect(float *out)
+{
+    std::lock_guard<std::mutex> lock(g_presentMutex);
+    std::memcpy(out, g_presentShared, sizeof(g_presentShared));
+    return out[2] - out[0] > 1.0f && out[3] - out[1] > 1.0f;
+}
+
+void pcsx2gs::SetCursor(const char *path, float hotU, float hotV, float height, float x, float y, int visible)
+{
+    std::lock_guard<std::mutex> lock(g_cursorMutex);
+    if (path && g_cursorPath != path)
+        g_cursorPath = path;
+    g_cursorHot[0] = hotU;
+    g_cursorHot[1] = hotV;
+    g_cursorHeight = height;
+    g_cursorAt[0] = x;
+    g_cursorAt[1] = y;
+    g_cursorVisible = visible != 0;
 }
 
 void pcsx2gs::SetOsd(const char *top, uint32_t topRgba, float topAlpha, const char *bottom)
@@ -1206,6 +1238,32 @@ namespace
         }
         list->PopClipRect();
     }
+
+    // RenderOSD (GS thread), last: the menus' mouse pointer over everything, sized by the picture's height (the
+    // image is shrunk once to the height it is first drawn at, as the screen's images are).
+    void DrawCursor()
+    {
+        std::string path;
+        float hot[2], height, at[2];
+        {
+            std::lock_guard<std::mutex> lock(g_cursorMutex);
+            if (!g_cursorVisible || g_cursorPath.empty() || g_cursorHeight <= 0.0f)
+                return;
+            path = g_cursorPath;
+            hot[0] = g_cursorHot[0], hot[1] = g_cursorHot[1];
+            height = g_cursorHeight;
+            at[0] = g_cursorAt[0], at[1] = g_cursorAt[1];
+        }
+        const float h = height * (g_presentRect[3] - g_presentRect[1]);
+        if (h < 2.0f)
+            return;
+        ImTextureData *tex = ScreenImageFor(path.c_str(), h);
+        if (!tex || tex->Height <= 0)
+            return;
+        const float w = h * static_cast<float>(tex->Width) / static_cast<float>(tex->Height);
+        const ImVec2 a(std::round(at[0] - hot[0] * w), std::round(at[1] - hot[1] * h));
+        ImGui::GetForegroundDrawList()->AddImage(tex->GetTexRef(), a, ImVec2(a.x + w, a.y + h));
+    }
 }
 
 // The port's overlays (the host loop draws them with raylib under its own GS): a message box at the top left
@@ -1275,7 +1333,10 @@ void ImGuiManager::RenderOSD()
         topAlpha = g_osdTopAlpha;
     }
     if ((top.empty() || topAlpha <= 0.0f) && bottom.empty())
+    {
+        DrawCursor();
         return;
+    }
     ImDrawList *list = ImGui::GetForegroundDrawList();
     ImFont *font = g_osdFont ? g_osdFont : ImGui::GetFont();
     const float height = ImGui::GetIO().DisplaySize.y;
@@ -1295,6 +1356,7 @@ void ImGuiManager::RenderOSD()
     }
     if (!bottom.empty())
         box(bottom, 16.0f, height - size - 20.0f, IM_COL32(0, 0, 0, 153), IM_COL32(255, 255, 255, 255));
+    DrawCursor();
 }
 
 void FullscreenUI::Render()

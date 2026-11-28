@@ -102,6 +102,7 @@ set(KAMITE_HOST_SOURCES
     kamite/hotkeys.cpp
     kamite/dev_menu.cpp
     kamite/roulette_bar.cpp
+    kamite/menu_mouse.cpp
     kamite/radar_glow.cpp
     kamite/tutorial_text.cpp
     kamite/options_overlay.cpp

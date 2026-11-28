@@ -3,6 +3,7 @@
 #include "runtime/ps2_save_state.h"
 #include "ps2_host_backend.h"
 #include "ps2_host_gamepads.h"
+#include "runtime/gs/gs_pcsx2_backend.h"
 
 #include <algorithm>
 #include <array>
@@ -606,6 +607,28 @@ namespace ps2_host_input
         int g_wheelTap = 0;                        // the tap now: +1 up, -1 down, 0 none
         std::chrono::steady_clock::time_point g_wheelNext{};
         constexpr auto kWheelTap = std::chrono::milliseconds(50);
+        // Mouse in the game's own menus (setMenuPointer; K, Nov 28). The game thread's last call (steady clock, ns) and
+        // whether its pointer was over an item; the menu configs without the mouse buttons' bindings.
+        std::atomic<int64_t> g_menuPointerAt{0};
+        std::atomic<bool> g_menuPointerOnItem{false};
+        constexpr auto kMenuPointerLapse = std::chrono::milliseconds(100);
+        PadConfig g_menuConfigPointer, g_menuConfigPointerEsc;
+        // Window thread.
+        bool g_pointerActive = false;   // this sample
+        bool g_pointerActiveLast = false; // the sample before (the layer flip's latch: what the menu gave a click)
+        bool g_pointerShown = false;    // the port's pointer drawn (mouse moved since a key / controller was used)
+        bool g_pointerOsHidden = false; // the OS arrow hidden by us
+        bool g_pointerLeftOk = false;   // a left click that began over an item: the OK button(s) while it is held
+        bool g_pointerRightBack = false; // a right click: the cancel button while it is held
+        Vector2 g_pointerLast{};
+        uint32_t g_pointerInputHeld = 0u; // player 1's key / controller bindings held (readPort), for hiding the pointer
+        uint32_t g_pointerInputBefore = 0u;
+        // Published (any thread).
+        std::mutex g_pointerMutex;
+        ps2_host_input::MenuPointer g_pointerState;
+        std::string g_pointerImage;
+        float g_pointerHot[2] = {};
+        float g_pointerHeight = 0.0f;
         // The keyboard's fixed menu keys (setMenuKeys): the buttons Enter / Space and Esc / Backspace press there, by
         // Menu Controls (Western until the game layer says otherwise).
         std::atomic<uint16_t> g_menuOk{PadButton::Cross};
@@ -1058,7 +1081,7 @@ namespace ps2_host_input
 
         // The roulette's mouse (K, Nov 16): the left click the OK button(s), the right click the cancel button, nothing
         // else (their play actions, square and triangle, are not the roulette's).
-        void addRouletteMouse(PadConfig &config, uint16_t ok, uint16_t cancel)
+        void removeClicks(PadConfig &config)
         {
             const auto clicks = [](const Chord &chord)
             {
@@ -1067,6 +1090,11 @@ namespace ps2_host_input
             };
             for (Bindings &list : config.buttons)
                 list.erase(std::remove_if(list.begin(), list.end(), clicks), list.end());
+        }
+
+        void addRouletteMouse(PadConfig &config, uint16_t ok, uint16_t cancel)
+        {
+            removeClicks(config);
             for (size_t i = 0; i < kPadButtonKeys.size(); ++i)
                 for (const auto &[mask, button] : {std::pair{ok, MOUSE_BUTTON_LEFT}, std::pair{cancel, MOUSE_BUTTON_RIGHT}})
                     if ((kPadButtonKeys[i].second & mask) != 0u)
@@ -1097,6 +1125,10 @@ namespace ps2_host_input
             addMenuKeys(g_menuConfigEsc, ok, cancel, true);
             g_menuConfigRoulette = g_menuConfig;
             addRouletteMouse(g_menuConfigRoulette, ok, cancel);
+            g_menuConfigPointer = g_menuConfig; // the clicks are setMenuPointer's (readPort adds them)
+            removeClicks(g_menuConfigPointer);
+            g_menuConfigPointerEsc = g_menuConfigEsc;
+            removeClicks(g_menuConfigPointerEsc);
             g_configsValid = true;
             publishPrompts(g_configs[0], g_menuConfig); // every rebuild: file load, the 1-s file poll, the page's edits, reset
             publishExtra(g_configs[0]);
@@ -1789,6 +1821,7 @@ namespace ps2_host_input
         bool g_skipMouseDelta = false;
         bool g_mouseMoved = false;
         std::atomic<bool> g_menuMouse{false}; // setMenuHasMouse: the in-game menu has the mouse
+        bool g_pointerFreedLock = false; // the mouse camera's capture let go for a menu with the mouse (setMenuPointer)
         std::atomic<PadFilter> g_padFilter{nullptr}; // setPadFilter: the game's own reshaping of a player's input
         float g_mouseRightX = 0.0f;
         float g_mouseRightY = 0.0f;
@@ -1986,10 +2019,18 @@ namespace ps2_host_input
         void sampleMouse()
         {
             g_mouseMoved = false;
-            if (!g_mouseCameraEnabled.load(std::memory_order_relaxed) || g_menuMouse.load(std::memory_order_relaxed))
+            if (!g_mouseCameraEnabled.load(std::memory_order_relaxed) || g_menuMouse.load(std::memory_order_relaxed) ||
+                g_pointerActive)
             {
                 if (g_mouseLocked)
+                {
                     EnableCursor();
+                    // Freed for a menu with the mouse only: taken back when that menu is gone (as before menus had it).
+                    g_pointerFreedLock = g_pointerActive && g_mouseCameraEnabled.load(std::memory_order_relaxed) &&
+                                         !g_menuMouse.load(std::memory_order_relaxed);
+                }
+                else if (!g_pointerActive)
+                    g_pointerFreedLock = false;
                 g_mouseLocked = false;
                 g_ignoredMouseButton = -1;
                 recordMouseCameraInput({}, false);
@@ -1999,9 +2040,23 @@ namespace ps2_host_input
             {
                 if (g_mouseLocked)
                     EnableCursor();
+                g_pointerFreedLock = false;
                 g_mouseLocked = false;
                 g_ignoredMouseButton = -1;
                 recordMouseCameraInput({}, false);
+                return;
+            }
+            if (!g_mouseLocked && g_pointerFreedLock)
+            {
+                // Back from a menu with the mouse: captured again, a button still held from the menu skipped.
+                g_pointerFreedLock = false;
+                DisableCursor();
+                g_mouseLocked = true;
+                g_ignoredMouseButton = IsMouseButtonDown(MOUSE_BUTTON_LEFT)    ? MOUSE_BUTTON_LEFT
+                                       : IsMouseButtonDown(MOUSE_BUTTON_RIGHT) ? MOUSE_BUTTON_RIGHT
+                                                                               : -1;
+                g_skipMouseDelta = true;
+                recordMouseCameraInput({}, true);
                 return;
             }
             if (!g_mouseLocked)
@@ -2173,7 +2228,12 @@ namespace ps2_host_input
             const bool menuLayer = player == 0u && g_menuLayerWanted.load(std::memory_order_relaxed);
             const PadConfig &mapped = padConfigs()[player];
             const bool roulette = player == 0u && g_menuRoulette.load(std::memory_order_relaxed);
-            const PadConfig &menu = roulette ? g_menuConfigRoulette : g_menuEscStart.load(std::memory_order_relaxed) ? g_menuConfigEsc : g_menuConfig;
+            const bool pointer = player == 0u && !roulette && g_pointerActive;
+            const bool esc = g_menuEscStart.load(std::memory_order_relaxed);
+            const PadConfig &menu = roulette  ? g_menuConfigRoulette
+                                    : pointer ? (esc ? g_menuConfigPointerEsc : g_menuConfigPointer)
+                                    : esc     ? g_menuConfigEsc
+                                              : g_menuConfig;
             const PadConfig &config = menuLayer ? menu : mapped;
             // PS2X_FAKE_PADS=<n> (tests): players 1..n count as connected, idle, without a controller behind them.
             static const uint32_t fakePads = []
@@ -2212,7 +2272,11 @@ namespace ps2_host_input
                 // with it, does not also press what A means on the other side.
                 if (menuLayer != g_latchLayer)
                 {
-                    const PadConfig &other = menuLayer ? mapped : menu;
+                    // Leaving a menu with the mouse: its clicks gave nothing through bindings (setMenuPointer adds
+                    // them), so a click still held from it (a right click closing the pause menu) waits for release.
+                    const PadConfig &other = menuLayer          ? mapped
+                                             : g_pointerActiveLast ? (esc ? g_menuConfigPointerEsc : g_menuConfigPointer)
+                                                                   : menu;
                     uint16_t before = 0u;
                     for (size_t i = 0; i < kPadButtonKeys.size(); ++i)
                         if (bindingsValue(other.buttons[i]) > std::max(other.buttonDeadzone, 0.2f))
@@ -2224,8 +2288,13 @@ namespace ps2_host_input
                 g_latched = static_cast<uint16_t>(g_latched & state.buttons);
                 state.buttons = static_cast<uint16_t>(state.buttons & ~g_latched);
                 // The wheel's taps in the roulette (after the latch: never held over a flip).
-                if (menuLayer && roulette && g_wheelTap != 0)
+                if (menuLayer && (roulette || pointer) && g_wheelTap != 0)
                     state.buttons = static_cast<uint16_t>(state.buttons | (g_wheelTap > 0 ? PadButton::Up : PadButton::Down));
+                // The menus' mouse (setMenuPointer): a left click begun over an item holds OK, a right click cancel.
+                if (menuLayer && pointer && g_pointerLeftOk)
+                    state.buttons = static_cast<uint16_t>(state.buttons | g_menuOk.load(std::memory_order_relaxed));
+                if (menuLayer && pointer && g_pointerRightBack)
+                    state.buttons = static_cast<uint16_t>(state.buttons | g_menuCancel.load(std::memory_order_relaxed));
                 if (g_hideStart)
                     state.buttons = static_cast<uint16_t>(state.buttons & ~PadButton::Start); // a SaveLoad chord's
             }
@@ -2246,7 +2315,10 @@ namespace ps2_host_input
                 noteFired(kPadButtonKeys.size() + i, fired);
             }
             if (player == 0u)
+            {
                 notePromptInput(keysHeld, padsHeld, pad);
+                g_pointerInputHeld = keysHeld | padsHeld; // the clicks are not bound while the pointer is (removeClicks)
+            }
             // Swap Sticks: the controller's halves trade places, the keys' and the mouse buttons' stay.
             const bool swap = swapSticks();
             if (swap)
@@ -2530,11 +2602,97 @@ namespace ps2_host_input
         bool updateKeyCapture(); // the keyboard page's capture: true while it holds player 1's input
     }
 
+    namespace
+    {
+        // The menus' mouse (setMenuPointer), window thread, before sampleMouse: whether a menu with the mouse is up.
+        void updatePointerActive()
+        {
+            const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            const int64_t at = g_menuPointerAt.load(std::memory_order_relaxed);
+            g_pointerActiveLast = g_pointerActive;
+            g_pointerActive = at != 0 && now - at < std::chrono::duration_cast<std::chrono::nanoseconds>(kMenuPointerLapse).count() &&
+                              g_menuLayerWanted.load(std::memory_order_relaxed) && !g_menuMouse.load(std::memory_order_relaxed) &&
+                              !g_blocked.load(std::memory_order_relaxed) && IsWindowFocused();
+        }
+
+        // After sampleMouse: the OS arrow, the clicks, the port's pointer. After readPort: the pointer hides when a key
+        // or a controller is newly used (updatePointerAfterRead).
+        void updatePointer()
+        {
+            if (g_pointerActive && !g_mouseLocked && !g_pointerOsHidden)
+            {
+                HideCursor();
+                g_pointerOsHidden = true;
+            }
+            else if (!g_pointerActive && g_pointerOsHidden)
+            {
+                g_pointerOsHidden = false;
+                if (!g_mouseLocked)
+                    ShowCursor();
+            }
+            const Vector2 at = GetMousePosition();
+            const bool moved = std::fabs(at.x - g_pointerLast.x) > 0.5f || std::fabs(at.y - g_pointerLast.y) > 0.5f;
+            g_pointerLast = at;
+            if (!g_pointerActive)
+            {
+                g_pointerLeftOk = g_pointerRightBack = false;
+                g_pointerShown = false;
+            }
+            else
+            {
+                if (moved)
+                    g_pointerShown = true;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+                {
+                    g_pointerShown = true;
+                    g_pointerLeftOk = g_menuPointerOnItem.load(std::memory_order_relaxed);
+                }
+                if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+                    g_pointerLeftOk = false;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+                    g_pointerRightBack = true;
+                if (!IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+                    g_pointerRightBack = false;
+            }
+            std::lock_guard<std::mutex> lock(g_pointerMutex);
+            const bool moves = g_pointerActive && moved;
+            g_pointerState.active = g_pointerActive;
+            g_pointerState.x = at.x;
+            g_pointerState.y = at.y;
+            g_pointerState.moves += moves ? 1u : 0u;
+            g_pointerState.leftDown = g_pointerActive && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+        }
+
+        void updatePointerAfterRead()
+        {
+            const uint32_t edge = g_pointerInputHeld & ~g_pointerInputBefore;
+            g_pointerInputBefore = g_pointerInputHeld;
+            if (edge != 0u)
+                g_pointerShown = false;
+            std::string image;
+            float hot[2], height;
+            {
+                std::lock_guard<std::mutex> lock(g_pointerMutex);
+                image = g_pointerImage;
+                hot[0] = g_pointerHot[0], hot[1] = g_pointerHot[1];
+                height = g_pointerHeight;
+            }
+            const bool visible = g_pointerActive && g_pointerShown && !image.empty();
+            static bool drawn = false;
+            if (visible || drawn)
+                GSPcsx2Backend::SetCursor(image.c_str(), hot[0], hot[1], height, g_pointerLast.x, g_pointerLast.y, visible);
+            drawn = visible;
+        }
+    }
+
     void sample()
     {
         ps2_host_gamepads::update();
         updateVibration();
+        updatePointerActive(); // before sampleMouse: a menu with the mouse frees the cursor
         sampleMouse();
+        updatePointer();
         updateAccessKeys(); // sweep CR-9: also runs while minimized (the run loop's minimized branch calls sample())
         // Only the players that have a (port, slot): 2 without a multitap, 5 with one, 8 with two.
         const uint32_t taps = multitapPorts();
@@ -2550,7 +2708,7 @@ namespace ps2_host_input
         // The mouse wheel in the roulette: each notch a d-pad tap (kWheelTap down, kWheelTap up), up to three queued.
         {
             const auto now = std::chrono::steady_clock::now();
-            if (g_menuRoulette.load(std::memory_order_relaxed) && IsWindowFocused() && !blocked)
+            if ((g_menuRoulette.load(std::memory_order_relaxed) || g_pointerActive) && IsWindowFocused() && !blocked)
             {
                 const float wheel = GetMouseWheelMove();
                 if (wheel > 0.0f) // a turn the other way drops what the last way had queued
@@ -2595,6 +2753,7 @@ namespace ps2_host_input
             else if (const PadFilter filter = g_padFilter.load(std::memory_order_acquire))
                 filter(player, state[player]);
         }
+        updatePointerAfterRead();
         controls::applyRequests();
         pollControlsFile();
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -2662,6 +2821,29 @@ namespace ps2_host_input
     void setMenuRoulette(bool open)
     {
         g_menuRoulette.store(open, std::memory_order_relaxed);
+    }
+
+    void setMenuPointer(bool onItem)
+    {
+        g_menuPointerOnItem.store(onItem, std::memory_order_relaxed);
+        g_menuPointerAt.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch()).count(),
+                              std::memory_order_relaxed);
+    }
+
+    void setMenuPointerImage(const char *path, float hotU, float hotV, float height)
+    {
+        std::lock_guard<std::mutex> lock(g_pointerMutex);
+        g_pointerImage = path ? path : "";
+        g_pointerHot[0] = hotU;
+        g_pointerHot[1] = hotV;
+        g_pointerHeight = height;
+    }
+
+    MenuPointer menuPointer()
+    {
+        std::lock_guard<std::mutex> lock(g_pointerMutex);
+        return g_pointerState;
     }
 
     void setMenuEscStart(bool on)

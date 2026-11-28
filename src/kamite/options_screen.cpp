@@ -48,6 +48,7 @@
 #include "kamite/mapping_page.h"
 #include "kamite/mash_assist.h"
 #include "kamite/menu_buttons.h"
+#include "kamite/menu_mouse.h"
 #include "kamite/modern_controls.h"
 #include "kamite/npc_poses.h"
 #include "kamite/options_overlay.h"
@@ -2571,12 +2572,52 @@ namespace kamite::options_screen
             g_pauseOriginal[1](rdram, ctx, runtime);
         }
 
+        // The pause menu's mouse (menu_mouse.h; K, Nov 28). Its five rows follow the cursor bar: entry +0x94, whose y
+        // (+0x3C) the update (0x165638) sets from the row's halfword in the table at 0x3BD9D8 (46 96 153 201 254 in the
+        // USA ELF); x as the bar is drawn, y in bands halfway to the next row. Hovering a row moves the cursor there with
+        // the move sound the game's own up / down plays (0x15F, func_002CB8A0 in the move 0x165EB8).
+        constexpr uint32_t kPauseBar = 0x94u, kPauseBarYs = 0x003BD9D8u;
+        void pauseMouse(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t self)
+        {
+            const uint32_t bar = rd32(self + kPauseBar) & PS2_RAM_MASK;
+            if (!valid(bar, 0x40u))
+                return;
+            menu_mouse::watch(bar);
+            std::array<menu_mouse::Rect, 5> rows{};
+            int count = 0;
+            int16_t ys[5];
+            std::memcpy(ys, at(kPauseBarYs), sizeof(ys));
+            bool ordered = ys[0] >= 0 && ys[4] <= 448;
+            for (int i = 1; i < 5; ++i)
+                ordered = ordered && ys[i] > ys[i - 1];
+            menu_mouse::Rect shape;
+            if (ordered && menu_mouse::shape(shape))
+            {
+                const float mid = 0.5f * (shape.y0 + shape.y1);
+                for (int i = 0; i < 5; ++i)
+                {
+                    const float up = 0.5f * static_cast<float>(i > 0 ? ys[i] - ys[i - 1] : ys[1] - ys[0]);
+                    const float down = 0.5f * static_cast<float>(i < 4 ? ys[i + 1] - ys[i] : ys[4] - ys[3]);
+                    const float y = static_cast<float>(ys[i]) + mid;
+                    rows[static_cast<size_t>(i)] = menu_mouse::Rect{shape.x0, y - up, shape.x1, y + down};
+                }
+                count = 5;
+            }
+            const menu_mouse::Hover hover = menu_mouse::hover(rdram, rows.data(), count);
+            if (hover.take && hover.item != static_cast<int8_t>(*at(self + kPauseCursor)))
+            {
+                *at(self + kPauseCursor) = static_cast<uint8_t>(hover.item);
+                sound(rdram, ctx, runtime, kSeMove);
+            }
+        }
+
         void pauseMoveHook(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
         {
             const uint32_t self = GPR_U32(ctx, 4) & PS2_RAM_MASK;
             if (!valid(self, 0x2A4u))
                 return g_pauseOriginal[3](rdram, ctx, runtime);
             g_pauseMoved = true;
+            pauseMouse(rdram, ctx, runtime, self); // before the move reads the cursor: a click confirms the row under it
             const uint32_t ra = GPR_U32(ctx, 31);
             const uint64_t pressed = rd64(kCommand);
             const int8_t cursor = static_cast<int8_t>(*at(self + kPauseCursor));

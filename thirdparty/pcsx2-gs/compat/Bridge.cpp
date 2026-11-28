@@ -1047,6 +1047,19 @@ PCSX2GS_EXPORT void pcsx2gs_set_screen(const Pcsx2GsScreenItem *items, uint32_t 
     pcsx2gs::SetScreen(items, count, strings, bytes);
 }
 
+// The menus' mouse pointer (pcsx2gs_host.h SetCursor). Any thread.
+PCSX2GS_EXPORT void pcsx2gs_set_cursor(const char *path, float hot_u, float hot_v, float height, float x, float y, int visible)
+{
+    pcsx2gs::SetCursor(path, hot_u, hot_v, height, x, y, visible);
+}
+
+// The frame's place in the window at the last present (x0 y0 x1 y1, client pixels; pcsx2gs_host.h PresentRect).
+// Any thread. Returns 0 before the first present.
+PCSX2GS_EXPORT int pcsx2gs_get_present_rect(float *out)
+{
+    return out && pcsx2gs::PresentRect(out) ? 1 : 0;
+}
+
 // The graphics API while the game runs ("vulkan" / "dx11"; the OPTIONS screen's Graphics API). GS thread only, between
 // vsyncs. hwnd: a new window of width x height for the GS to present into from now on (one window cannot carry both
 // kinds of swap chain; the port swaps it in for the old one after this returns). Returns 1 when the API asked for

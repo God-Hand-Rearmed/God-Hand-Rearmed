@@ -51,6 +51,24 @@ namespace ps2_host_input
     // cancel button (Esc cancels too), W / S step it (the d-pad), A / D cycle the target (Target Select's d-pad); the
     // mouse wheel steps it whatever device is in use (a d-pad up / down tap per notch). Any thread.
     void setMenuRoulette(bool open);
+    // Mouse in the game's own menus (K, Nov 28; src/kamite/menu_mouse.cpp): a menu with mouse support calls this each
+    // time its move runs (the game thread); it lapses 100 ms after the last call. While it holds, in the menu layer: the
+    // cursor is never captured, the OS arrow is hidden and the port's pointer drawn instead (shown on mouse movement,
+    // hidden when a key or a controller is used); a left click pressed while onItem (the pointer over one of the menu's
+    // items) holds the OK button(s) until released, a right click the cancel button, and the wheel steps the d-pad as
+    // in the roulette. The mouse buttons' own bindings are off there.
+    void setMenuPointer(bool onItem);
+    // The pointer's image for the menus (resources/images/cursor_hand.png): its hot spot as fractions of its width /
+    // height, drawn `height` (a fraction of the picture's height) tall. Any thread.
+    void setMenuPointerImage(const char *path, float hotU, float hotV, float height);
+    struct MenuPointer
+    {
+        bool active = false;    // setMenuPointer holds and the window has the focus
+        float x = 0.0f, y = 0.0f; // client pixels
+        uint32_t moves = 0;     // counts the samples the mouse moved in (while active)
+        bool leftDown = false;  // the left button, while active
+    };
+    MenuPointer menuPointer(); // any thread
     // A digit key 0-4 pressed while the menu layer was in use (the Techniques screen's direct style picks): 0..4, or
     // -1 for none since the last call. Any thread.
     [[nodiscard]] int takeMenuDigit();

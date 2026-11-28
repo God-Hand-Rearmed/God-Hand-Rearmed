@@ -25,6 +25,7 @@
 #include "runtime/ps2_hotkeys.h"
 #include "kamite/game_layout.h"
 #include "kamite/log.h"
+#include "kamite/menu_mouse.h"
 #include "kamite/roulette_bar.h"
 #include "kamite/style_presets.h"
 #include "ps2_runtime.h"
@@ -368,7 +369,10 @@ namespace kamite::hud
                 y1 = std::max(y1, y);
             }
             if (g_inIdTrans)
+            {
                 roulette_bar::onDraw(g_curLayout, g_entry, x0, x1, y0, y1, !withOffset);
+                menu_mouse::onDraw(rdram, g_entry, x0, x1, y0, y1); // a menu's highlight, for its mouse items
+            }
             // F6: each layout entry's draw slot (list, position), once per entry.
             if (g_dumping && g_inIdTrans && g_entry >= 0x100000u && g_entry != g_dumpSlotEntry && g_curLayout >= 0x100000u)
             {
