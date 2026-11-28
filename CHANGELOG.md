@@ -41,6 +41,7 @@ Newest first, one line per change; the code comments say how.
 - Strafing Tiger prototype: the slow strafe is one animation at any Tension (the full-gauge one is out, with its F2 sliders and the strafe choice).
 - Strafing Tiger prototype: no stutter going between the back diagonals and the sides; sprinting turns his run toward the stick up to 45 degrees too, the stick past it turning him (F2 switch).
 - Strafing Tiger prototype: spinning the stick: in and out of the back-pedal he keeps his step (no leg thrown out) and turns at most 1.5 times a second; the back-pedal follows the direction he's drawn in, so a stick flicked from side to side no longer back-pedals on the way.
+- Strafing Tiger prototype: no hitch coming out of the back-pedal; a stick flicked from side to side while running no longer drops to a walk on the way.
 - Signal Style Switch's sound follows the Sound Effects volume.
 - Modern: the radar's free-camera glow shows again when the game started on a device whose style isn't Modern.
 - Performance: enemies whose upper body twists (most of them) keep their bones' passes in native code (they fell back to the recompiled code every frame).

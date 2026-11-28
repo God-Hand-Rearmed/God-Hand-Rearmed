@@ -412,9 +412,12 @@ namespace kamite::modern
             const float magnitude = std::fmin(std::sqrt(lx * lx + ly * ly), 1.0f);
             // Strafing Tiger walking / running sideways: a moment in the centre (A let go as D goes down, a flick
             // across) keeps the last of the stick for the game, so he doesn't stop and start again in between (K, Nov
-            // 27: his idle a moment, his arms dropping, a nudge forward); strafing_tiger.cpp crosses the sides over.
+            // 27: his idle a moment, his arms dropping, a nudge forward); strafing_tiger.cpp crosses the sides over. On
+            // the way through out of the dead zone it keeps the deflection (K, Nov 28: a flick across on the stick
+            // stuttered, not A -> D: the game runs only with x^2 + y^2 >= 10000 (0x124340, 0x10C8B4), and the stick on
+            // its way read under that, a walk for a frame or two).
             static int64_t s_tigerMs = -100000;
-            static float s_tigerRelative = 0.0f;
+            static float s_tigerRelative = 0.0f, s_tigerMag = 0.0f;
             static uint8_t s_tigerY = 0x80u;
             if (magnitude < kStickDeadzone)
             {
@@ -431,7 +434,9 @@ namespace kamite::modern
                 return;
             }
             const float desired = wrapAngle(g_cameraYaw.load(std::memory_order_relaxed) - std::atan2(lx, -ly));
-            s_tigerMs = -100000;
+            const bool bridging = strafing_tiger::enabled() && nowMs() - s_tigerMs < kTigerBridgeMs && magnitude < s_tigerMag;
+            if (!bridging)
+                s_tigerMs = -100000;
             if (strafing_tiger::enabled())
             {
                 // Strafing Tiger (prototype): he keeps facing the camera (the camera side turns him); the game gets
@@ -464,11 +469,11 @@ namespace kamite::modern
                 const float off = std::fabs(relative) - std::fmax(30.0f * (3.14159265f / 180.0f), most);
                 const float turn = std::fmin(std::fmax(off * 0.4f / (2.88f * (3.14159265f / 180.0f)), 0.0f), 1.0f);
                 g_sprintTurn.store(sprinting ? (relative > 0.0f ? -turn : turn) : 0.0f, std::memory_order_relaxed);
-                const float offset = magnitude * 127.0f;
+                const float offset = (bridging && !sprinting ? s_tigerMag : magnitude) * 127.0f;
                 state.leftX = 0x80u;
                 state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
-                if (!sprinting && !back && std::fabs(relative) > kTigerBridgeFrom)
-                    s_tigerMs = nowMs(), s_tigerRelative = relative, s_tigerY = state.leftY;
+                if (!sprinting && !back && !bridging && std::fabs(relative) > kTigerBridgeFrom)
+                    s_tigerMs = nowMs(), s_tigerRelative = relative, s_tigerY = state.leftY, s_tigerMag = magnitude;
                 return;
             }
             g_moveYaw = desired;

@@ -90,8 +90,8 @@ namespace kamite::strafing_tiger
         // A walk / run <-> back-pedal flip (K, Nov 27: spinning the stick): the game starts the new loop at frame 0
         // (func_002A8578's start, ELF) with a 10-frame blend toward the pose before (setMotionInfo 0x157568: mtxBind,
         // blend +0x27C; moveMotion counts +0x438 down by the step). Under Tiger the new loop starts at the step the
-        // side motion was at instead (by its touchdowns); the game's blend stays (harness: with the step matched it is
-        // harmless, and cancelled the switches jumped more).
+        // side motion was at instead (by its touchdowns), and the game's blend is cancelled (K, Nov 28: with our offset's
+        // ease it held the pose for frames, the stutter out of the back-pedal; the offset is inertialized now).
         constexpr uint32_t kBlendLeft = 0x438u, kBlendLen = 0x43Cu, kRootLast = 0x320u;
         // The drawn angle (K, Nov 28: spinning the stick as other action games do, spin mode out): it follows the stick
         // at most kTurnRate (1.5 turns a second), the way the stick turns (a spin faster than that skips a lap, it
@@ -141,16 +141,45 @@ namespace kamite::strafing_tiger
             int64_t ms = -100000;
             float euler[strafe_motions::kBones][3];
             float tr[strafe_motions::kTranslated][3];
-        } g_held, g_switched; // the last blended pose; the one before a walk <-> run switch
+        } g_held, g_switched, g_heldPrev, g_switchedPrev; // the last blended pose; the one before a walk <-> run switch;
+                                                           // each one's frame before
         int64_t g_switchMs = -100000;
         // A switch's offset (K, Nov 27: walk <-> back-pedal stuttered once: the hips and foot targets weren't faded, the
-        // feet jumped 0.6 m in a frame): the pose before less the first pose after, eased out over kStopMs on top of the
-        // live pose (it keeps moving; the old fade froze toward the pose before).
+        // feet jumped 0.6 m in a frame): the pose before less the first pose after, on top of the live pose, inertialized
+        // (K, Nov 28: out of the back-pedal it still stuttered: the offset's ease-in and the game's start blend held the
+        // pose a few frames, the feet stopping dead; Bollo, "Inertialization", GDC 2018): it starts moving at the
+        // pose's speed before the switch (toward the live pose; away from it, at 0) and is gone by kStopMs.
+        struct Inert // one channel's offset: x0 at the switch, a quintic to 0 by t1 (seconds), never overshooting
+        {
+            float sign = 1.0f, x0 = 0.0f, v0 = 0.0f, a0 = 0.0f, a = 0.0f, b = 0.0f, c = 0.0f, t1 = 0.0f;
+            void init(float x, float v, float most)
+            {
+                sign = x < 0.0f ? -1.0f : 1.0f, x0 = std::fabs(x), v0 = std::fmin(v * sign, 0.0f);
+                t1 = v0 < 0.0f ? std::fmin(most, -5.0f * x0 / v0) : most;
+                if (!(t1 > 1e-4f) || !(x0 > 1e-7f))
+                {
+                    t1 = 0.0f;
+                    return;
+                }
+                a0 = std::fmax((-8.0f * v0 * t1 - 20.0f * x0) / (t1 * t1), 0.0f);
+                a = -(a0 * t1 * t1 + 6.0f * v0 * t1 + 12.0f * x0) / (2.0f * t1 * t1 * t1 * t1 * t1);
+                b = (3.0f * a0 * t1 * t1 + 16.0f * v0 * t1 + 30.0f * x0) / (2.0f * t1 * t1 * t1 * t1);
+                c = -(3.0f * a0 * t1 * t1 + 12.0f * v0 * t1 + 20.0f * x0) / (2.0f * t1 * t1 * t1);
+            }
+            float at(float t) const
+            {
+                if (!(t < t1))
+                    return 0.0f;
+                return sign * ((((a * t + b) * t + c) * t + 0.5f * a0) * t * t + v0 * t + x0);
+            }
+        };
         struct Offset
         {
             bool set = false;
-            mot_sample::Quat rot[strafe_motions::kBones];
-            float tr[strafe_motions::kTranslated][3];
+            float axis[strafe_motions::kBones][3]; // each part's offset turn: about this, by its Inert
+            Inert rot[strafe_motions::kBones];
+            float dir[strafe_motions::kTranslated][3]; // each translation's: along this
+            Inert tr[strafe_motions::kTranslated];
         } g_offset;
         int64_t g_flipMs = -100000; // the last switch across (kFlipFrom)
         struct LastMove // his loop and clock after the last moveMotion (a flip starts the new loop in step with it)
@@ -668,8 +697,10 @@ namespace kamite::strafing_tiger
             const int64_t now = nowMs();
             const int state = b.front ? static_cast<int>(b.run) : 2;
             if (g_lastRun >= 0 && g_lastRun != state && g_held.valid && now - g_held.ms < kStillMs)
-                g_switched = g_held, g_switchMs = now, g_offset.set = false;
+                g_switched = g_held, g_switchedPrev = g_heldPrev, g_switchMs = g_held.ms, g_offset.set = false; // from the pose before's time: this frame shows it a frame on
             g_lastRun = state;
+            if (g_held.valid && now - g_held.ms >= 8) // a new frame (the pose runs up to three times one)
+                g_heldPrev = g_held;
             g_poseInner(rdram, ctx, runtime); // his pose, root outputs and caches: the game's
             restoreOurs(rdram, obj);
             if (b.presence < 1e-3f || (b.front && b.ws < 1e-3f && std::fabs(b.phi) < 1e-4f && std::fabs(b.his - 1.0f) < 1e-3f) ||
@@ -855,32 +886,73 @@ namespace kamite::strafing_tiger
                 auto inv = [](const mot_sample::Quat &q) { return mot_sample::Quat{q.w, -q.x, -q.y, -q.z}; };
                 if (!g_offset.set)
                 {
+                    // the speed before: the pose a frame before the switch, as an offset from this first pose after
+                    const float dtPrev = static_cast<float>(g_switched.ms - g_switchedPrev.ms) / 1000.0f;
+                    const bool speed = g_switchedPrev.valid && dtPrev > 0.004f && dtPrev < 0.1f;
+                    const float most = static_cast<float>(kStopMs) / 1000.0f;
                     for (int i = 0; i < strafe_motions::kBones; ++i)
                     {
                         float e[3];
                         std::memcpy(e, rdram + part[i] + kPartRotation, 12);
-                        g_offset.rot[i] = mot_sample::mul(mot_sample::eulerQuat(g_switched.euler[i]), inv(mot_sample::eulerQuat(e)));
+                        const mot_sample::Quat live = inv(mot_sample::eulerQuat(e));
+                        mot_sample::Quat q = mot_sample::mul(mot_sample::eulerQuat(g_switched.euler[i]), live);
+                        if (q.w < 0.0f)
+                            q = {-q.w, -q.x, -q.y, -q.z};
+                        const float s = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z);
+                        const float angle = 2.0f * std::atan2(s, q.w);
+                        float *ax = g_offset.axis[i];
+                        if (!(s > 1e-6f))
+                        {
+                            ax[0] = 1.0f, ax[1] = ax[2] = 0.0f, g_offset.rot[i].init(0.0f, 0.0f, most);
+                            continue;
+                        }
+                        ax[0] = q.x / s, ax[1] = q.y / s, ax[2] = q.z / s;
+                        float v = 0.0f;
+                        if (speed)
+                        {
+                            const mot_sample::Quat p = mot_sample::mul(mot_sample::eulerQuat(g_switchedPrev.euler[i]), live);
+                            const float along = 2.0f * std::atan2((p.x * ax[0] + p.y * ax[1] + p.z * ax[2]) * (p.w < 0.0f ? -1.0f : 1.0f), std::fabs(p.w));
+                            v = (angle - along) / dtPrev;
+                        }
+                        g_offset.rot[i].init(angle, v, most);
                     }
                     for (int j = 0; j < strafe_motions::kTranslated; ++j)
+                    {
+                        float x[3], len = 0.0f;
                         for (int c = 0; c < 3; ++c)
-                            g_offset.tr[j][c] = g_switched.tr[j][c] - rdF(rdram, anchor[j] + 4u * static_cast<uint32_t>(c));
+                            x[c] = g_switched.tr[j][c] - rdF(rdram, anchor[j] + 4u * static_cast<uint32_t>(c)), len += x[c] * x[c];
+                        len = std::sqrt(len);
+                        float *d = g_offset.dir[j];
+                        if (!(len > 1e-7f))
+                        {
+                            d[0] = 1.0f, d[1] = d[2] = 0.0f, g_offset.tr[j].init(0.0f, 0.0f, most);
+                            continue;
+                        }
+                        float along = 0.0f;
+                        for (int c = 0; c < 3; ++c)
+                            d[c] = x[c] / len, along += (g_switchedPrev.tr[j][c] - rdF(rdram, anchor[j] + 4u * static_cast<uint32_t>(c))) * d[c];
+                        g_offset.tr[j].init(len, speed ? (len - along) / dtPrev : 0.0f, most);
+                    }
                     g_offset.set = true;
                 }
-                const float x = 1.0f - static_cast<float>(now - g_switchMs) / static_cast<float>(kStopMs), f = x * x * (3.0f - 2.0f * x);
-                const mot_sample::Quat none{1.0f, 0.0f, 0.0f, 0.0f};
+                const float since = static_cast<float>(now - g_switchMs) / 1000.0f;
                 for (int i = 0; i < strafe_motions::kBones; ++i)
                 {
                     float e[3];
                     std::memcpy(e, rdram + part[i] + kPartRotation, 12);
-                    writePart(rdram, part[i], e, mot_sample::mul(mot_sample::slerp(none, g_offset.rot[i], f), mot_sample::eulerQuat(e)));
+                    const float h = 0.5f * g_offset.rot[i].at(since), sn = std::sin(h);
+                    const float *ax = g_offset.axis[i];
+                    const mot_sample::Quat turn{std::cos(h), ax[0] * sn, ax[1] * sn, ax[2] * sn};
+                    writePart(rdram, part[i], e, mot_sample::mul(turn, mot_sample::eulerQuat(e)));
                     std::memcpy(g_held.euler[i], rdram + part[i] + kPartRotation, 12);
                 }
                 for (int j = 0; j < strafe_motions::kTranslated; ++j)
                 {
                     float v[3];
                     std::memcpy(v, rdram + anchor[j], 12);
+                    const float x = g_offset.tr[j].at(since);
                     for (int c = 0; c < 3; ++c)
-                        v[c] += g_offset.tr[j][c] * f;
+                        v[c] += g_offset.dir[j][c] * x;
                     std::memcpy(rdram + anchor[j], v, 12);
                     std::memcpy(g_held.tr[j], v, 12);
                 }
@@ -938,6 +1010,7 @@ namespace kamite::strafing_tiger
             {
                 const float was = touchPhase(*last.side, gridClock(*last.loop, last.clock, static_cast<float>(last.side->span)));
                 setClock(rdram, obj, motion, loopClock(*loop, touchFrame(next, was)));
+                wrF(rdram, obj + kBlendLeft, 0.0f); // the game's start blend held the pose at the flip (K, Nov 28): ours
             }
         }
         void noteMove(const uint8_t *rdram, uint32_t obj)
