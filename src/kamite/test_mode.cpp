@@ -1707,6 +1707,21 @@ namespace kamite::test_mode
         const char *value = std::getenv("KAMITE_REPLAY_CASE");
         if (!value || !*value)
             return notes;
+        // Render-only settings every replay pins, whatever the case or this machine's GHR.ini holds: they are no case
+        // setting, yet the chain and GS-input digests hold what they draw (K, Nov 28: Cash 115 -> 130 in GHR.ini moved
+        // 7 cases' chains and took 3 replay batches to find). 115 each: what the 13:49 Nov 28 replay ran with when it
+        // matched the 07:20 reference on all 44 lines; above 100, so the women's detailed bust and seat (body_detail)
+        // stay in the digests.
+        for (const auto &[name, pinned] : {std::pair<const char *, const char *>{"KAMITE_MONEY", "115"},
+                                           std::pair<const char *, const char *>{"KAMITE_CASH", "115"}})
+        {
+#if defined(_WIN32)
+            _putenv_s(name, pinned);
+#else
+            setenv(name, pinned, 1);
+#endif
+            notes.push_back(std::string("replay: ") + name + "=" + pinned + " (pinned: render only)");
+        }
         const fs::path path = fs::path(value).is_absolute() ? fs::path(value) : exeDir / value;
         std::ifstream file(path, std::ios::binary);
         std::string head(4096, '\0');
