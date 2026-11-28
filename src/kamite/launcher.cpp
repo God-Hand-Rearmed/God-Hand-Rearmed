@@ -22,6 +22,7 @@
 #include "kamite/settings_table.h"
 #include "kamite/version.h"
 #include "ps2_host_gamepads.h"
+#include "ps2_host_cursor.h"
 #include "ps2_host_input.h"
 #include "runtime/ps2_display_options.h"
 #include "runtime/ps2_hotkeys.h"
@@ -6701,6 +6702,8 @@ namespace kamite::launcher
                 book::endFrame(bookSpace);
             else
                 rlImGuiEnd();
+            // K's hand as the pointer (K, Nov 28: everywhere, the launcher too); ImGui's text and resize pointers stay.
+            ps2_host_cursor::apply(ImGui::GetMouseCursor() == ImGuiMouseCursor_Arrow);
             if (!logoUnder)
             {
                 drawLogo(state);

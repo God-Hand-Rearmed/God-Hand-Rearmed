@@ -1027,6 +1027,7 @@ int main(int argc, char *argv[])
         return kamite::findDiscImage(roots);
     };
     iso = resolveIso();
+    kamite::menu_mouse::install(); // K's hand as the window's pointer, from the launcher on (K, Nov 28)
 #if KAMITE_HAS_LAUNCHER
     const bool launcherAllowed = !headless && !isoFromCommandLine;
 #else
@@ -1247,7 +1248,6 @@ int main(int argc, char *argv[])
         kamite::radar_glow::install(runtime.memory().getRDRAM()); // Modern: the radar glows while the free camera is on
         kamite::tutorial_text::install(runtime.memory().getRDRAM()); // Tutorial 1 (Modern's switch and Auto), Tutorial 2 (the roulette's buttons)
         kamite::options_screen::install(runtime, exeDir); // the title and pause Options open God Hand: Rearmed's own screen
-        kamite::menu_mouse::install(); // the mouse in the game's own menus: the pointer's image
         kamite::hotkeys::install(exeDir / "GHR.ini"); // [Hotkeys]: the port's shortcut keys
         kamite::dev_menu::install(exeDir / "GHR.ini"); // F2: the dev menu's tab order, Display and Gameplay
         // Strafing Tiger (prototype, F2 > Controls): hooks addNullSpeed and the motion pose 0x158328, the pose first of

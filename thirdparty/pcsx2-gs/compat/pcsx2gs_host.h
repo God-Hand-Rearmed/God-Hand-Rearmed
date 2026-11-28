@@ -48,8 +48,4 @@ namespace pcsx2gs
     void SetPresentRect(float x0, float y0, float x1, float y1, float width, float height);
     // Any thread: the frame's place in the window at the last present (x0 y0 x1 y1, client pixels). False = none yet.
     bool PresentRect(float *out);
-    // The mouse pointer in the game's menus (pcsx2gs_set_cursor; any thread): an image (path) whose hot spot (hot_u,
-    // hot_v: fractions of its width / height) sits at x y (client pixels), drawn `height` (a fraction of the picture's
-    // height) tall over everything at each present. visible 0 hides it.
-    void SetCursor(const char *path, float hotU, float hotV, float height, float x, float y, int visible);
 }

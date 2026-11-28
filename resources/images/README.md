@@ -39,5 +39,6 @@ scaled from K's full-size file; Add to Steam writes it as the library cover.
 attribution: README credits) in a hand-inked ring (`tools/launcher/steam_mark.py`), white with the ink in alpha; the
 bill inks it through its perspective.
 
-`cursor_hand.png`: K's hand, the mouse pointer in the game's own menus (src/kamite/menu_mouse.cpp: hot spot at the index
-fingertip, (80, 8) of 474 x 556; drawn 0.055 of the picture's height by pcsx2gs_set_cursor).
+`cursor_hand.png`: K's hand, GHR's mouse pointer everywhere, the launcher included (src/kamite/menu_mouse.cpp install,
+runtime ps2_host_cursor: a GLFW cursor; hot spot at the index fingertip, (80, 8) of 474 x 556; 0.055 of the window's
+height).

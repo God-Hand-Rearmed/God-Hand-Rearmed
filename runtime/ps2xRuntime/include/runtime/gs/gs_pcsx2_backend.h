@@ -58,9 +58,6 @@ public:
     // Any thread: the port's own screen over the image (pcsx2gs_set_screen: Pcsx2GsScreenItem items, their strings
     // block; count 0 clears). False = this DLL does not have it.
     static bool SetScreen(const void *items, uint32_t count, const char *strings, uint32_t bytes);
-    // Any thread: the menus' mouse pointer (pcsx2gs_set_cursor: an image whose hot spot, fractions of its width /
-    // height, sits at x y in client pixels, `height` a fraction of the picture's height). False = this DLL does not have it.
-    static bool SetCursor(const char *path, float hotU, float hotV, float height, float x, float y, bool visible);
     // Any thread: the picture's place in the window at the last present (x0 y0 x1 y1, client pixels). False = none.
     static bool PresentRect(float *out);
     static void SetMenuInput(const void *input);

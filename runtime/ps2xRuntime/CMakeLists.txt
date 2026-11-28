@@ -459,6 +459,7 @@ add_library(ps2_runtime STATIC
     src/lib/ps2_ee_float.cpp
     src/lib/ps2_pad.cpp
     src/lib/ps2_host_input.cpp
+    src/lib/ps2_host_cursor.cpp
     src/lib/ps2_host_gamepads.cpp
     src/lib/ps2_rom_device.cpp
     src/lib/ps2_vfs.cpp

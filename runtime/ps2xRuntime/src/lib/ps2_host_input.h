@@ -52,15 +52,13 @@ namespace ps2_host_input
     // mouse wheel steps it whatever device is in use (a d-pad up / down tap per notch). Any thread.
     void setMenuRoulette(bool open);
     // Mouse in the game's own menus (K, Nov 28; src/kamite/menu_mouse.cpp): a menu with mouse support calls this each
-    // time its move runs (the game thread); it lapses 100 ms after the last call. While it holds, in the menu layer: the
-    // cursor is never captured, the OS arrow is hidden and the port's pointer drawn instead (shown on mouse movement,
-    // hidden when a key or a controller is used); a left click pressed while onItem (the pointer over one of the menu's
-    // items) holds the OK button(s) until released, a right click the cancel button, and the wheel steps the d-pad as
-    // in the roulette. The mouse buttons' own bindings are off there.
+    // time its move runs (the game thread); it lapses 100 ms after the last call. While it holds, in the menu layer: a
+    // left click pressed while onItem (the pointer over one of the menu's items) holds the OK button(s) until released,
+    // a right click the cancel button, the wheel steps the d-pad as in the roulette; the mouse buttons' own bindings
+    // are off there. Every menu (the menu layer but the roulette, the F2 menu) has the pointer free, K's hand
+    // (ps2_host_cursor), shown when the mouse is used and hidden when a key or a controller is; back in play the mouse
+    // camera takes the mouse again at once.
     void setMenuPointer(bool onItem);
-    // The pointer's image for the menus (resources/images/cursor_hand.png): its hot spot as fractions of its width /
-    // height, drawn `height` (a fraction of the picture's height) tall. Any thread.
-    void setMenuPointerImage(const char *path, float hotU, float hotV, float height);
     struct MenuPointer
     {
         bool active = false;    // setMenuPointer holds and the window has the focus

@@ -2572,39 +2572,87 @@ namespace kamite::options_screen
             g_pauseOriginal[1](rdram, ctx, runtime);
         }
 
-        // The pause menu's mouse (menu_mouse.h; K, Nov 28). Its five rows follow the cursor bar: entry +0x94, whose y
-        // (+0x3C) the update (0x165638) sets from the row's halfword in the table at 0x3BD9D8 (46 96 153 201 254 in the
-        // USA ELF); x as the bar is drawn, y in bands halfway to the next row. Hovering a row moves the cursor there with
-        // the move sound the game's own up / down plays (0x15F, func_002CB8A0 in the move 0x165EB8).
-        constexpr uint32_t kPauseBar = 0x94u, kPauseBarYs = 0x003BD9D8u;
+        // The pause menu's mouse (menu_mouse.h; K, Nov 28). Its five rows are its five labels, entries +0x80..+0x90 (one
+        // per row, the update 0x165638 shows only the cursor's; read from a save state with the menu open, Nov 28:
+        // 125-130 x 32-35 centred at y 50 / 101 / 153 / 204 / 257), and the cursor's marker +0x94 (24 x 64, right of
+        // them). Each row: the drawn label's extent (menu_mouse::drawn, relative to its draw position) at that row's
+        // label's draw position; x the union of the five and the marker; y in bands halfway to the next row. Hovering a
+        // row moves the cursor there with the move sound the game's own up / down plays (0x15F, func_002CB8A0 in the
+        // move 0x165EB8).
+        constexpr uint32_t kPauseLabels = 0x80u, kPauseMarker = 0x94u;
+        menu_mouse::Rect g_pauseRowsLogged[5];
+        bool g_pauseLeftBefore = false;
+
         void pauseMouse(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t self)
         {
-            const uint32_t bar = rd32(self + kPauseBar) & PS2_RAM_MASK;
-            if (!valid(bar, 0x40u))
-                return;
-            menu_mouse::watch(bar);
+            uint32_t entries[6];
+            for (int i = 0; i < 6; ++i)
+            {
+                entries[i] = rd32(self + kPauseLabels + 4u * static_cast<uint32_t>(i)) & PS2_RAM_MASK; // the 6th: +0x94
+                if (!valid(entries[i], 0x60u))
+                    return;
+            }
+            static_assert(kPauseLabels + 4u * 5u == kPauseMarker, "the marker follows the five labels");
+            menu_mouse::watch(entries, 6);
+            const int8_t cursor = static_cast<int8_t>(*at(self + kPauseCursor));
+            menu_mouse::Rect label;
+            bool haveLabel = cursor >= 0 && cursor < 5 && menu_mouse::drawn(entries[cursor], label);
+            for (int i = 0; i < 5 && !haveLabel; ++i)
+                haveLabel = menu_mouse::drawn(entries[i], label);
             std::array<menu_mouse::Rect, 5> rows{};
             int count = 0;
-            int16_t ys[5];
-            std::memcpy(ys, at(kPauseBarYs), sizeof(ys));
-            bool ordered = ys[0] >= 0 && ys[4] <= 448;
-            for (int i = 1; i < 5; ++i)
-                ordered = ordered && ys[i] > ys[i - 1];
-            menu_mouse::Rect shape;
-            if (ordered && menu_mouse::shape(shape))
+            if (haveLabel)
             {
-                const float mid = 0.5f * (shape.y0 + shape.y1);
+                const auto pos = [&](uint32_t entry, uint32_t offset)
+                {
+                    float v;
+                    const uint32_t bits = rd32(entry + offset);
+                    std::memcpy(&v, &bits, sizeof(v));
+                    return v;
+                };
+                float centre[5], x0 = 1e9f, x1 = -1e9f;
+                bool ordered = true;
                 for (int i = 0; i < 5; ++i)
                 {
-                    const float up = 0.5f * static_cast<float>(i > 0 ? ys[i] - ys[i - 1] : ys[1] - ys[0]);
-                    const float down = 0.5f * static_cast<float>(i < 4 ? ys[i + 1] - ys[i] : ys[4] - ys[3]);
-                    const float y = static_cast<float>(ys[i]) + mid;
-                    rows[static_cast<size_t>(i)] = menu_mouse::Rect{shape.x0, y - up, shape.x1, y + down};
+                    const float dx = pos(entries[i], 0x50u), dy = pos(entries[i], 0x54u); // IDBaseEnt kDrawX / kDrawY
+                    x0 = std::fmin(x0, dx + label.x0);
+                    x1 = std::fmax(x1, dx + label.x1);
+                    centre[i] = dy + 0.5f * (label.y0 + label.y1);
+                    ordered = ordered && std::isfinite(centre[i]) && (i == 0 || centre[i] > centre[i - 1] + 4.0f);
                 }
-                count = 5;
+                menu_mouse::Rect marker;
+                if (menu_mouse::drawn(entries[5], marker))
+                {
+                    const float mx = pos(entries[5], 0x50u);
+                    x0 = std::fmin(x0, mx + marker.x0);
+                    x1 = std::fmax(x1, mx + marker.x1);
+                }
+                if (ordered && x1 > x0)
+                {
+                    for (int i = 0; i < 5; ++i)
+                    {
+                        const float up = i > 0 ? 0.5f * (centre[i] - centre[i - 1]) : 0.5f * (centre[1] - centre[0]);
+                        const float down = i < 4 ? 0.5f * (centre[i + 1] - centre[i]) : 0.5f * (centre[4] - centre[3]);
+                        rows[static_cast<size_t>(i)] = menu_mouse::Rect{x0, centre[i] - up, x1, centre[i] + down};
+                    }
+                    count = 5;
+                    // Diagnostic (claude/strip-list.md): the rows, when they change.
+                    if (std::memcmp(rows.data(), g_pauseRowsLogged, sizeof(g_pauseRowsLogged)) != 0)
+                    {
+                        std::memcpy(g_pauseRowsLogged, rows.data(), sizeof(g_pauseRowsLogged));
+                        KM_INFO(Input, "[menu mouse diag] pause rows: x " << x0 << ".." << x1 << ", y " << rows[0].y0 << " / "
+                                                                         << rows[1].y0 << " / " << rows[2].y0 << " / " << rows[3].y0
+                                                                         << " / " << rows[4].y0 << " / " << rows[4].y1);
+                    }
+                }
             }
             const menu_mouse::Hover hover = menu_mouse::hover(rdram, rows.data(), count);
-            if (hover.take && hover.item != static_cast<int8_t>(*at(self + kPauseCursor)))
+            if (hover.leftDown && !g_pauseLeftBefore) // diagnostic (strip-list.md): each left press
+                KM_INFO(Input, "[menu mouse diag] pause left press at " << hover.x << "," << hover.y << ": row " << hover.item
+                                                                     << " (cursor " << static_cast<int>(cursor) << ", rows "
+                                                                     << count << ")");
+            g_pauseLeftBefore = hover.leftDown;
+            if (hover.take && hover.item != cursor)
             {
                 *at(self + kPauseCursor) = static_cast<uint8_t>(hover.item);
                 sound(rdram, ctx, runtime, kSeMove);

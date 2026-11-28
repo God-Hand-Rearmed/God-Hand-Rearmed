@@ -4,10 +4,12 @@
 #include "kamite/log.h"
 #include "kamite/paths.h"
 #include "kamite/test_mode.h"
+#include "ps2_host_cursor.h"
 #include "ps2_host_input.h"
 #include "runtime/gs/gs_pcsx2_backend.h"
 #include "runtime/ps2_memory.h" // PS2_RAM_MASK
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -26,11 +28,16 @@ namespace kamite::menu_mouse
         uint32_t g_lastMoves = 0u;
         bool g_warnedRect = false;
 
-        uint32_t g_watch = 0u;     // the entry watched
-        Rect g_drawn;              // this frame's draws of it (y relative to its +0x3C)
-        bool g_drawnValid = false;
-        Rect g_shape;              // the last frame's
-        bool g_shapeValid = false;
+        // The watched entries (watch / onDraw / drawn), relative to each one's draw position.
+        struct Watched
+        {
+            uint32_t entry = 0u;
+            Rect now, last;          // this frame's draws, the last frame's with any
+            bool nowValid = false, lastValid = false;
+        };
+        constexpr int kWatchMax = 8;
+        Watched g_watched[kWatchMax];
+        int g_watchCount = 0;
 
         bool caseRun()
         {
@@ -52,11 +59,11 @@ namespace kamite::menu_mouse
         if (!std::filesystem::is_regular_file(file, error))
         {
             KM_LOG(log::Category::Input, log::Level::Warn, "[menu mouse] no pointer image at " << file.string()
-                                                                    << ": the menus' mouse works without a visible pointer");
+                                                                    << ": the OS arrow stays");
             return;
         }
         const std::u8string path = file.u8string();
-        ps2_host_input::setMenuPointerImage(std::string(path.begin(), path.end()).c_str(), kHotU, kHotV, kHeight);
+        ps2_host_cursor::setImage(std::string(path.begin(), path.end()), kHotU, kHotV, kHeight);
     }
 
     Hover hover(const uint8_t *rdram, const Rect *items, int count)
@@ -82,6 +89,8 @@ namespace kamite::menu_mouse
         const float x = (pointer.x - rect[0]) / (rect[2] - rect[0]) * screenWidth(rdram);
         const float y = (pointer.y - rect[1]) / (rect[3] - rect[1]) * kScreenHeight;
         Hover hover;
+        hover.x = x, hover.y = y;
+        hover.active = pointer.active, hover.leftDown = pointer.leftDown;
         for (int i = 0; items && i < count; ++i)
             if (x >= items[i].x0 && x < items[i].x1 && y >= items[i].y0 && y < items[i].y1)
             {
@@ -93,48 +102,71 @@ namespace kamite::menu_mouse
         return hover;
     }
 
-    void watch(uint32_t entry)
+    void watch(const uint32_t *entries, int count)
     {
-        if (entry != g_watch)
+        count = std::clamp(count, 0, kWatchMax);
+        Watched kept[kWatchMax];
+        for (int i = 0; i < count; ++i)
         {
-            g_watch = entry;
-            g_drawnValid = g_shapeValid = false;
+            kept[i].entry = entries[i];
+            for (int j = 0; j < g_watchCount; ++j)
+                if (g_watched[j].entry == entries[i])
+                {
+                    kept[i] = g_watched[j];
+                    break;
+                }
+            // The draws since the last call become the entry's last drawn extent (none: the one before stays).
+            if (kept[i].nowValid)
+            {
+                kept[i].last = kept[i].now;
+                kept[i].lastValid = true;
+                kept[i].nowValid = false;
+            }
         }
-        else if (g_drawnValid)
-        {
-            // The draws since the last call become its shape (none: the last one stays).
-            g_shape = g_drawn;
-            g_shapeValid = true;
-            g_drawnValid = false;
-        }
+        for (int i = 0; i < count; ++i)
+            g_watched[i] = kept[i];
+        g_watchCount = count;
     }
 
     void onDraw(const uint8_t *rdram, uint32_t entry, float x0, float x1, float y0, float y1)
     {
-        if (g_watch == 0u || entry != g_watch)
-            return;
-        float ey;
-        std::memcpy(&ey, rdram + ((entry + 0x3Cu) & PS2_RAM_MASK), sizeof(ey));
-        if (!std::isfinite(ey) || !std::isfinite(x0) || !std::isfinite(x1) || !std::isfinite(y0) || !std::isfinite(y1))
-            return;
-        const Rect r{x0, y0 - ey, x1, y1 - ey};
-        if (!g_drawnValid)
+        for (int i = 0; i < g_watchCount; ++i)
         {
-            g_drawn = r;
-            g_drawnValid = true;
+            Watched &w = g_watched[i];
+            if (w.entry == 0u || w.entry != entry)
+                continue;
+            float dx, dy;
+            std::memcpy(&dx, rdram + ((entry + 0x50u) & PS2_RAM_MASK), sizeof(dx)); // IDBaseEnt kDrawX / kDrawY
+            std::memcpy(&dy, rdram + ((entry + 0x54u) & PS2_RAM_MASK), sizeof(dy));
+            if (!std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(x0) || !std::isfinite(x1) || !std::isfinite(y0) ||
+                !std::isfinite(y1))
+                return;
+            const Rect r{x0 - dx, y0 - dy, x1 - dx, y1 - dy};
+            if (!w.nowValid)
+            {
+                w.now = r;
+                w.nowValid = true;
+                return;
+            }
+            w.now.x0 = std::fmin(w.now.x0, r.x0);
+            w.now.y0 = std::fmin(w.now.y0, r.y0);
+            w.now.x1 = std::fmax(w.now.x1, r.x1);
+            w.now.y1 = std::fmax(w.now.y1, r.y1);
             return;
         }
-        g_drawn.x0 = std::fmin(g_drawn.x0, r.x0);
-        g_drawn.y0 = std::fmin(g_drawn.y0, r.y0);
-        g_drawn.x1 = std::fmax(g_drawn.x1, r.x1);
-        g_drawn.y1 = std::fmax(g_drawn.y1, r.y1);
     }
 
-    bool shape(Rect &out)
+    bool drawn(uint32_t entry, Rect &relative)
     {
-        if (!g_shapeValid || g_shape.x1 - g_shape.x0 < 1.0f || g_shape.y1 - g_shape.y0 < 1.0f)
-            return false;
-        out = g_shape;
-        return true;
+        for (int i = 0; i < g_watchCount; ++i)
+            if (g_watched[i].entry == entry && g_watched[i].lastValid)
+            {
+                const Rect &r = g_watched[i].last;
+                if (r.x1 - r.x0 < 1.0f || r.y1 - r.y0 < 1.0f)
+                    return false;
+                relative = r;
+                return true;
+            }
+        return false;
     }
 }

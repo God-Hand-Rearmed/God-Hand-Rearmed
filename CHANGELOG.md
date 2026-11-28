@@ -4,7 +4,8 @@ Newest first, one line per change; the code comments say how.
 
 ## November 28, 2026
 
-- Mouse in the pause menu: pointing at a row selects it, left click confirms, right click goes back, the wheel scrolls; a hand pointer shows while the mouse is used.
+- Mouse: a hand pointer everywhere (launcher and game), shown when the mouse is used and hidden for keys or a controller; menus free the mouse, play takes it back.
+- Mouse in the pause menu: pointing at a row selects it, left click confirms, right click goes back, the wheel scrolls.
 - Performance: checking a line against the stage's collision grid and its polygons, triangles included (walls, floors, shadows, the camera), runs as native code.
 
 ## November 27, 2026
