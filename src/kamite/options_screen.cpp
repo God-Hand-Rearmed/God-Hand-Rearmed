@@ -2575,13 +2575,13 @@ namespace kamite::options_screen
         // The pause menu's mouse (menu_mouse.h; K, Nov 28). Its five rows are its five labels, entries +0x80..+0x90 (one
         // per row, the update 0x165638 shows only the cursor's; read from a save state with the menu open, Nov 28:
         // 125-130 x 32-35 centred at y 50 / 101 / 153 / 204 / 257), and the cursor's marker +0x94 (24 x 64, right of
-        // them). Each row: the drawn label's extent (menu_mouse::drawn, relative to its draw position) at that row's
-        // label's draw position; x the union of the five and the marker; y in bands halfway to the next row. Hovering a
+        // them). Each row: its label's drawn extent (menu_mouse::drawn, relative to its draw position; until that label
+        // has been drawn, the extent of one that has) at its draw position; x the union of the five and the marker (the
+        // widest once each label has been the cursor's: K's log, Nov 28, x0 21..46 by the label); y in bands halfway to
+        // the next row. Hovering a
         // row moves the cursor there with the move sound the game's own up / down plays (0x15F, func_002CB8A0 in the
         // move 0x165EB8).
         constexpr uint32_t kPauseLabels = 0x80u, kPauseMarker = 0x94u;
-        menu_mouse::Rect g_pauseRowsLogged[5];
-        bool g_pauseLeftBefore = false;
 
         void pauseMouse(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, uint32_t self)
         {
@@ -2615,9 +2615,11 @@ namespace kamite::options_screen
                 for (int i = 0; i < 5; ++i)
                 {
                     const float dx = pos(entries[i], 0x50u), dy = pos(entries[i], 0x54u); // IDBaseEnt kDrawX / kDrawY
-                    x0 = std::fmin(x0, dx + label.x0);
-                    x1 = std::fmax(x1, dx + label.x1);
-                    centre[i] = dy + 0.5f * (label.y0 + label.y1);
+                    menu_mouse::Rect own;
+                    const menu_mouse::Rect &r = menu_mouse::drawn(entries[i], own) ? own : label;
+                    x0 = std::fmin(x0, dx + r.x0);
+                    x1 = std::fmax(x1, dx + r.x1);
+                    centre[i] = dy + 0.5f * (r.y0 + r.y1);
                     ordered = ordered && std::isfinite(centre[i]) && (i == 0 || centre[i] > centre[i - 1] + 4.0f);
                 }
                 menu_mouse::Rect marker;
@@ -2636,22 +2638,9 @@ namespace kamite::options_screen
                         rows[static_cast<size_t>(i)] = menu_mouse::Rect{x0, centre[i] - up, x1, centre[i] + down};
                     }
                     count = 5;
-                    // Diagnostic (claude/strip-list.md): the rows, when they change.
-                    if (std::memcmp(rows.data(), g_pauseRowsLogged, sizeof(g_pauseRowsLogged)) != 0)
-                    {
-                        std::memcpy(g_pauseRowsLogged, rows.data(), sizeof(g_pauseRowsLogged));
-                        KM_INFO(Input, "[menu mouse diag] pause rows: x " << x0 << ".." << x1 << ", y " << rows[0].y0 << " / "
-                                                                         << rows[1].y0 << " / " << rows[2].y0 << " / " << rows[3].y0
-                                                                         << " / " << rows[4].y0 << " / " << rows[4].y1);
-                    }
                 }
             }
             const menu_mouse::Hover hover = menu_mouse::hover(rdram, rows.data(), count);
-            if (hover.leftDown && !g_pauseLeftBefore) // diagnostic (strip-list.md): each left press
-                KM_INFO(Input, "[menu mouse diag] pause left press at " << hover.x << "," << hover.y << ": row " << hover.item
-                                                                     << " (cursor " << static_cast<int>(cursor) << ", rows "
-                                                                     << count << ")");
-            g_pauseLeftBefore = hover.leftDown;
             if (hover.take && hover.item != cursor)
             {
                 *at(self + kPauseCursor) = static_cast<uint8_t>(hover.item);
