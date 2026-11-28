@@ -4,6 +4,7 @@ Newest first, one line per change; the code comments say how.
 
 ## November 28, 2026
 
+- Presets: Remastered plays Classic Brawler on controller and keyboard & mouse; Cash and Money 101% from Remastered up; new texts, on two lines in game and in the launcher's Presets, three on the first-run posters.
 - Test cases: replays run with Money and Cash at 115% whatever GHR.ini says, so changing them no longer changes a replay's results.
 - Performance: the whole collision check of a line, the stage's boxes and boards included, runs as native code.
 - Performance: checking a line against the stage's collision grid and its polygons, triangles included (walls, floors, shadows, the camera), runs as native code.

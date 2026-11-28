@@ -205,7 +205,7 @@ int main(int argc, char **argv)
             return artDir ? std::string(artDir) + path : std::string();
         };
         presetArt = art(text);
-        const kamite::options_overlay::PresetFit fit = kamite::options_overlay::fitPresetText(text.tagline, text.band, v.aspect);
+        const kamite::options_overlay::PresetFit fit = kamite::options_overlay::fitPresetText(text.tagline, text.band, v.aspect, n != 4);
         presetBand = fit.band;
         pv.name = text.title;
         pv.art = presetArt.c_str();

@@ -1481,21 +1481,59 @@ namespace kamite::options_overlay
         return helpEms(text, length) * cap * kHelpEmPerCap * kHelpScaleX * kLinesToUnits;
     }
 
-    PresetFit fitPresetText(const char *tagline, const char *band, float aspect)
+    PresetFit fitPresetText(const char *tagline, const char *band, float aspect, bool two)
     {
         const Space space(std::clamp(aspect, 1.0f, 4.0f));
         PresetFit fit;
-        // The band: the help's width; down from the help's size in small steps until two lines hold it.
+        // The band: two lines (K, Nov 28), the help's width; down from the help's size in small steps until they fit.
+        // K's '\n' is the break; without one, a wrap shared out evenly over two.
         const float bandWidth = space.area - 2.0f * kHelpX;
         float cap = kHelpCap;
-        std::vector<std::string> lines = wrapAt(band, cap, bandWidth);
-        while (lines.size() > 2u && cap > 6.0f)
+        std::vector<std::string> lines;
+        if (band && std::strchr(band, '\n'))
         {
-            cap -= 0.25f;
+            for (const char *c = band; c;)
+            {
+                const char *end = std::strchr(c, '\n');
+                std::string line(c, end ? end : c + std::strlen(c));
+                while (!line.empty() && line.back() == ' ')
+                    line.pop_back();
+                while (!line.empty() && line.front() == ' ')
+                    line.erase(line.begin());
+                lines.push_back(line);
+                c = end ? end + 1 : nullptr;
+            }
+            const auto widest = [&](float at) {
+                float w = 0.0f;
+                for (const std::string &line : lines)
+                    w = std::max(w, helpTextWidth(line.data(), line.size(), at));
+                return w;
+            };
+            while (widest(cap) > bandWidth && cap > 6.0f)
+                cap -= 0.25f;
+        }
+        else
+        {
             lines = wrapAt(band, cap, bandWidth);
+            while (lines.size() > 2u && cap > 6.0f)
+            {
+                cap -= 0.25f;
+                lines = wrapAt(band, cap, bandWidth);
+            }
+            if (two && lines.size() == 1u) // short: still two (balance shares the words out)
+            {
+                const std::vector<std::string> words = wrapAt(lines[0].c_str(), cap, 0.0f);
+                if (words.size() >= 2u)
+                {
+                    std::vector<std::string> two(2);
+                    for (size_t i = 0; i < words.size(); ++i)
+                        two[i < words.size() / 2 ? 0 : 1] += (two[i < words.size() / 2 ? 0 : 1].empty() ? "" : " ") + words[i];
+                    lines = two;
+                }
+            }
+            lines = balance(lines, cap);
         }
         fit.bandCap = cap;
-        lines = balance(lines, cap);
         for (size_t i = 0; i < lines.size(); ++i)
             fit.band += (i ? "\n" : "") + lines[i];
         // The tagline: across the carousel (beside the list on 16:10 and wider, else the whole width), one line.
@@ -1677,7 +1715,7 @@ namespace kamite::options_overlay
     }
 #endif
 #if !defined(KAMITE_HAS_SCREEN_OVERLAY)
-    PresetFit fitPresetText(const char *, const char *band, float)
+    PresetFit fitPresetText(const char *, const char *band, float, bool)
     {
         PresetFit fit;
         fit.band = band ? band : "";

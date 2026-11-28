@@ -232,7 +232,8 @@ namespace kamite::options_overlay
 
     // The PRESETS band text fitted to the picture. Without the renderer's overlay (no pcsx2gs_api.h: the built-in GS)
     // nothing draws it, and the band comes back unwrapped at the help text's size.
-    PresetFit fitPresetText(const char *tagline, const char *band, float aspect);
+    // two: a band that fits on one line split over two anyway (the presets; K, Nov 28), else left on one (Custom).
+    PresetFit fitPresetText(const char *tagline, const char *band, float aspect, bool two = true);
 #if defined(KAMITE_HAS_SCREEN_OVERLAY)
     void build(const View &view, std::vector<Pcsx2GsScreenItem> &items, std::string &strings);
     // A line of the help font's text at this cap height (lines), in layout units (calibrated against the renderer).

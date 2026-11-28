@@ -12,18 +12,18 @@
 
 namespace kamite::presets
 {
-    // K's text (Nov 16 night; claude/presets-design.md). The same strings in game, in the launcher and on the posters.
+    // K's text (Nov 16 night, Nov 28; claude/presets-design.md). The same strings in game, in the launcher and on the
+    // posters. A band's '\n' is K's line break (K, Nov 28: always two lines in game and in the launcher's Presets,
+    // shrunk to fit, never wrapped; without one they split where the lines come out evenest).
     const Text kText[kCount] = {
         {"CLASSIC", "Classic", "Clover's Vanilla Thrilla", "Cinetastic 30FPS, 4:3, Classic Camera & Controls, as handed by God.",
          13},
         {"REMASTERED", "Remastered", "Spitshine Edition",
-         "Smooth Sexy Silky 60FPS, Fills your screen - edge to edge, Modern Controls, etc.", 17},
+         "Smooth Sexy 60FPS, Widescreen, Modern Menu\nControls & nothing else changed from Classic.", 17},
         {"REARMED", "Rearmed", "That's the Spice!",
-         "Adds: New Cam Angle, Roulette Refinements, Moveset Presets, Buck Breaker, Busta-Chan Jive & "
-         "Misqu\xC3\xA9 & Risqu\xC3\xA9.",
-         18},
-        {"SLEAZY MODE", "Sleazy Mode", "...is Now Selectable! For the girl who just wants to have fun.",
-         "Adds: Cunt Punter, Tension - Off the Cuff & Wild Curry Funk.", 15},
+         "New Controls & Camera, Moveset Presets,\nCombat & Cosmetic Additions, Same Difficulty.", 18},
+        {"SLEAZY MODE", "Sleazy Mode", "...is Now Selectable!",
+         "For fun, everything GHR has to offer! Expanded\ncombat options, but it makes the game easier...", 15},
     };
     const Text kCustomText = {"CUSTOM", "Custom", "You know what you like.", "Resets with a preset.", 1};
 
@@ -42,11 +42,11 @@ namespace kamite::presets
         };
         constexpr Entry kTable[] = {
             {"Fps60", {"0", "1", "1", "1"}},
-            {"ControlStyle", {"classic", "hold", "hold", "hold"}}, // Remastered up: Modern: Hold (K, Nov 19; Toggle optional)
+            {"ControlStyle", {"classic", "classic", "hold", "hold"}}, // Rearmed up: Modern: Hold (K, Nov 19; Toggle optional); Remastered Classic Brawler (K, Nov 28)
             {"ModernAuto", {"1", "1", "1", "1"}},     // Toggle's Auto: no preset uses Toggle, so never counted
             {"ModernAutoHold", {"1", "1", "1", "1"}}, // the same [Game] ModernAuto key under Hold
             {"HoldMode", {"brawl", "brawl", "brawl", "brawl"}}, // Hold with Auto = Hold to Brawl (K, Nov 20)
-            {"KbmControlStyle", {"classic", "modern", "modern", "modern"}},
+            {"KbmControlStyle", {"classic", "classic", "modern", "modern"}}, // Remastered Classic Brawler (K, Nov 28)
             {"KbmModernAuto", {"0", "0", "0", "0"}},
             {"AspectRatio", {"4:3", "auto", "auto", "auto"}},
             {"CameraPreset", {"ps2", "wider", "action", "action"}},
@@ -68,8 +68,8 @@ namespace kamite::presets
             {"OffTheCuff", {"1", "1", "1", "1"}},
             {"BallBusterWomen", {"0", "0", "0", "1"}},
             {"LiftChairs", {"0", "0", "0", "1"}},
-            {"Cash", {"100", "100", "115", "115"}},
-            {"Money", {"100", "100", "115", "115"}},
+            {"Cash", {"100", "101", "101", "101"}}, // K, Nov 28
+            {"Money", {"100", "101", "101", "101"}},
         };
 
         bool same(const std::string &a, const char *b)

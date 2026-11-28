@@ -95,7 +95,7 @@ No UI stretching in gameplay; menus at 4:3 unless you like 'em on the thicker si
 
 ### Modern Controls, Tank Me Later!
 
-Switch between classic tank controls and modern third-person freecam on the fly. <!-- tag:ControlStyle --> `Remastered+`
+Switch between classic tank controls and modern third-person freecam on the fly. <!-- tag:ControlStyle --> `Rearmed+`
 
 Includes a toggle to automatically enter Brawl Mode (tank controls) in combat.
 
@@ -133,9 +133,9 @@ Too many choices? How about just one? Pick a preset and get to playing right awa
 | Preset | Tagline | What you get |
 | --- | --- | --- |
 | **Classic** | Clover's Vanilla Thrilla | Cinetastic 30FPS, 4:3, Classic Camera & Controls, as handed by God. |
-| **Remastered** | Spitshine Edition | Smooth Sexy Silky 60FPS, Fills your screen - edge to edge, Modern Controls, etc. |
-| **Rearmed** | That's the Spice! | Adds: New Cam Angle, Roulette Refinements, Moveset Presets, Buck Breaker, Busta-Chan Jive, and Misqué & Risqué. |
-| **Sleazy Mode** | ...is Now Selectable! For the girl who just wants to have fun. | Adds: Cunt Punter, Tension - Off the Cuff, and Wild Curry Funk. |
+| **Remastered** | Spitshine Edition | Smooth Sexy 60FPS, Widescreen, Modern Menu Controls & nothing else changed from Classic. |
+| **Rearmed** | That's the Spice! | New Controls & Camera, Moveset Presets, Combat & Cosmetic Additions, Same Difficulty. |
+| **Sleazy Mode** | ...is Now Selectable! | For fun, everything GHR has to offer! Expanded combat options, but it makes the game easier... |
 <!-- END GENERATED: presets -->
 
 Each one includes everything before it. Change any option a preset sets and you're on **Custom**. The tags below say
@@ -168,7 +168,7 @@ which preset first switches a feature on; `Toggle` means none does, it's yours t
 - Target Select: switch Roulette targets with the right stick or the d-pad. <!-- tag:RouletteTargetCycle --> `Rearmed+`
 - Dry Spinning: open the Roulette with no balls to your name. <!-- tag:RouletteNoOrbs --> `Rearmed+`
 - Busta-Chan Jive: sprint attacks slide under and vault over railings and through windows. <!-- tag:SprintTraversal --> `Rearmed+`
-- Misqué & Risqué: better shop and casino poses, and more. <!-- tag:Money --> `Rearmed+`
+- Misqué & Risqué: better shop and casino poses, and more. <!-- tag:Money --> `Remastered+`
 - Cunt Punter: Ball Buster works on women. <!-- tag:BallBusterWomen --> `Sleazy Mode`
 - Tension is Placable: leash the God Hand early and keep what's left; Off the Cuff unleashes it with any Tension.
   <!-- tag:TensionPlacable --> `Sleazy Mode`
@@ -306,11 +306,11 @@ Every option, with the same help text you'll see in the launcher and in game.
 
 **Move & Groove**
 
-- **Control Style: Pad:** Classic: PS2's OG fixed facing brawling. Modern (rebindable): Toggle Brawl (R3) | Hold to Brawl (L1). *Classic / Modern: Toggle / Modern: Hold* (F2 > Controls changes it while playing) `Remastered+`
+- **Control Style: Pad:** Classic: PS2's OG fixed facing brawling. Modern (rebindable): Toggle Brawl (R3) | Hold to Brawl (L1). *Classic / Modern: Toggle / Modern: Hold* (F2 > Controls changes it while playing) `Rearmed+`
   - **Modern: Auto:** Brawling starts when dealing or taking damage. Press the stick (rebindable) to go back to freecam.
-  - **Modern: Hold Mode:** Hold to Brawl: hold L1 to brawl, double-tap it to turn. Hold to Cam: hold L1 for freecam, tap it to turn. *Hold to Brawl / Hold to Cam* `Remastered+`
-  - **Modern: Auto:** Brawling starts when dealing or taking damage. It stops once no enemy is near. `Remastered+`
-- **Control Style: KBM:** Keyboard & mouse. Classic: PS2's OG brawling. Modern: mouse freecam. *Classic / Modern: Toggle* `Remastered+`
+  - **Modern: Hold Mode:** Hold to Brawl: hold L1 to brawl, double-tap it to turn. Hold to Cam: hold L1 for freecam, tap it to turn. *Hold to Brawl / Hold to Cam* `Rearmed+`
+  - **Modern: Auto:** Brawling starts when dealing or taking damage. It stops once no enemy is near. `Rearmed+`
+- **Control Style: KBM:** Keyboard & mouse. Classic: PS2's OG brawling. Modern: mouse freecam. *Classic / Modern: Toggle* `Rearmed+`
   - **Modern: Auto:** Brawling starts when dealing or taking damage. Middle-click (rebindable) to go back to freecam.
   - **Modern: Mouse Look:** Freak... (F2 > Controls sets the sensitivity)
 - **Click-Stick Dash:** Press and hold the stick to dash. Rebindable in Controls. `Remastered+`
@@ -344,8 +344,8 @@ Every option, with the same help text you'll see in the launcher and in game.
 **Misqué & Risqué**
 
 - **Better Shop & Casino Poses:** Give the shop and casino people better poses. Not sure what else you were expecting... (F2 > NPCs sets the poses) `Rearmed+`
-- **Cash:** Recommended: 115% *100% to 130%* `Rearmed+`
-- **Money:** Recommended: 115% *85% to 130%* `Rearmed+`
+- **Cash:** Recommended: 115% *100% to 130%* `Remastered+`
+- **Money:** Recommended: 115% *85% to 130%* `Remastered+`
 
 </details>
 <details>

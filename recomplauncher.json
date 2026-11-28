@@ -123,7 +123,7 @@
       "id": "Preset",
       "label": "Preset",
       "group": "Presets",
-      "help": "Classic: Clover's Vanilla Thrilla | Remastered: Spitshine Edition | Rearmed: That's the Spice! | Sleazy Mode: ...is Now Selectable! For the girl who just wants to have fun.",
+      "help": "Classic: Clover's Vanilla Thrilla | Remastered: Spitshine Edition | Rearmed: That's the Spice! | Sleazy Mode: ...is Now Selectable!",
       "choices": [
         {
           "label": "Classic",
@@ -162,9 +162,8 @@
           "label": "Remastered",
           "set": {
             "Game/ModernAuto": "1",
-            "Game/KbmControlStyle": "modern",
-            "Game/KbmModernAuto": "0",
-            "Game/ControlStyle": "hold",
+            "Game/KbmControlStyle": "classic",
+            "Game/ControlStyle": "classic",
             "Game/HoldMode": "brawl",
             "Video/CameraPreset": "wider",
             "Video/FieldOfView": "125",
@@ -188,8 +187,8 @@
             "Game/SkipIntro": "1",
             "Game/UnlockHard": "1",
             "Game/NpcPoses": "0",
-            "Game/Cash": "100",
-            "Game/Money": "100",
+            "Game/Cash": "101",
+            "Game/Money": "101",
             "Sound/RouletteRatchet": "1"
           }
         },
@@ -224,8 +223,8 @@
             "Game/SkipIntro": "1",
             "Game/UnlockHard": "1",
             "Game/NpcPoses": "1",
-            "Game/Cash": "115",
-            "Game/Money": "115",
+            "Game/Cash": "101",
+            "Game/Money": "101",
             "Sound/RouletteRatchet": "1"
           }
         },
@@ -261,8 +260,8 @@
             "Game/SkipIntro": "1",
             "Game/UnlockHard": "1",
             "Game/NpcPoses": "1",
-            "Game/Cash": "115",
-            "Game/Money": "115",
+            "Game/Cash": "101",
+            "Game/Money": "101",
             "Sound/RouletteRatchet": "1"
           }
         },

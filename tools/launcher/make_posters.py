@@ -232,10 +232,16 @@ def layers(title, tagline, band, seed, title_font):
     for line in DOM.wrap(tagline, bpx * 1.15, w - 2 * m):
         lw = DOM.width(line, bpx * 1.15); DOM.draw(ink, (w - lw) / 2, y, line, bpx * 1.15); y += round(bpx * 1.15 * 1.25)
     y += round(bpx * 0.5)
-    for line in DOM.wrap(band, bpx, w - 2 * m):
-        if y > h - m - bpx:
+    # the band: three full lines (K, Nov 28): the largest size up to the tagline's that three lines hold (K's line break
+    # is for the game's and the launcher's two lines; here one paragraph)
+    band = band.replace('\n', ' ')
+    px = bpx * 1.15
+    while len(DOM.wrap(band, px, w - 2 * m)) > 3 and px > bpx * 0.7:
+        px -= 0.25
+    for line in DOM.wrap(band, px, w - 2 * m):
+        if y > h - m - px:
             raise SystemExit('%s: the band does not fit the poster' % title)
-        lw = DOM.width(line, bpx); DOM.draw(ink, (w - lw) / 2, y, line, bpx); y += round(bpx * 1.3)
+        lw = DOM.width(line, px); DOM.draw(ink, (w - lw) / 2, y, line, px); y += round(px * 1.3)
     img = Image.composite(Image.new('RGB', (w, h), INK), img, ink_texture(ink, rng))
     # tape on all four corners of the photo, with its own soft shadow
     tape = Image.new('RGBA', (w, h), (0, 0, 0, 0))

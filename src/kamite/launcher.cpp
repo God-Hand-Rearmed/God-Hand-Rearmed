@@ -3623,6 +3623,67 @@ namespace kamite::launcher
             KM_INFO(Boot, "launcher: preset " << presets::kText[preset].name);
         }
 
+        // A preset's band in two lines (K, Nov 28: always two, never wrapped past them): at K's '\n', else where the
+        // two come out evenest by `width` ('&' and ' - ' stay with the words either side, as in game).
+        template <typename Width> std::vector<std::string> bandLines(const char *band, const Width &width)
+        {
+            std::vector<std::string> lines;
+            const std::string text = band ? band : "";
+            const auto trim = [](std::string t) {
+                while (!t.empty() && t.back() == ' ')
+                    t.pop_back();
+                while (!t.empty() && t.front() == ' ')
+                    t.erase(t.begin());
+                return t;
+            };
+            if (text.find('\n') != std::string::npos)
+            {
+                for (size_t at = 0;;)
+                {
+                    const size_t end = text.find('\n', at);
+                    lines.push_back(trim(text.substr(at, end == std::string::npos ? std::string::npos : end - at)));
+                    if (end == std::string::npos)
+                        return lines;
+                    at = end + 1;
+                }
+            }
+            std::vector<std::string> groups;
+            for (size_t at = 0; at < text.size();)
+            {
+                size_t end = text.find(' ', at);
+                if (end == std::string::npos)
+                    end = text.size();
+                const std::string word = text.substr(at, end - at);
+                if (!word.empty())
+                {
+                    const std::string &last = groups.empty() ? text : groups.back();
+                    const bool glued = last.size() >= 2u && (last.compare(last.size() - 2u, 2u, " &") == 0 || last.compare(last.size() - 2u, 2u, " -") == 0);
+                    if (!groups.empty() && (word == "&" || word == "-" || glued))
+                        groups.back() += " " + word;
+                    else
+                        groups.push_back(word);
+                }
+                at = end + 1;
+            }
+            if (groups.size() < 2u)
+                return {trim(text)};
+            const auto join = [&](size_t i, size_t j) {
+                std::string t = groups[i];
+                for (size_t k = i + 1; k < j; ++k)
+                    t += " " + groups[k];
+                return t;
+            };
+            size_t best = 1;
+            float bestWidth = 1e30f;
+            for (size_t k = 1; k < groups.size(); ++k)
+            {
+                const float w = std::max(width(join(0, k)), width(join(k, groups.size())));
+                if (w < bestWidth)
+                    bestWidth = w, best = k;
+            }
+            return {join(0, best), join(best, groups.size())};
+        }
+
         // A row per preset (its photo, name, tagline and what it adds, Use / In use); while the settings match none a
         // Custom banner on top, and Use asks before replacing them.
         void drawPresets(State &state)
@@ -3673,7 +3734,19 @@ namespace kamite::launcher
                 ImGui::TextWrapped("%s", text.tagline);
                 ImGui::PopStyleColor();
                 ImGui::PushStyleColor(ImGuiCol_Text, kTextDim);
-                ImGui::TextWrapped("%s", text.band);
+                {
+                    // two lines, smaller if either would wrap (K, Nov 28)
+                    const std::vector<std::string> lines =
+                        bandLines(text.band, [](const std::string &t) { return ImGui::CalcTextSize(t.c_str()).x; });
+                    float widest = 0.0f;
+                    for (const std::string &line : lines)
+                        widest = std::max(widest, ImGui::CalcTextSize(line.c_str()).x);
+                    const float room = ImGui::GetContentRegionAvail().x;
+                    ImGui::PushFont(ImGui::GetFont(), ImGui::GetFontSize() * (widest > room && widest > 0.0f ? 0.995f * room / widest : 1.0f));
+                    for (const std::string &line : lines)
+                        ImGui::TextUnformatted(line.c_str());
+                    ImGui::PopFont();
+                }
                 ImGui::PopStyleColor();
                 ImGui::TableSetColumnIndex(2);
                 if (p > 0)
@@ -5263,7 +5336,9 @@ namespace kamite::launcher
                     const ImVec2 ts = textSize(state.bookFonts.heading, nameSize, t.name);
                     bookLoop(state, b, dl, ImVec2(at.x, at.y + nameSize * 0.08f), ImVec2(at.x + ts.x, at.y + nameSize * 1.0f));
                     focusedPreset = i;
-                    bookHelp(state, t.name, t.band);
+                    std::string band = t.band; // (one paragraph here)
+                    std::replace(band.begin(), band.end(), '\n', ' ');
+                    bookHelp(state, t.name, band.c_str());
                 }
                 if (pressed && i != now)
                 {
@@ -5310,7 +5385,23 @@ namespace kamite::launcher
             bookText(dl, state.bookFonts.text, 34.0f * u, ImVec2(m.x, y), kBookInk, t.tagline, w); // (as on the posters)
             y += textSize(state.bookFonts.text, 34.0f * u, t.tagline, w).y + 8.0f * u;
             bookRule(b, dl, m.x, m.x + w, y, kBookInk, 1.6f * u, 9u);
-            bookText(dl, state.bookFonts.text, 28.0f * u, ImVec2(m.x, y + 26.0f * u), kBookInk, t.band, w);
+            {
+                // two lines, smaller if either would wrap (K, Nov 28)
+                ImFont *font = state.bookFonts.text;
+                const float full = 28.0f * u;
+                const std::vector<std::string> lines =
+                    bandLines(t.band, [&](const std::string &s) { return textSize(font, full, s.c_str()).x; });
+                float widest = 0.0f;
+                for (const std::string &line : lines)
+                    widest = std::max(widest, textSize(font, full, line.c_str()).x);
+                const float size = widest > w && widest > 0.0f ? 0.995f * full * w / widest : full;
+                float ly = y + 26.0f * u;
+                for (const std::string &line : lines)
+                {
+                    bookText(dl, font, size, ImVec2(m.x, ly), kBookInk, line.c_str());
+                    ly += textSize(font, size, line.c_str()).y;
+                }
+            }
             const ImVec2 stampAt((b.rightMin.x + b.rightMax.x) * 0.5f, b.rightMax.y - 70.0f * u);
             if (shown == now)
                 bookStamp(state, b, nullptr, "IN USE", stampAt, 30.0f * u, -2.0f);

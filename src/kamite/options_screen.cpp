@@ -1819,7 +1819,7 @@ namespace kamite::options_screen
             if (t.slot != slot || t.aspect != g_aspect)
             {
                 const presets::Text &text = presets::text(presetOfSlot(slot));
-                t.fit = options_overlay::fitPresetText(text.tagline, text.band, g_aspect);
+                t.fit = options_overlay::fitPresetText(text.tagline, text.band, g_aspect, presetOfSlot(slot) != presets::kCustom);
                 t.slot = slot;
                 t.aspect = g_aspect;
             }
