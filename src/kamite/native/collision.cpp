@@ -16,7 +16,6 @@
 #include "kamite/native/ee_ctx.h"
 
 #include <cstring>
-#include <type_traits>
 #include <vector>
 
 namespace kamite::native::collision
@@ -462,11 +461,6 @@ namespace kamite::native::collision
         template <class Env>
         bool solidsNative(Env &env, R5900Context *ctx)
         {
-            // DIAGNOSTIC (Nov 28; claude/strip-list.md): every live call declines, so the original runs through the
-            // replaced table entry and none of C3's native code runs (the open chain question: rung4-collision-map.md
-            // "C3: shadowed"). Remove once K's replay of this build is read.
-            if constexpr (std::is_same_v<Env, RealEnv>)
-                return false;
             uint32_t low;
             if (!env.atEnd || !e::vf0Constant(ctx) || !frameWindow(ctx, kSolidsWindow, low))
                 return false;
@@ -487,11 +481,6 @@ namespace kamite::native::collision
         template <class Env>
         bool queryNative(Env &env, R5900Context *ctx)
         {
-            // DIAGNOSTIC (Nov 28; claude/strip-list.md): every live call declines, so the original runs through the
-            // replaced table entry and none of C3's native code runs (the open chain question: rung4-collision-map.md
-            // "C3: shadowed"). Remove once K's replay of this build is read.
-            if constexpr (std::is_same_v<Env, RealEnv>)
-                return false;
             uint32_t low;
             if (!env.atEnd || !e::vf0Constant(ctx) || !frameWindow(ctx, kQueryWindow, low))
                 return false;
