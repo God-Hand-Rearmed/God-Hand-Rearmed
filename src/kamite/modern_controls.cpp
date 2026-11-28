@@ -439,23 +439,22 @@ namespace kamite::modern
                 // stick's back three eighths (past 112.5 deg from the camera's forward, +-10 of stickiness: straight
                 // sideways stays a walk, K Nov 26; his back-pedal stays the game's own, K Nov 27, and so do the back
                 // attacks it gives), and strafing_tiger.cpp blends the side-steps on top and moves him where the stick
-                // points. Forward / back is judged on the stick against the camera (his yaw lags a turning camera);
-                // the blend's angle against his yaw. Sprinting (a dash and the run after it): no strafing, he runs
-                // where the camera points.
+                // points. Forward / back is judged against the camera (his yaw lags a turning camera) on the angle the
+                // blend draws (strafing_tiger::backPedal, K Nov 28); the blend's angle against his yaw. Sprinting (a
+                // dash and the run after it): no strafing, he runs where the camera points.
                 const float relative = wrapAngle(desired - g_geneYaw.load(std::memory_order_relaxed));
                 g_moveYaw = g_cameraYaw.load(std::memory_order_relaxed);
                 g_moving = true;
                 const bool sprinting = g_sprinting.load(std::memory_order_relaxed);
-                static bool s_back = false;
-                const float edge = (s_back ? 102.5f : 122.5f) * (3.14159265f / 180.0f);
-                s_back = !sprinting && std::fabs(std::atan2(lx, -ly)) > edge;
+                const float stick = std::atan2(lx, -ly);
+                const bool back = strafing_tiger::backPedal(stick, sprinting);
                 // Sprinting (K, Nov 27): his run turned toward the stick up to the F2 angle (45 deg) as in his run, the
                 // stick past it turning him.
                 auto &rs = strafing_tiger::runStrafe();
                 const bool warp = sprinting && rs.sprintTurn.load(std::memory_order_relaxed) != 0;
                 const float most = warp ? std::fmin(std::fmax(rs.turn.load(std::memory_order_relaxed), 0.0f), 60.0f) * (3.14159265f / 180.0f) : 0.0f;
                 if (!sprinting)
-                    strafing_tiger::setSlide(relative);
+                    strafing_tiger::setSlide(relative, wrapAngle(relative + stick));
                 else if (warp)
                     strafing_tiger::setSlide(std::fmin(std::fmax(relative, -most), most));
                 // Sprinting: the stick turns him as the game's run does (phase 2, 0x10C7B0: +0x608 the stick's angle
@@ -467,8 +466,8 @@ namespace kamite::modern
                 g_sprintTurn.store(sprinting ? (relative > 0.0f ? -turn : turn) : 0.0f, std::memory_order_relaxed);
                 const float offset = magnitude * 127.0f;
                 state.leftX = 0x80u;
-                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(s_back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
-                if (!sprinting && !s_back && std::fabs(relative) > kTigerBridgeFrom)
+                state.leftY = static_cast<uint8_t>(std::lround(std::fmin(std::fmax(back ? 128.0f + offset : 128.0f - offset, 0.0f), 255.0f)));
+                if (!sprinting && !back && std::fabs(relative) > kTigerBridgeFrom)
                     s_tigerMs = nowMs(), s_tigerRelative = relative, s_tigerY = state.leftY;
                 return;
             }
@@ -723,13 +722,6 @@ namespace kamite::modern
                 slider(ui, "Step pace at 3 / 9 (share of his run's)##tigerpace", rs.pace, 0.3f, 1.2f, "%.2f");
                 slider(ui, "Bounce (the hips' up-down)##tigerbounce", rs.bounce, 0.0f, 1.5f, "%.2f");
                 slider(ui, "Hips lowered##tigerhips", rs.hips, 0.0f, 8.0f, "%.1f cm");
-                ui->separator_text("Spinning the stick: 7's short steps in a small circle");
-                slider(ui, "Spin mode from##tigerspinfrom", rs.spinFrom, 0.75f, 4.0f, "%.2f turns a second");
-                slider(ui, "Spinning: speed##tigerspinspeed", rs.spinSpeed, 0.5f, 3.0f, "%.2f m/s");
-                slider(ui, "Spinning: step length (x 7's)##tigerspinsteps", rs.spinSteps, 0.2f, 1.0f, "%.2f");
-                slider(ui, "Spinning: step pace (x the walk's at 3 / 9)##tigerspinpace", rs.spinPace, 0.5f, 2.0f, "%.2f");
-                slider(ui, "Spinning: shoulders lean toward where he moves##tigerspinlean", rs.spinLean, 0.0f, 20.0f, "%.1f deg");
-                slider(ui, "Spinning: shoulders turned toward it (sideways)##tigerspinturn", rs.spinTurn, 0.0f, 30.0f, "%.1f deg");
                 char line[160];
                 const float pace = strafing_tiger::readPace(), steps = strafing_tiger::readSteps();
                 if (pace > 0.0f)
@@ -762,9 +754,7 @@ namespace kamite::modern
                     KM_INFO(Game, "Strafing Tiger run: side " << (rs.legs.load() == 0 ? (rs.flip.load() ? "side-run flipped" : "side-run") : "side-steps") << ", speed "
                                   << rs.speed.load() << ", pace " << rs.pace.load() << ", bounce " << rs.bounce.load() << ", hips "
                                   << rs.hips.load() << " cm, arms " << rs.arms.load() << ", torso "
-                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg" << (rs.sprintTurn.load() ? " (sprinting too)" : "") << " (legs x" << pace << " own pace, steps x" << steps << ")"
-                                  << "; spin from " << rs.spinFrom.load() << " turns/s, speed " << rs.spinSpeed.load() << " m/s, steps x" << rs.spinSteps.load()
-                                  << ", pace x" << rs.spinPace.load() << ", lean " << rs.spinLean.load() << " deg, turn " << rs.spinTurn.load() << " deg");
+                                  << rs.torso.load() << ", walk pace " << rs.walkPace.load() << ", turned run up to " << rs.turn.load() << " deg" << (rs.sprintTurn.load() ? " (sprinting too)" : "") << " (legs x" << pace << " own pace, steps x" << steps << ")");
                 if (ui->small_button("Reset to defaults##tigerreset"))
                     strafing_tiger::resetTuning();
                 ui->text_disabled("Not saved: Write puts them in the log for the defaults; Reset puts back every Tiger value above.");
